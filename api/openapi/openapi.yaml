@@ -1,0 +1,1656 @@
+openapi: 3.1.0
+info:
+  title: 伴AI API
+  version: 1.2.0
+  description: M1-M4 platform plus the M6 reliability control plane, Kafka async delivery, operator DLQ replay, and compensation records.
+servers:
+  - url: http://localhost:8080
+paths:
+  /metrics:
+    get:
+      operationId: getPrometheusMetrics
+      tags: [Platform]
+      responses:
+        "200":
+          description: Prometheus text exposition; deployment must restrict this operational endpoint to the monitoring network.
+          content:
+            text/plain:
+              schema: { type: string }
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [Platform]
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [Platform]
+      responses:
+        "200":
+          description: Process can accept requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+        "503":
+          description: Process is draining or a required dependency is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Status"
+  /v1/meta:
+    get:
+      operationId: getServiceMetadata
+      tags: [Platform]
+      responses:
+        "200":
+          description: Service and build metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceMetadata"
+  /v1/auth/register:
+    post:
+      operationId: register
+      tags: [Identity]
+      requestBody:
+        required: true
+        description: Skill input. Inline DOCX/CSV/XLSX sources use base64, are limited to 700KB, and remain caller-owned; generated Office files are always new copies.
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Account and initial session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/auth/login:
+    post:
+      operationId: login
+      tags: [Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Authenticated session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Rotated session tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Identity]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Current session revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags: [Identity]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: All user sessions revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/characters:
+    get:
+      operationId: listCharacters
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Active characters owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Character" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createCharacter
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CharacterInput" }
+      responses:
+        "201":
+          description: Character and compiled persona created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CharacterWithPersona" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/characters/{character_id}:
+    parameters:
+      - name: character_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCharacter
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Character details.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Character" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateCharacter
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CharacterInput" }
+      responses:
+        "200":
+          description: Updated character and new persona version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CharacterWithPersona" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteCharacter
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Character soft-deleted. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/characters/{character_id}/persona-versions:
+    get:
+      operationId: listPersonaVersions
+      tags: [Character]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: character_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Immutable compiled persona history.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/PersonaVersion" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/conversations:
+    get:
+      operationId: listConversations
+      tags: [Conversation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Caller conversations ordered by recent activity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Conversation" } }
+    post:
+      operationId: createConversation
+      tags: [Conversation]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [character_id]
+              properties:
+                character_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Conversation created.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } }
+  /v1/conversations/{conversation_id}/messages:
+    parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listMessages
+      tags: [Conversation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: after_sequence
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: after_bubble
+          in: query
+          description: Bubble cursor within `after_sequence`.
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Persisted messages in sequence and bubble order.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Message" } }
+    post:
+      operationId: sendMessage
+      tags: [Conversation]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, minLength: 1, maxLength: 8000 }
+      responses:
+        "202":
+          description: Message persisted and generation accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { $ref: "#/components/schemas/Message" }
+                  job: { $ref: "#/components/schemas/GenerationJob" }
+                  ledger_candidate:
+                    allOf: [{ $ref: "#/components/schemas/LedgerCandidate" }]
+                    description: Present only when the message contains a plausible ledger record; confirmation is still required.
+                  reminder_candidate:
+                    allOf: [{ $ref: "#/components/schemas/Reminder" }]
+                    description: Present only when the message contains a reminder intent; absolute time confirmation is still required.
+  /v1/generation-jobs/{job_id}:
+    get:
+      operationId: getGenerationJob
+      tags: [Generation]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: job_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Current persisted generation state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/GenerationJob" } } }
+  /v1/generation-jobs/{job_id}/events:
+    get:
+      operationId: streamGenerationEvents
+      tags: [Generation]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: after_event_id, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: Last-Event-ID, in: header, schema: { type: string } }
+      responses:
+        "200":
+          description: SSE stream with accepted, running, bubble, and terminal events.
+          content: { text/event-stream: { schema: { type: string } } }
+  /v1/generation-jobs/{job_id}/cancel:
+    post:
+      operationId: cancelGeneration
+      tags: [Generation]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: job_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "202": { description: Cancellation requested. }
+        "409": { description: Job is already terminal. }
+  /v1/generation-jobs/{job_id}/retry:
+    post:
+      operationId: retryGeneration
+      tags: [Generation]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: job_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "202":
+          description: New attempt accepted.
+          content: { application/json: { schema: { $ref: "#/components/schemas/GenerationJob" } } }
+  /v1/presence/heartbeat:
+    post:
+      operationId: heartbeatPresence
+      tags: [Presence]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Current session presence TTL refreshed. }
+        "503": { description: Redis presence service unavailable. }
+  /v1/presence/me:
+    get:
+      operationId: getMyPresence
+      tags: [Presence]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current user online state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [online]
+                properties:
+                  online: { type: boolean }
+  /v1/memories:
+    get:
+      operationId: listMemories
+      tags: [Memory]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Active long-term memories owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Memory" } }
+    post:
+      operationId: createMemory
+      tags: [Memory]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, minLength: 2, maxLength: 2000 }
+      responses:
+        "201":
+          description: Memory created or existing duplicate returned.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Memory" } } }
+    delete:
+      operationId: clearMemories
+      tags: [Memory]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: All active memories soft-deleted. }
+  /v1/memories/{memory_id}:
+    parameters: [{ name: memory_id, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      operationId: updateMemory
+      tags: [Memory]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string, minLength: 2, maxLength: 2000 }
+                pinned: { type: boolean }
+                importance: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        "200":
+          description: Updated memory.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Memory" } } }
+    delete:
+      operationId: deleteMemory
+      tags: [Memory]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Memory soft-deleted and no longer recalled. }
+  /v1/documents:
+    get:
+      operationId: listDocuments
+      tags: [Document]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Active documents owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Document" } }
+    post:
+      operationId: uploadDocument
+      tags: [Document]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: New document stored and queued for ingestion.
+          content: { application/json: { schema: { $ref: "#/components/schemas/DocumentUploadResult" } } }
+        "200":
+          description: Existing active document returned for duplicate content.
+          content: { application/json: { schema: { $ref: "#/components/schemas/DocumentUploadResult" } } }
+        "413": { description: Upload exceeds the configured size limit. }
+        "415": { description: File type is unsupported. }
+        "422": { description: File failed validation or safety checks. }
+  /v1/documents/{document_id}:
+    parameters: [{ name: document_id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      operationId: getDocument
+      tags: [Document]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Document metadata and current ingestion status.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Document" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteDocument
+      tags: [Document]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Document, pending ingestion, and stored blob removed from active use. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/documents/query:
+    post:
+      operationId: queryDocuments
+      tags: [Document]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DocumentQueryInput" }
+      responses:
+        "200":
+          description: Evidence-grounded result; insufficient evidence returns no citations and does not fabricate an answer.
+          content: { application/json: { schema: { $ref: "#/components/schemas/DocumentQueryResult" } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ledger/candidates:
+    post:
+      operationId: createLedgerCandidate
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text: { type: string, minLength: 2, maxLength: 2000 }
+                timezone: { type: string, example: Asia/Shanghai }
+      responses:
+        "201":
+          description: Parsed candidate; no ledger entry exists until explicit confirmation.
+          content: { application/json: { schema: { $ref: "#/components/schemas/LedgerCandidate" } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ledger/candidates/{candidate_id}/confirm:
+    parameters:
+      - { name: candidate_id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+    post:
+      operationId: confirmLedgerCandidate
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note: { type: string, maxLength: 1000 }
+      responses:
+        "201": { description: Candidate confirmed and exactly one entry created. }
+        "200": { description: Prior confirmation returned without creating a duplicate. }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/ledger/entries:
+    get:
+      operationId: listLedgerEntries
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: start, in: query, schema: { type: string, format: date-time } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+        - { name: direction, in: query, schema: { type: string, enum: [income, expense] } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 200 } }
+      responses:
+        "200":
+          description: Active entries owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties: { items: { type: array, items: { $ref: "#/components/schemas/LedgerEntry" } } }
+  /v1/ledger/entries/{entry_id}:
+    parameters: [{ name: entry_id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      operationId: getLedgerEntry
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Ledger entry., content: { application/json: { schema: { $ref: "#/components/schemas/LedgerEntry" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateLedgerEntry
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LedgerEntryUpdate" } } }
+      responses:
+        "200": { description: Updated entry., content: { application/json: { schema: { $ref: "#/components/schemas/LedgerEntry" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      operationId: deleteLedgerEntry
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Entry soft-deleted. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ledger/summary:
+    get:
+      operationId: getLedgerMonthlySummary
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: month, in: query, schema: { type: string, pattern: "^\\d{4}-\\d{2}$" } }
+        - { name: timezone, in: query, schema: { type: string } }
+        - { name: currency, in: query, schema: { type: string, enum: [CNY, USD], default: CNY } }
+      responses:
+        "200": { description: Monthly totals and expense categories., content: { application/json: { schema: { $ref: "#/components/schemas/LedgerMonthlySummary" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ledger/exports:
+    post:
+      operationId: queueLedgerWorkbookExport
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [month]
+              properties:
+                month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+                timezone: { type: string }
+                currency: { type: string, enum: [CNY, USD], default: CNY }
+      responses:
+        "202":
+          description: Export accepted for durable Kafka Worker execution.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LedgerExportEnvelope" }
+        "200": { description: Idempotent replay returned the existing export., content: { application/json: { schema: { $ref: "#/components/schemas/LedgerExportEnvelope" } } } }
+        "400": { description: Missing or invalid idempotency key. }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ledger/exports/{export_id}:
+    get:
+      operationId: getLedgerExport
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: export_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Current export state and file metadata., content: { application/json: { schema: { $ref: "#/components/schemas/LedgerExport" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ledger/exports/{export_id}/file:
+    get:
+      operationId: downloadLedgerExport
+      tags: [Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: export_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Completed formula-backed Excel workbook.
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans:
+    get:
+      operationId: listPlans
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Active plans owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Plan" } }
+    post:
+      operationId: createPlan
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PlanInput" } } }
+      responses:
+        "201": { description: Plan created., content: { application/json: { schema: { $ref: "#/components/schemas/Plan" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/reminders/candidates:
+    post:
+      operationId: createReminderCandidate
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 2000 }
+                timezone: { type: string, example: Asia/Shanghai }
+      responses:
+        "201": { description: Unconfirmed reminder candidate., content: { application/json: { schema: { $ref: "#/components/schemas/Reminder" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/reminders/{reminder_id}/confirm:
+    post:
+      operationId: confirmReminder
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: reminder_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      responses:
+        "201": { description: Reminder confirmed and application notification queued., content: { application/json: { schema: { $ref: "#/components/schemas/ReminderConfirmation" } } } }
+        "200": { description: Idempotent replay of a prior confirmation., content: { application/json: { schema: { $ref: "#/components/schemas/ReminderConfirmation" } } } }
+        "409": { description: Reminder still needs time clarification or the key was reused. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/reminders:
+    get:
+      operationId: listReminders
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: start, in: query, schema: { type: string, format: date-time } }
+        - { name: end, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 200 } }
+      responses:
+        "200":
+          description: Reminder candidates and confirmed reminders owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Reminder" } }
+  /v1/reminders/{reminder_id}/complete:
+    post:
+      operationId: completeReminder
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reminder_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Reminder completed and queued application notification cancelled. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/reminders/{reminder_id}/system-sync:
+    post:
+      operationId: reportReminderSystemSync
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reminder_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SystemReminderSyncResult" } } }
+      responses:
+        "200":
+          description: System adapter result recorded; permission denial never removes the application reminder.
+          content: { application/json: { schema: { $ref: "#/components/schemas/Reminder" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/reliability:
+    get:
+      operationId: getReliability
+      tags: [Platform]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current degradation level, candidate hysteresis state, sampled signals, and effective policy.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ReliabilitySnapshot" } } }
+  /v1/ops/outbox/dead-letter:
+    get:
+      operationId: listDeadLetterOutboxEvents
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }]
+      responses:
+        "200":
+          description: Dead-lettered Outbox events requiring operator review.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events: { type: array, items: { $ref: "#/components/schemas/OutboxEvent" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/outbox/{event_id}:
+    get:
+      operationId: getOutboxEvent
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: event_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Outbox event detail, including payload for operator diagnosis.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event]
+                properties:
+                  event: { $ref: "#/components/schemas/OutboxEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/outbox/{event_id}/replay:
+    post:
+      operationId: replayDeadLetterOutboxEvent
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReplayOutboxRequest" } } }
+      responses:
+        "202":
+          description: Event moved back to pending and a compensation record was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event, compensation]
+                properties:
+                  event: { $ref: "#/components/schemas/OutboxEvent" }
+                  compensation: { $ref: "#/components/schemas/CompensationRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/compensations:
+    get:
+      operationId: listCompensationRecords
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }]
+      responses:
+        "200":
+          description: Recent operator compensation records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [compensations]
+                properties:
+                  compensations: { type: array, items: { $ref: "#/components/schemas/CompensationRecord" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createCompensationRecord
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCompensationRequest" } } }
+      responses:
+        "201":
+          description: Manual compensation record created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [compensation]
+                properties:
+                  compensation: { $ref: "#/components/schemas/CompensationRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/skills:
+    get:
+      operationId: listSkills
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Versioned enabled and disabled Skill manifests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/SkillManifest" } }
+  /v1/skills/{skill_name}/settings:
+    put:
+      operationId: updateSkillSettings
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: skill_name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: Effective caller-specific Skill manifest., content: { application/json: { schema: { $ref: "#/components/schemas/SkillManifest" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/skills/{skill_name}/runs:
+    post:
+      operationId: startSkillRun
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: skill_name, in: path, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [input]
+              properties:
+                input: { type: object, additionalProperties: true }
+      responses:
+        "201": { description: Side-effect-free Skill completed., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
+        "202": { description: Run awaits explicit confirmation or durable Worker execution., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
+        "200": { description: Idempotent replay returned the original run., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
+        "409": { description: Idempotency key or run-state conflict. }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/skill-runs:
+    get:
+      operationId: listSkillRuns
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }]
+      responses:
+        "200":
+          description: Caller-owned Skill runs and their checkpoints.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/SkillRun" } }
+  /v1/skill-runs/{run_id}:
+    get:
+      operationId: getSkillRun
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: run_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Current state, checkpoints, output, errors, and files., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRun" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/skill-runs/{run_id}/confirm:
+    post:
+      operationId: confirmSkillRun
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      responses:
+        "200": { description: Confirmation recorded and the bounded tool execution completed., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRun" } } } }
+        "409": { description: Run is not waiting for confirmation or the key conflicts. }
+  /v1/skill-runs/{run_id}/cancel:
+    post:
+      operationId: cancelSkillRun
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      responses:
+        "200": { description: Run cancelled without executing a waiting side effect., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRun" } } } }
+        "409": { description: Run is already terminal. }
+  /v1/skill-runs/{run_id}/retry:
+    post:
+      operationId: retrySkillRun
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 191 } }
+      responses:
+        "200": { description: Failed or cancelled run retried with a new attempt checkpoint., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRun" } } } }
+        "409": { description: Run is not retryable. }
+  /v1/skill-runs/{run_id}/files/{file_id}:
+    get:
+      operationId: downloadSkillFile
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: file_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Caller-owned generated file; source files are never overwritten.
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/intent/route:
+    post:
+      operationId: routeIntent
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      description: Returns a traceable rule-layer classification and Skill suggestion. This endpoint never executes a Skill or MCP tool.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/IntentRouteInput" } } }
+      responses:
+        "200": { description: Intent, confidence, missing slots, risk, and optional Skill suggestion., content: { application/json: { schema: { $ref: "#/components/schemas/IntentRouteResult" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/mcp/servers:
+    get:
+      operationId: listMCPServers
+      tags: [Skill]
+      security: [{ bearerAuth: [] }]
+      description: Lists operator-approved MCP server names and tool allowlists. Commands, arguments, and environments are never exposed.
+      responses:
+        "200":
+          description: Configured stdio MCP allowlists; an empty list is the safe default.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/MCPServerSummary" } }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    operatorBearerAuth:
+      type: http
+      scheme: bearer
+      description: Uses OPERATOR_TOKEN, not an end-user access token.
+  responses:
+    Unauthorized:
+      description: Authentication is missing, invalid, expired, or revoked.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Resource already exists.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ValidationError:
+      description: Request failed domain validation.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Resource was not found in the caller scope.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    DeviceInput:
+      type: object
+      additionalProperties: false
+      required: [device_key, name, platform]
+      properties:
+        device_key: { type: string, maxLength: 191 }
+        name: { type: string, maxLength: 120 }
+        platform: { type: string, enum: [web, ios, android, service] }
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, display_name, timezone, device]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        display_name: { type: string, minLength: 1, maxLength: 40 }
+        timezone: { type: string, example: Asia/Shanghai }
+        locale: { type: string, default: zh-CN }
+        device: { $ref: "#/components/schemas/DeviceInput" }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, device]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        timezone: { type: string }
+        device: { $ref: "#/components/schemas/DeviceInput" }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, display_name, timezone, locale, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        timezone: { type: string }
+        locale: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required: [access_token, refresh_token, token_type, access_expires_at, refresh_expires_at, user]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        access_expires_at: { type: string, format: date-time }
+        refresh_expires_at: { type: string, format: date-time }
+        user: { $ref: "#/components/schemas/User" }
+    CharacterInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 40 }
+        avatar_url: { type: string }
+        relationship: { type: string }
+        personality: { type: string, maxLength: 1000 }
+        speech_style: { type: string, maxLength: 500 }
+        hobbies: { type: array, maxItems: 20, items: { type: string } }
+        boundaries: { type: array, maxItems: 20, items: { type: string } }
+        initiative: { type: string, enum: [low, balanced, high], default: balanced }
+        reply_length: { type: string, enum: [short, medium, long], default: short }
+        sticker_style: { type: string }
+        raw_prompt: { type: string, maxLength: 4000 }
+    Character:
+      allOf:
+        - { $ref: "#/components/schemas/CharacterInput" }
+        - type: object
+          required: [id, persona_version, status, created_at, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            persona_version: { type: integer, minimum: 1 }
+            status: { type: string, enum: [active, disabled, deleted] }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    PersonaVersion:
+      type: object
+      required: [character_id, version, compiler_version, compiled, created_at]
+      properties:
+        character_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        compiler_version: { type: string }
+        compiled: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+    CharacterWithPersona:
+      type: object
+      required: [character, persona]
+      properties:
+        character: { $ref: "#/components/schemas/Character" }
+        persona: { $ref: "#/components/schemas/PersonaVersion" }
+    Conversation:
+      type: object
+      required: [id, character_id, title, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        character_id: { type: string, format: uuid }
+        title: { type: string }
+        last_message_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Message:
+      type: object
+      required: [id, conversation_id, role, sequence, bubble, content, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, assistant, system, tool] }
+        sequence: { type: integer, minimum: 1 }
+        bubble: { type: integer, minimum: 1, maximum: 5 }
+        content: { type: string }
+        status: { type: string }
+        reply_to_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    GenerationJob:
+      type: object
+      required: [id, conversation_id, user_message_id, status, attempt, deadline_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        user_message_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted, running, completed, cancel_requested, cancelled, failed, timed_out] }
+        attempt: { type: integer, minimum: 1 }
+        provider: { type: string }
+        model: { type: string }
+        deadline_at: { type: string, format: date-time }
+        error_code: { type: string }
+        error_message: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    Memory:
+      type: object
+      required: [id, type, content, confidence, importance, sensitivity, pinned, status, valid_from, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [preference, relationship, goal, commitment, experience, fact] }
+        content: { type: string }
+        source_conversation_id: { type: string, format: uuid }
+        source_message_id: { type: string, format: uuid }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        importance: { type: number, minimum: 0, maximum: 1 }
+        sensitivity: { type: string, enum: [normal, personal, sensitive] }
+        pinned: { type: boolean }
+        status: { type: string, enum: [active, deleted, superseded] }
+        valid_from: { type: string, format: date-time }
+        valid_to: { type: string, format: date-time }
+        supersedes_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Document:
+      type: object
+      required: [id, job_id, name, media_type, size_bytes, sha256, status, page_count, chunk_count, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        name: { type: string }
+        media_type: { type: string, enum: [application/pdf, text/plain] }
+        size_bytes: { type: integer, minimum: 1 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        status: { type: string, enum: [queued, processing, ready, failed] }
+        parser_version: { type: string }
+        page_count: { type: integer, minimum: 0 }
+        chunk_count: { type: integer, minimum: 0 }
+        failure_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DocumentUploadResult:
+      type: object
+      required: [document, deduplicated]
+      properties:
+        document: { $ref: "#/components/schemas/Document" }
+        deduplicated: { type: boolean }
+    DocumentQueryInput:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query: { type: string, minLength: 2, maxLength: 1000 }
+        document_ids: { type: array, maxItems: 100, items: { type: string, format: uuid } }
+        limit: { type: integer, minimum: 1, maximum: 8, default: 5 }
+    DocumentCitation:
+      type: object
+      required: [chunk_id, document_id, document_name, page_start, page_end, quote, score]
+      properties:
+        chunk_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_name: { type: string }
+        page_start: { type: integer, minimum: 1 }
+        page_end: { type: integer, minimum: 1 }
+        section_path: { type: string }
+        quote: { type: string }
+        score: { type: number }
+    DocumentQueryResult:
+      type: object
+      required: [answer, sufficient, citations]
+      properties:
+        answer: { type: string }
+        sufficient: { type: boolean }
+        citations: { type: array, items: { $ref: "#/components/schemas/DocumentCitation" } }
+        degraded: { type: boolean }
+        degradation_reason: { type: string }
+    LedgerCandidate:
+      type: object
+      required: [id, raw_text, category, timezone, confidence, needs_clarification, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        raw_text: { type: string }
+        direction: { type: string, enum: [income, expense] }
+        currency: { type: string, enum: [CNY, USD] }
+        amount_minor: { type: integer, minimum: 0 }
+        category: { type: string }
+        merchant: { type: string }
+        occurred_at: { type: string, format: date-time }
+        timezone: { type: string }
+        time_precision: { type: string, enum: [minute, part_of_day, date] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        needs_clarification: { type: array, items: { type: string, enum: [amount, direction, occurred_at] } }
+        status: { type: string, enum: [pending, needs_clarification, confirmed, expired, cancelled] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LedgerEntry:
+      type: object
+      required: [id, direction, currency, amount_minor, category, occurred_at, timezone, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        candidate_id: { type: string, format: uuid }
+        direction: { type: string, enum: [income, expense] }
+        currency: { type: string, enum: [CNY, USD] }
+        amount_minor: { type: integer, minimum: 1 }
+        category: { type: string }
+        merchant: { type: string }
+        occurred_at: { type: string, format: date-time }
+        timezone: { type: string }
+        note: { type: string }
+        status: { type: string, enum: [active, deleted] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+    LedgerEntryUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        direction: { type: string, enum: [income, expense] }
+        currency: { type: string, enum: [CNY, USD] }
+        amount_minor: { type: integer, minimum: 1 }
+        category: { type: string, maxLength: 64 }
+        merchant: { type: string, maxLength: 255 }
+        occurred_at: { type: string, format: date-time }
+        timezone: { type: string }
+        note: { type: string, maxLength: 1000 }
+    LedgerMonthlySummary:
+      type: object
+      required: [month, currency, income_minor, expense_minor, balance_minor, entry_count, expense_by_category, generated_at, reporting_timezone]
+      properties:
+        month: { type: string }
+        currency: { type: string, enum: [CNY, USD] }
+        income_minor: { type: integer }
+        expense_minor: { type: integer }
+        balance_minor: { type: integer }
+        entry_count: { type: integer }
+        expense_by_category:
+          type: array
+          items:
+            type: object
+            required: [category, amount_minor]
+            properties:
+              category: { type: string }
+              amount_minor: { type: integer }
+        generated_at: { type: string, format: date-time }
+        reporting_timezone: { type: string }
+    LedgerExport:
+      type: object
+      required: [id, month, currency, timezone, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        month: { type: string, pattern: "^\\d{4}-\\d{2}$" }
+        currency: { type: string, enum: [CNY, USD] }
+        timezone: { type: string }
+        status: { type: string, enum: [queued, processing, completed, failed, expired] }
+        file_name: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        failure_code: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    LedgerExportEnvelope:
+      type: object
+      required: [export, deduplicated]
+      properties:
+        export: { $ref: "#/components/schemas/LedgerExport" }
+        deduplicated: { type: boolean }
+    PlanItemInput:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 255 }
+        priority: { type: string, enum: [low, medium, high], default: medium }
+        estimated_minutes: { type: integer, minimum: 0, maximum: 1440 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        location: { type: string, maxLength: 255 }
+        source: { type: string, maxLength: 64 }
+    PlanInput:
+      type: object
+      additionalProperties: false
+      required: [title, local_date]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 160 }
+        local_date: { type: string, format: date }
+        timezone: { type: string, example: Asia/Shanghai }
+        items: { type: array, items: { $ref: "#/components/schemas/PlanItemInput" } }
+    PlanItem:
+      allOf:
+        - { $ref: "#/components/schemas/PlanItemInput" }
+        - type: object
+          required: [id, plan_id, priority, estimated_minutes, status, source, created_at, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            plan_id: { type: string, format: uuid }
+            status: { type: string, enum: [pending, in_progress, completed, skipped, cancelled] }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+    Plan:
+      type: object
+      required: [id, title, local_date, timezone, status, items, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        local_date: { type: string, format: date }
+        timezone: { type: string }
+        status: { type: string, enum: [active, completed, cancelled] }
+        items: { type: array, items: { $ref: "#/components/schemas/PlanItem" } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Reminder:
+      type: object
+      required: [id, raw_text, title, timezone, recurrence, needs_clarification, status, system_sync_status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        plan_item_id: { type: string, format: uuid }
+        source_message_id: { type: string, format: uuid }
+        raw_text: { type: string }
+        title: { type: string }
+        due_at: { type: string, format: date-time }
+        local_due: { type: string, example: "2026-07-04 09:00" }
+        timezone: { type: string, example: Asia/Shanghai }
+        time_precision: { type: string, enum: [minute, part_of_day, date] }
+        recurrence: { type: string, enum: [none, daily, weekly] }
+        needs_clarification: { type: array, items: { type: string } }
+        status: { type: string, enum: [needs_clarification, pending_confirmation, active, completed, cancelled] }
+        system_sync_status: { type: string, enum: [not_requested, pending, synced, permission_denied, failed, conflict, disconnected] }
+        external_provider: { type: string, enum: [ios_eventkit, android_calendar, android_alarm, google_tasks] }
+        external_id: { type: string, maxLength: 512 }
+        external_revision: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ReminderConfirmation:
+      type: object
+      required: [reminder, deduplicated]
+      properties:
+        reminder: { $ref: "#/components/schemas/Reminder" }
+        deduplicated: { type: boolean }
+    SystemReminderSyncResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [synced, permission_denied, failed, conflict, disconnected] }
+        provider: { type: string, enum: [ios_eventkit, android_calendar, android_alarm, google_tasks] }
+        external_id: { type: string, maxLength: 512 }
+        revision: { type: string, maxLength: 255 }
+        error_code: { type: string, maxLength: 128 }
+    SkillManifest:
+      type: object
+      required: [name, version, display_name, description, category, risk_level, requires_confirmation, enabled, tool_name, allowed_tools, state_graph, timeout_ms, max_steps, max_input_bytes, max_cost_micros, execution_mode, input_schema, output_schema]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        category: { type: string }
+        risk_level: { type: string, enum: [none, low, medium, high] }
+        requires_confirmation: { type: boolean }
+        enabled: { type: boolean }
+        tool_name: { type: string }
+        allowed_tools: { type: array, items: { type: string } }
+        state_graph: { type: array, items: { type: string } }
+        timeout_ms: { type: integer, minimum: 1 }
+        max_steps: { type: integer, minimum: 1 }
+        max_input_bytes: { type: integer, minimum: 1 }
+        max_cost_micros: { type: integer, minimum: 0 }
+        execution_mode: { type: string, enum: [inline, worker] }
+        input_schema: { type: object, additionalProperties: true }
+        output_schema: { type: object, additionalProperties: true }
+    SkillRunStep:
+      type: object
+      required: [id, sequence, state, status, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        state: { type: string }
+        status: { type: string, enum: [succeeded, failed, cancelled] }
+        tool_name: { type: string }
+        input: { type: object, additionalProperties: true }
+        output: { type: object, additionalProperties: true }
+        error_code: { type: string }
+        error_message: { type: string }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    GeneratedFile:
+      type: object
+      required: [id, run_id, name, media_type, size_bytes, sha256, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        name: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        created_at: { type: string, format: date-time }
+    SkillRun:
+      type: object
+      required: [id, skill_name, skill_version, execution_mode, status, current_state, risk_level, requires_confirmation, input, attempt, max_steps, timeout_ms, max_input_bytes, max_cost_micros, revision, steps, files, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        skill_name: { type: string }
+        skill_version: { type: string }
+        execution_mode: { type: string, enum: [inline, worker] }
+        status: { type: string, enum: [waiting_confirmation, queued, running, succeeded, failed, cancelled] }
+        current_state: { type: string }
+        risk_level: { type: string, enum: [none, low, medium, high] }
+        requires_confirmation: { type: boolean }
+        input: { type: object, additionalProperties: true }
+        output: { type: object, additionalProperties: true }
+        attempt: { type: integer, minimum: 1 }
+        max_steps: { type: integer, minimum: 1 }
+        timeout_ms: { type: integer, minimum: 1 }
+        max_input_bytes: { type: integer, minimum: 1 }
+        max_cost_micros: { type: integer, minimum: 0 }
+        error_code: { type: string }
+        error_message: { type: string }
+        revision: { type: integer, minimum: 1 }
+        steps: { type: array, items: { $ref: "#/components/schemas/SkillRunStep" } }
+        files: { type: array, items: { $ref: "#/components/schemas/GeneratedFile" } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    SkillRunEnvelope:
+      type: object
+      required: [run, deduplicated]
+      properties:
+        run: { $ref: "#/components/schemas/SkillRun" }
+        deduplicated: { type: boolean }
+    IntentRouteInput:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 4000 }
+        page: { type: string, maxLength: 64 }
+    IntentRouteResult:
+      type: object
+      additionalProperties: false
+      required: [intent, confidence, required_slots, risk_level, slots, layer, version, reason]
+      properties:
+        intent: { type: string, enum: [casual_chat, ledger, reminder, document_qa, office, finance, image, unknown] }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        required_slots: { type: array, items: { type: string } }
+        risk_level: { type: string, enum: [none, low, medium, high] }
+        suggested_skill: { type: string }
+        slots: { type: object, additionalProperties: true }
+        layer: { type: string, enum: [rules, fallback_required] }
+        version: { type: string }
+        reason: { type: string }
+    MCPServerSummary:
+      type: object
+      additionalProperties: false
+      required: [name, enabled, allowed_tools, protocol_version, transport]
+      properties:
+        name: { type: string }
+        enabled: { type: boolean }
+        allowed_tools: { type: array, items: { type: string } }
+        protocol_version: { type: string, enum: ["2025-11-25"] }
+        transport: { type: string, enum: [stdio] }
+    ReliabilityPolicy:
+      type: object
+      additionalProperties: false
+      required: [use_full_rag, extract_memory, preferred_model_class, long_skills_queued, accept_only]
+      properties:
+        use_full_rag: { type: boolean }
+        extract_memory: { type: boolean }
+        preferred_model_class: { type: string, enum: [primary, small, low_latency, local_only] }
+        long_skills_queued: { type: boolean }
+        accept_only: { type: boolean }
+    ReliabilitySnapshot:
+      type: object
+      additionalProperties: false
+      required: [level, reason, observed_at, changed_at, candidate_level, candidate_samples, queue_lag, oldest_job_age_ms, model_error_rate, p95_latency_ms, policy]
+      properties:
+        level: { type: string, enum: [L0, L1, L2, L3] }
+        reason: { type: string }
+        observed_at: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+        candidate_level: { type: string, enum: [L0, L1, L2, L3] }
+        candidate_samples: { type: integer, minimum: 0 }
+        queue_lag: { type: integer, minimum: 0 }
+        oldest_job_age_ms: { type: integer, minimum: 0 }
+        model_error_rate: { type: number, minimum: 0, maximum: 1 }
+        p95_latency_ms: { type: integer, minimum: 0 }
+        policy: { $ref: "#/components/schemas/ReliabilityPolicy" }
+    OutboxEvent:
+      type: object
+      additionalProperties: false
+      required: [id, aggregate_type, aggregate_id, event_type, event_version, occurred_at, status, available_at, attempts]
+      properties:
+        id: { type: string, format: uuid }
+        aggregate_type: { type: string }
+        aggregate_id: { type: string, format: uuid }
+        event_type: { type: string }
+        event_version: { type: integer, minimum: 1 }
+        payload: { type: object, additionalProperties: true }
+        occurred_at: { type: string, format: date-time }
+        status: { type: string, enum: [pending, publishing, published, dead_letter] }
+        available_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        worker_id: { type: string }
+        lease_expires_at: { type: string, format: date-time }
+        published_at: { type: string, format: date-time }
+        published_topic: { type: string }
+        published_partition: { type: integer }
+        published_offset: { type: integer }
+    ReplayOutboxRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    CreateCompensationRequest:
+      type: object
+      additionalProperties: false
+      required: [source_type, source_id, action, reason]
+      properties:
+        source_type: { type: string, minLength: 1, maxLength: 64 }
+        source_id: { type: string, minLength: 1, maxLength: 191 }
+        action: { type: string, minLength: 1, maxLength: 128 }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        status: { type: string, enum: [recorded, completed, failed], default: recorded }
+        metadata: { type: object, additionalProperties: true }
+    CompensationRecord:
+      type: object
+      additionalProperties: false
+      required: [id, source_type, source_id, action, reason, actor, status, metadata, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_type: { type: string }
+        source_id: { type: string }
+        action: { type: string }
+        reason: { type: string }
+        actor: { type: string }
+        status: { type: string, enum: [recorded, completed, failed] }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    Status:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+    ServiceMetadata:
+      type: object
+      additionalProperties: false
+      required: [service, environment, build]
+      properties:
+        service:
+          type: string
+        environment:
+          type: string
+        build:
+          type: object
+          additionalProperties: false
+          required: [version, commit, date]
+          properties:
+            version:
+              type: string
+            commit:
+              type: string
+            date:
+              type: string

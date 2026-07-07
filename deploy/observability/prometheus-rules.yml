@@ -1,0 +1,80 @@
+groups:
+  - name: ai-companion-m6-reliability
+    interval: 30s
+    rules:
+      - alert: AICompanionDegradationL3
+        expr: ai_companion_degradation_level >= 3
+        for: 2m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI 进入 L3 保护模式"
+          description: "系统已进入 accept-only，本轮用户请求应被持久化但不会启动模型/重型算法。检查模型、Kafka、MySQL 与 Worker。"
+          runbook: "docs/runbooks/incident-response.md#l3-保护模式"
+
+      - alert: AICompanionQueueLagHigh
+        expr: ai_companion_queue_lag >= 500
+        for: 5m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI durable queue lag 过高"
+          description: "可运行/过期任务数 >= 500 已持续 5 分钟，可能影响聊天、文档、Skill、账本导出或通知投递。"
+          runbook: "docs/runbooks/incident-response.md#队列积压"
+
+      - alert: AICompanionOldestJobAgeHigh
+        expr: ai_companion_oldest_job_age_seconds >= 120
+        for: 3m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI 最老可运行任务超过保护阈值"
+          description: "最老任务年龄 >= 120s，降级控制器可能进入 L3；优先检查 Worker 存活和 Kafka consumer group。"
+          runbook: "docs/runbooks/incident-response.md#队列积压"
+
+      - alert: AICompanionModelErrorRatioHigh
+        expr: ai_companion_model_error_ratio >= 0.5
+        for: 5m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI 模型错误率过高"
+          description: "近窗口模型失败/超时比例 >= 50%，熔断可能打开；请求应保持 accepted 等待恢复。"
+          runbook: "docs/runbooks/incident-response.md#模型供应商故障"
+
+      - alert: AICompanionModelLatencyHigh
+        expr: ai_companion_model_latency_p95_seconds >= 10
+        for: 5m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "伴AI 模型 p95 延迟过高"
+          description: "模型 p95 >= 10s，系统应进入 L2 以上降级；检查供应商延迟、区域网络和超时配置。"
+          runbook: "docs/runbooks/incident-response.md#模型供应商故障"
+
+      - alert: AICompanionHTTP5xxHigh
+        expr: sum(increase(ai_companion_http_requests_total{status=~"5.."}[5m])) >= 10
+        for: 5m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI 5xx 错误增加"
+          description: "5 分钟内 HTTP 5xx >= 10。用 X-Trace-ID 关联日志，并检查最新发布和依赖状态。"
+          runbook: "docs/runbooks/incident-response.md#api-5xx"
+
+      - alert: AICompanionDLQSuspected
+        expr: ai_companion_queue_lag == 0 and ai_companion_degradation_level >= 2
+        for: 15m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "伴AI 可能存在需要人工检查的失败事件"
+          description: "系统持续降级但 runnable lag 为 0，检查 /v1/ops/outbox/dead-letter 和 compensation_records。"
+          runbook: "docs/runbooks/incident-response.md#dlq-重放与补偿"

@@ -1,0 +1,9 @@
+ALTER TABLE outbox_events
+    DROP INDEX idx_outbox_relay_claim,
+    DROP COLUMN published_offset,
+    DROP COLUMN published_partition,
+    DROP COLUMN published_topic,
+    DROP COLUMN lease_expires_at,
+    DROP COLUMN worker_id,
+    DROP COLUMN available_at,
+    DROP COLUMN status;

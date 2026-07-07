@@ -1,0 +1,28 @@
+"use client";
+
+import { FormEvent, useEffect, useRef, useState } from "react";
+
+const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+type Message = { id: string; role: "user" | "assistant"; sequence: number; bubble: number; content: string; status: string };
+
+export function ChatPanel({ token, character, onClose }: { token: string; character: { id: string; name: string }; onClose: () => void }) {
+  const [conversationID, setConversationID] = useState(""); const [messages, setMessages] = useState<Message[]>([]); const [jobID, setJobID] = useState(""); const [status, setStatus] = useState(""); const [error, setError] = useState(""); const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { let active = true; void ensureConversation(token, character.id).then(async (id) => { if (!active) return; setConversationID(id); const items = await loadMessages(token,id); if(active)setMessages(items); }).catch((cause:Error)=>setError(cause.message)); return()=>{active=false}; },[token,character.id]);
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[messages,status]);
+
+  async function send(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form=event.currentTarget;const data=new FormData(form);const content=String(data.get("content")??"").trim();if(!content||!conversationID||jobID)return;setError("");setStatus("正在回应…");
+    try{const response=await fetch(`${apiBase}/v1/conversations/${conversationID}/messages`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({content})});const payload=await response.json() as {message:Message;job:{id:string}}|{message:string};if(!response.ok||!("job" in payload))throw new Error(typeof payload.message==="string"?payload.message:"发送失败");form.reset();setMessages(current=>mergeMessage(current,payload.message));setJobID(payload.job.id);await consumeEvents(payload.job.id);}
+    catch(cause){setError(cause instanceof Error?cause.message:"发送失败");setStatus("生成失败，可重试");} }
+
+  async function consumeEvents(id:string){const response=await fetch(`${apiBase}/v1/generation-jobs/${id}/events`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error("实时连接失败");const reader=response.body?.getReader();if(!reader)throw new Error("浏览器不支持流式响应");const decoder=new TextDecoder();let buffer="";
+    while(true){const {done,value}=await reader.read();buffer+=decoder.decode(value,{stream:!done});const frames=buffer.split("\n\n");buffer=frames.pop()??"";for(const frame of frames){const type=frame.match(/^event: (.+)$/m)?.[1];const raw=frame.match(/^data: (.+)$/m)?.[1];if(type==="bubble"&&raw){setMessages(current=>mergeMessage(current,JSON.parse(raw) as Message))}if(type==="completed"){setStatus("");setJobID("")}if(type==="cancelled"){setStatus("已停止生成");setJobID("")}if(type==="failed"||type==="timed_out"){setStatus("生成失败，可重试");setJobID(id)}}if(done)break} }
+
+  async function stop(){if(!jobID)return;await fetch(`${apiBase}/v1/generation-jobs/${jobID}/cancel`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});setStatus("正在停止…")}
+  async function retry(){if(!jobID)return;setError("");const response=await fetch(`${apiBase}/v1/generation-jobs/${jobID}/retry`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});const payload=await response.json() as {id?:string;message?:string};if(!response.ok||!payload.id){setError(payload.message??"重试失败");return};setJobID(payload.id);setStatus("正在重试…");await consumeEvents(payload.id)}
+
+  return <section className="chatPanel" aria-label={`与${character.name}聊天`}><header><div><small>正在和</small><h3>{character.name}</h3></div><button className="textButton" type="button" onClick={onClose}>返回角色</button></header><div className="messageList">{messages.length===0&&<p className="emptyState">发一条消息，开始你们的第一段对话。</p>}{messages.map(item=><div className={`messageBubble ${item.role}`} key={item.id}><small>{item.role==="user"?"你":character.name}</small><p>{item.content}</p></div>)}{status&&<p className="typingState">{status}</p>}<div ref={bottomRef}/></div>{error&&<p className="formMessage" role="alert">{error}</p>}<form className="composer" onSubmit={send}><textarea name="content" required maxLength={8000} placeholder={`跟${character.name}说点什么…`}/><div>{jobID&&status.includes("失败")?<button type="button" onClick={retry}>重试</button>:jobID?<button type="button" onClick={stop}>停止生成</button>:null}<button type="submit" disabled={!conversationID||Boolean(jobID)}>发送</button></div></form></section>
+}
+
+async function ensureConversation(token:string,characterID:string){const listed=await fetch(`${apiBase}/v1/conversations`,{headers:{Authorization:`Bearer ${token}`}});if(!listed.ok)throw new Error("无法加载会话");const payload=await listed.json() as {items:{id:string;character_id:string}[]};const existing=payload.items.find(item=>item.character_id===characterID);if(existing)return existing.id;const created=await fetch(`${apiBase}/v1/conversations`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({character_id:characterID})});if(!created.ok)throw new Error("无法创建会话");return ((await created.json()) as {id:string}).id}
+async function loadMessages(token:string,conversationID:string){const response=await fetch(`${apiBase}/v1/conversations/${conversationID}/messages`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error("无法加载历史消息");return ((await response.json()) as {items:Message[]}).items}
+function mergeMessage(current:Message[],incoming:Message){if(current.some(item=>item.id===incoming.id))return current;return [...current,incoming].sort((a,b)=>a.sequence-b.sequence||a.bubble-b.bubble)}

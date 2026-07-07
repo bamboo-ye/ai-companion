@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/events/notification-deliver.v1.schema.json",
+  "title": "notification.deliver.v1 payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["delivery_id", "reminder_id", "user_id"],
+  "properties": {
+    "delivery_id": { "type": "string", "format": "uuid" },
+    "reminder_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" }
+  }
+}

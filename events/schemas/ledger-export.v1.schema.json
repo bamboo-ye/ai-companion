@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/events/ledger-export.v1.schema.json",
+  "title": "ledger.export.v1 payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["export_id", "user_id"],
+  "properties": {
+    "export_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" }
+  }
+}
