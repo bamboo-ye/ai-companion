@@ -1,0 +1,15 @@
+.git
+.github
+.cache
+.data
+.env
+node_modules
+web/.next
+mobile/android/.gradle
+mobile/android/**/build
+mobile/ios/.build
+bin
+tmp
+*.test
+*.tsbuildinfo
+

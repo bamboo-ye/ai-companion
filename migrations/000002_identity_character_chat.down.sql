@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS model_usage_records;
+DROP TABLE IF EXISTS generation_jobs;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS conversations;
+DROP TABLE IF EXISTS character_persona_versions;
+DROP TABLE IF EXISTS characters;
+DROP TABLE IF EXISTS refresh_sessions;
+DROP TABLE IF EXISTS user_devices;
+DROP TABLE IF EXISTS users;

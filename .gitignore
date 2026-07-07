@@ -1,0 +1,56 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+bin/
+coverage.out
+*.test
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+workers/python/dist/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+workers/spreadsheet/node_modules
+.pnpm-store/
+web/.next/
+web/out/
+web/.turbo/
+web/next-env.d.ts
+*.tsbuildinfo
+
+# Android
+mobile/android/.gradle/
+mobile/android/.gradle-home/
+mobile/android/local.properties
+mobile/android/**/build/
+*.apk
+*.aab
+
+# Apple
+mobile/ios/.build/
+mobile/ios/DerivedData/
+mobile/ios/*.xcodeproj/xcuserdata/
+*.xcuserstate
+
+# Runtime data
+.cache/
+.data/
+tmp/
+dist/

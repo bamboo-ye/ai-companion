@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/events/memory-extract.v1.schema.json",
+  "title": "memory.extract.v1 payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["message_id", "user_id", "conversation_id"],
+  "properties": {
+    "message_id": { "type": "string", "format": "uuid" },
+    "user_id": { "type": "string", "format": "uuid" },
+    "conversation_id": { "type": "string", "format": "uuid" }
+  }
+}

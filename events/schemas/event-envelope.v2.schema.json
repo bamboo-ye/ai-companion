@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion.local/event-envelope.v2.schema.json",
+  "title": "Kafka event envelope v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "event_version", "aggregate_type", "aggregate_id", "occurred_at", "payload"],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "event_type": { "type": "string", "enum": ["chat.command.v1", "memory.extract.v1", "document.ingest.v1", "document.cleanup.v1", "skill.execute.v1", "skill.run.succeeded.v1", "ledger.entry.created.v1", "ledger.export.v1", "reminder.confirmed.v1", "notification.deliver.v1"] },
+    "event_version": { "type": "integer", "minimum": 1 },
+    "aggregate_type": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "aggregate_id": { "type": "string", "format": "uuid" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  }
+}

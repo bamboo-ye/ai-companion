@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ai-companion.local/event-envelope.v1.schema.json",
+  "title": "Event envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "type", "occurred_at", "aggregate_id", "sequence", "data", "trace_id"],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "type": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*)+$" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "aggregate_id": { "type": "string", "format": "uuid" },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "data": { "type": "object" },
+    "trace_id": { "type": "string", "minLength": 1, "maxLength": 64 }
+  }
+}
+

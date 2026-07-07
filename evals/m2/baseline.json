@@ -1,0 +1,93 @@
+{
+  "version": "m2-rag-baseline-v1",
+  "minimum_cases": 100,
+  "thresholds": {
+    "context_precision": 0.95,
+    "context_recall": 0.95,
+    "citation_correctness": 0.95,
+    "faithfulness": 0.95,
+    "insufficient_accuracy": 0.95
+  },
+  "subjects": [
+    {
+      "id": "mars_launch",
+      "document_name": "火星计划.txt",
+      "content": "项目结论：火星计划将在四月启动，负责人是林晓。",
+      "expected_contains": "四月启动",
+      "related_queries": ["火星计划什么时候启动？", "火星计划的启动月份是什么？", "谁负责火星计划？", "请告诉我火星计划的项目结论", "四月启动的是哪个计划？"],
+      "unrelated_queries": ["木星任务预算是多少？", "今天北京天气如何？", "谁获得了网球冠军？", "咖啡机应该如何清洗？", "量子芯片有多少晶体管？"]
+    },
+    {
+      "id": "legal_review",
+      "document_name": "合同流程.txt",
+      "content": "合同审批由法务组在周三完成，业务负责人需要提前一天提交材料。",
+      "expected_contains": "法务组在周三完成",
+      "related_queries": ["合同审批由谁完成？", "合同审批安排在星期几？", "业务负责人何时提交材料？", "周三完成的流程是什么？", "请概括合同流程"],
+      "unrelated_queries": ["火箭燃料使用什么成分？", "季度奖金如何计算？", "游泳池几点关闭？", "摄影镜头焦距是多少？", "哪座城市举办音乐节？"]
+    },
+    {
+      "id": "backup_policy",
+      "document_name": "备份策略.txt",
+      "content": "生产数据库每天凌晨两点执行全量备份，备份文件保留三十天。",
+      "expected_contains": "凌晨两点执行全量备份",
+      "related_queries": ["生产数据库几点备份？", "备份文件保留多少天？", "数据库采用哪种备份？", "每天凌晨两点执行什么任务？", "请说明生产备份策略"],
+      "unrelated_queries": ["员工午餐补贴是多少？", "月球表面温度多高？", "如何申请停车位？", "新品发布会在哪里？", "足球比赛谁进球了？"]
+    },
+    {
+      "id": "support_sla",
+      "document_name": "客服SLA.txt",
+      "content": "高级客户故障应在十五分钟内响应，并在四小时内提供恢复方案。",
+      "expected_contains": "十五分钟内响应",
+      "related_queries": ["高级客户故障多久响应？", "恢复方案需要几小时提供？", "十五分钟内要完成什么？", "客服故障的响应要求是什么？", "请总结高级客户SLA"],
+      "unrelated_queries": ["仓库有多少台叉车？", "法国首都是哪里？", "怎样制作苹果派？", "机票可以免费退改吗？", "办公室绿植多久浇水？"]
+    },
+    {
+      "id": "release_window",
+      "document_name": "发布窗口.txt",
+      "content": "移动端版本固定在每月第二个星期二发布，紧急修复需技术负责人批准。",
+      "expected_contains": "第二个星期二发布",
+      "related_queries": ["移动端版本哪天发布？", "紧急修复需要谁批准？", "每月第二个星期二做什么？", "移动端发布窗口如何安排？", "请说明紧急修复规则"],
+      "unrelated_queries": ["火星上有没有液态水？", "财务发票抬头是什么？", "公交车末班几点？", "猫一天需要睡多久？", "显示器支持多高刷新率？"]
+    },
+    {
+      "id": "security_training",
+      "document_name": "安全培训.txt",
+      "content": "所有新员工必须在入职七天内完成安全培训和钓鱼邮件演练。",
+      "expected_contains": "入职七天内完成",
+      "related_queries": ["新员工多久完成安全培训？", "安全培训还包括什么演练？", "入职七天内必须做什么？", "谁需要参加钓鱼邮件演练？", "请概括新员工安全要求"],
+      "unrelated_queries": ["产品毛利率是多少？", "地铁新线路何时开通？", "烤箱温度应该设多少？", "哪位导演获得奖项？", "服务器硬盘容量多大？"]
+    },
+    {
+      "id": "expense_rule",
+      "document_name": "差旅报销.txt",
+      "content": "差旅住宿费每晚最高六百元，报销时必须附酒店发票和行程单。",
+      "expected_contains": "每晚最高六百元",
+      "related_queries": ["住宿费每晚上限多少？", "差旅报销需要哪些附件？", "酒店发票用于什么报销？", "六百元是什么费用上限？", "请总结差旅住宿规则"],
+      "unrelated_queries": ["数据库索引如何优化？", "太阳系有几颗行星？", "会议室能坐多少人？", "新电影什么时候上映？", "茶叶应该如何保存？"]
+    },
+    {
+      "id": "warehouse_temp",
+      "document_name": "仓储规范.txt",
+      "content": "药品仓库温度必须保持在十五到二十五摄氏度，湿度不得超过百分之六十。",
+      "expected_contains": "十五到二十五摄氏度",
+      "related_queries": ["药品仓库温度范围是多少？", "仓库湿度上限是多少？", "百分之六十限制的是什么？", "药品储存有哪些环境要求？", "请概括仓储温湿度规范"],
+      "unrelated_queries": ["销售团队有多少成员？", "登山路线需要几小时？", "键盘采用什么轴体？", "图书馆周末开放吗？", "如何兑换航空里程？"]
+    },
+    {
+      "id": "api_deprecation",
+      "document_name": "API迁移.txt",
+      "content": "旧版订单接口将在九月三十日下线，客户端必须迁移到第二版接口。",
+      "expected_contains": "九月三十日下线",
+      "related_queries": ["旧版订单接口何时下线？", "客户端要迁移到哪个版本？", "九月三十日会发生什么？", "订单接口迁移要求是什么？", "请概括API下线安排"],
+      "unrelated_queries": ["办公室租金每月多少？", "深海最深处在哪里？", "怎样更换汽车轮胎？", "篮球赛几点开始？", "打印机墨盒是什么型号？"]
+    },
+    {
+      "id": "english_retention",
+      "document_name": "retention-policy.txt",
+      "content": "Audit logs are retained for ninety days and archived every Friday.",
+      "expected_contains": "retained for ninety days",
+      "related_queries": ["How long are audit logs retained?", "When are audit logs archived?", "Which records are retained for ninety days?", "Summarize the audit log policy", "What happens every Friday?"],
+      "unrelated_queries": ["What is the Jupiter mission budget?", "Who won the tennis final?", "How should coffee beans be stored?", "Where is the summer concert?", "Which battery powers the drone?"]
+    }
+  ]
+}
