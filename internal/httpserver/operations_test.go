@@ -68,6 +68,29 @@ func TestOperatorCanCreateManualCompensationRecord(t *testing.T) {
 	}
 }
 
+func TestOperatorCanListKafkaPoisonMessages(t *testing.T) {
+	store := eventbus.NewMemoryStore()
+	now := time.Date(2026, 7, 8, 3, 0, 0, 0, time.UTC)
+	if err := store.RecordPoisonMessage(context.Background(), eventbus.PoisonMessageInput{
+		ConsumerName: "ai-companion-background-v1-ledger", Topic: "ledger.export.v1", Partition: 1, Offset: 42,
+		EventID: "event-fail", EventType: "ledger.export.v1", AggregateID: "export-1", Reason: "poison Kafka message: invalid Kafka event id",
+		Envelope: json.RawMessage(`{"event_id":"event-fail","event_type":"ledger.export.v1"}`), ObservedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-secret-with-enough-entropy", OperatorToken: "ops-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.SetOperationsStore(store)
+
+	unauthorized := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/kafka/poison-messages", "", "", nil)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized=%d %s", unauthorized.Code, unauthorized.Body.String())
+	}
+	listed := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/kafka/poison-messages", "ops-token", "sre-a", nil)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "event-fail") || !strings.Contains(listed.Body.String(), "ledger.export.v1") || !strings.Contains(listed.Body.String(), "invalid Kafka event id") {
+		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+}
+
 type alwaysFailPublisher struct{}
 
 func (alwaysFailPublisher) Publish(context.Context, eventbus.Event) (eventbus.PublishAck, error) {

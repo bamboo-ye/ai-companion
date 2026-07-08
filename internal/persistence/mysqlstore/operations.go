@@ -37,6 +37,26 @@ func (s *Store) GetOutboxEvent(ctx context.Context, eventID string) (eventbus.Ou
 	return record, err
 }
 
+func (s *Store) ListPoisonMessages(ctx context.Context, limit int) ([]eventbus.PoisonMessageRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, poisonMessageSelect+` ORDER BY observed_at DESC,id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]eventbus.PoisonMessageRecord, 0)
+	for rows.Next() {
+		record, scanErr := scanPoisonMessage(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 func (s *Store) CreateCompensationRecord(ctx context.Context, input eventbus.CompensationInput) (eventbus.CompensationRecord, error) {
 	if len(input.Metadata) == 0 {
 		input.Metadata = json.RawMessage(`{}`)
@@ -100,6 +120,18 @@ func scanOutboxRecord(row rowScanner) (eventbus.OutboxRecord, error) {
 		value := offset.Int64
 		record.PublishedOffset = &value
 	}
+	return record, nil
+}
+
+const poisonMessageSelect = `SELECT id,consumer_name,topic,partition_no,offset_no,COALESCE(event_id,''),COALESCE(event_type,''),COALESCE(aggregate_id,''),reason,COALESCE(envelope,JSON_OBJECT()),observed_at FROM kafka_poison_messages`
+
+func scanPoisonMessage(row rowScanner) (eventbus.PoisonMessageRecord, error) {
+	var record eventbus.PoisonMessageRecord
+	var envelope []byte
+	if err := row.Scan(&record.ID, &record.ConsumerName, &record.Topic, &record.Partition, &record.Offset, &record.EventID, &record.EventType, &record.AggregateID, &record.Reason, &envelope, &record.ObservedAt); err != nil {
+		return eventbus.PoisonMessageRecord{}, err
+	}
+	record.Envelope = append([]byte(nil), envelope...)
 	return record, nil
 }
 

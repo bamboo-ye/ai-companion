@@ -37,6 +37,19 @@ func (s *Server) getOutboxEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"event": record})
 }
 
+func (s *Server) listPoisonMessages(w http.ResponseWriter, r *http.Request) {
+	store, ok := s.requireOperationsStore(w)
+	if !ok {
+		return
+	}
+	records, err := store.ListPoisonMessages(r.Context(), queryLimit(r, 100))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, apiError{Code: "operations_unavailable", Message: "Kafka 脏消息暂时不可用"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": records})
+}
+
 func (s *Server) replayOutboxEvent(w http.ResponseWriter, r *http.Request) {
 	store, ok := s.requireOperationsStore(w)
 	if !ok {

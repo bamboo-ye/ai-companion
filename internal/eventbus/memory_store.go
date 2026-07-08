@@ -21,6 +21,7 @@ type MemoryStore struct {
 	mu            sync.Mutex
 	events        map[string]memoryEvent
 	inbox         map[string]time.Time
+	poison        []PoisonMessageRecord
 	compensations []CompensationRecord
 }
 
@@ -108,6 +109,18 @@ func (s *MemoryStore) InboxEventExists(_ context.Context, consumer, eventID stri
 	return exists, nil
 }
 
+func (s *MemoryStore) RecordPoisonMessage(_ context.Context, input PoisonMessageInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record := PoisonMessageRecord{
+		ID: uint64(len(s.poison) + 1), ConsumerName: input.ConsumerName, Topic: input.Topic, Partition: input.Partition,
+		Offset: input.Offset, EventID: input.EventID, EventType: input.EventType, AggregateID: input.AggregateID,
+		Reason: input.Reason, Envelope: append([]byte(nil), input.Envelope...), ObservedAt: input.ObservedAt,
+	}
+	s.poison = append(s.poison, record)
+	return nil
+}
+
 func (s *MemoryStore) ReplayOutboxEvent(_ context.Context, eventID string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,6 +163,20 @@ func (s *MemoryStore) GetOutboxEvent(_ context.Context, eventID string) (OutboxR
 		return OutboxRecord{}, ErrConflict
 	}
 	return memoryOutboxRecord(item), nil
+}
+
+func (s *MemoryStore) ListPoisonMessages(_ context.Context, limit int) ([]PoisonMessageRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	records := append([]PoisonMessageRecord(nil), s.poison...)
+	sort.Slice(records, func(i, j int) bool { return records[i].ObservedAt.After(records[j].ObservedAt) })
+	if len(records) > limit {
+		records = records[:limit]
+	}
+	return records, nil
 }
 
 func (s *MemoryStore) CreateCompensationRecord(_ context.Context, input CompensationInput) (CompensationRecord, error) {

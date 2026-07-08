@@ -39,6 +39,33 @@ type CompensationRecord struct {
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 }
 
+type PoisonMessageInput struct {
+	ConsumerName string
+	Topic        string
+	Partition    int
+	Offset       int64
+	EventID      string
+	EventType    string
+	AggregateID  string
+	Reason       string
+	Envelope     json.RawMessage
+	ObservedAt   time.Time
+}
+
+type PoisonMessageRecord struct {
+	ID           uint64          `json:"id"`
+	ConsumerName string          `json:"consumer_name"`
+	Topic        string          `json:"topic"`
+	Partition    int             `json:"partition"`
+	Offset       int64           `json:"offset"`
+	EventID      string          `json:"event_id,omitempty"`
+	EventType    string          `json:"event_type,omitempty"`
+	AggregateID  string          `json:"aggregate_id,omitempty"`
+	Reason       string          `json:"reason"`
+	Envelope     json.RawMessage `json:"envelope,omitempty"`
+	ObservedAt   time.Time       `json:"observed_at"`
+}
+
 type CompensationInput struct {
 	ID         string
 	SourceType string
@@ -55,6 +82,7 @@ type OperationsStore interface {
 	ListDeadLetterOutboxEvents(context.Context, int) ([]OutboxRecord, error)
 	GetOutboxEvent(context.Context, string) (OutboxRecord, error)
 	ReplayOutboxEvent(context.Context, string, time.Time) error
+	ListPoisonMessages(context.Context, int) ([]PoisonMessageRecord, error)
 	CreateCompensationRecord(context.Context, CompensationInput) (CompensationRecord, error)
 	ListCompensationRecords(context.Context, int) ([]CompensationRecord, error)
 }
