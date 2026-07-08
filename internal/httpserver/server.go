@@ -211,6 +211,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("GET /v1/ops/outbox/dead-letter", server.requireOperator(http.HandlerFunc(server.listDeadLetterOutboxEvents)))
 	mux.Handle("GET /v1/ops/outbox/{event_id}", server.requireOperator(http.HandlerFunc(server.getOutboxEvent)))
 	mux.Handle("POST /v1/ops/outbox/{event_id}/replay", server.requireOperator(http.HandlerFunc(server.replayOutboxEvent)))
+	mux.Handle("GET /v1/ops/kafka/poison-messages", server.requireOperator(http.HandlerFunc(server.listPoisonMessages)))
 	mux.Handle("GET /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.listCompensationRecords)))
 	mux.Handle("POST /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.createCompensationRecord)))
 

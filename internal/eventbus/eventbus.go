@@ -40,6 +40,7 @@ type Store interface {
 	FailOutboxEvent(context.Context, string, string, string, time.Time, bool) error
 	RecordInboxEvent(context.Context, string, string, time.Time) (bool, error)
 	InboxEventExists(context.Context, string, string) (bool, error)
+	RecordPoisonMessage(context.Context, PoisonMessageInput) error
 	ReplayOutboxEvent(context.Context, string, time.Time) error
 }
 

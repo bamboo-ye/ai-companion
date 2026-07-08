@@ -151,12 +151,19 @@ func (r *ConsumerRunner) RunOnce(ctx context.Context) error {
 		var poison PoisonMessageError
 		if errors.As(err, &poison) {
 			r.report(err)
+			if recordErr := r.recordPoison(ctx, poison); recordErr != nil {
+				return recordErr
+			}
 			return r.consumer.Commit(ctx, poison.Message)
 		}
 		return err
 	}
 	if !isUUID(message.Event.ID) {
-		r.report(PoisonMessageError{Message: message, Cause: fmt.Errorf("invalid Kafka event id %q", message.Event.ID)})
+		poison := PoisonMessageError{Message: message, Cause: fmt.Errorf("invalid Kafka event id %q", message.Event.ID)}
+		r.report(poison)
+		if err = r.recordPoison(ctx, poison); err != nil {
+			return err
+		}
 		return r.consumer.Commit(ctx, message)
 	}
 	seen, err := r.store.InboxEventExists(ctx, r.name, message.Event.ID)
@@ -172,6 +179,27 @@ func (r *ConsumerRunner) RunOnce(ctx context.Context) error {
 		}
 	}
 	return r.consumer.Commit(ctx, message)
+}
+
+func (r *ConsumerRunner) recordPoison(ctx context.Context, poison PoisonMessageError) error {
+	input := PoisonMessageInput{
+		ConsumerName: r.name,
+		Topic:        poison.Message.Event.Type,
+		Partition:    -1,
+		Offset:       -1,
+		EventID:      poison.Message.Event.ID,
+		EventType:    poison.Message.Event.Type,
+		AggregateID:  poison.Message.Event.AggregateID,
+		Reason:       poison.Error(),
+		ObservedAt:   r.now().UTC(),
+	}
+	if poison.Message.record != nil {
+		input.Topic = poison.Message.record.Topic
+		input.Partition = int(poison.Message.record.Partition)
+		input.Offset = poison.Message.record.Offset
+		input.Envelope = append([]byte(nil), poison.Message.record.Value...)
+	}
+	return r.store.RecordPoisonMessage(ctx, input)
 }
 
 func (r *ConsumerRunner) report(err error) {

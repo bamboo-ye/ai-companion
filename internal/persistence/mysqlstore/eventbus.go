@@ -2,6 +2,7 @@ package mysqlstore
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/eventbus"
@@ -94,6 +95,16 @@ func (s *Store) InboxEventExists(ctx context.Context, consumer, eventID string) 
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *Store) RecordPoisonMessage(ctx context.Context, input eventbus.PoisonMessageInput) error {
+	var envelope any
+	if len(input.Envelope) > 0 {
+		envelope = json.RawMessage(input.Envelope)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO kafka_poison_messages (consumer_name,topic,partition_no,offset_no,event_id,event_type,aggregate_id,reason,envelope,observed_at) VALUES (?,?,?,?,NULLIF(?,''),NULLIF(?,''),NULLIF(?,''),?,CAST(NULLIF(?, '') AS JSON),?) ON DUPLICATE KEY UPDATE reason=VALUES(reason),event_id=VALUES(event_id),event_type=VALUES(event_type),aggregate_id=VALUES(aggregate_id),envelope=VALUES(envelope),observed_at=VALUES(observed_at)`,
+		input.ConsumerName, input.Topic, input.Partition, input.Offset, input.EventID, input.EventType, input.AggregateID, input.Reason, envelope, input.ObservedAt)
+	return err
 }
 
 func (s *Store) ReplayOutboxEvent(ctx context.Context, eventID string, now time.Time) error {

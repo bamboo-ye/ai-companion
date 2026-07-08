@@ -145,6 +145,10 @@ Implemented:
 - Added backup/restore, object restore, Qdrant rebuild, deletion, and data-export drill runbooks.
 - Added security, fault, and load test plan for auth, operator surface, object access, prompt injection, Kafka duplicate delivery, Worker loss, model outage, and backlog recovery.
 - Added Web PWA internal-release package: manifest, installable SVG icon, production service-worker registration, and a network-first shell cache that intentionally avoids caching user API data.
+- Recorded the final internal restore/fault/load drill evidence under `docs/runbooks/evidence/2026-07-08-m6-internal-drill.md`.
+- Hardened Kafka consumers against historical poison records: invalid envelopes and non-UUID event IDs are recorded to `kafka_poison_messages`, committed, skipped, and surfaced through the operator API instead of crashing the Worker.
+- Kafka consumer broker/session errors are now treated as transient, logged, and retried by the runner rather than terminating the Worker process.
+- Added operator visibility for skipped Kafka poison messages through `GET /v1/ops/kafka/poison-messages`.
 
 ### Slice 6 verification
 
@@ -156,9 +160,17 @@ Implemented:
 | Service worker avoids `/v1/*` and `/api/*` user data caching | Passed by code review |
 | Go full test suite | Passed |
 | OpenAPI YAML parse | Passed |
+| Real MySQL restore drill and migration verification | Passed |
+| Worker downtime durable recovery drill | Passed |
+| Kafka outage durable recovery drill | Passed |
+| 20-message load drill | Passed |
+| TXT document parse/chunk/Qdrant retrieval drill | Passed |
+| Poison Kafka event IDs are recorded and skipped without processing | Passed |
+| Transient Kafka consumer errors retry without stopping the runner | Passed |
 
-## Remaining M6 slices
+## M6 final drill evidence
 
-- Run a real restore/fault/load drill against the intended internal-release environment and record evidence.
+- Evidence: `docs/runbooks/evidence/2026-07-08-m6-internal-drill.md`
+- Result: passed with follow-up hardening implemented for Kafka poison-message visibility and consumer retry behavior.
 
-M6 is in progress.
+M6 is complete for the internal-release scope.

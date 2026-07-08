@@ -364,9 +364,9 @@ Operational findings:
 
 1. Historical Kafka topic records with non-UUID event IDs can crash a consumer writing to the MySQL inbox table.
    - Workaround used in drill: reset internal consumer group offsets to latest.
-   - Recommended fix: make Kafka consumer poison-message handling explicit, validate UUID event IDs before processing, and commit/route invalid envelopes to an operator-visible DLQ instead of exiting the whole Worker.
+   - Resolution implemented after drill: Kafka consumers validate event IDs before Inbox writes, record invalid envelopes/non-UUID event IDs to `kafka_poison_messages`, expose them through `GET /v1/ops/kafka/poison-messages`, commit the bad offset, and skip processing instead of exiting the Worker.
 2. Worker exits when Kafka is unavailable.
    - Recovery passed after restart, but the final environment needs supervisor restart policy and alerting.
+   - Resolution implemented after drill: Kafka consumer poll/commit broker errors are treated as transient, logged, and retried by the runner instead of returning a process-fatal error.
 3. The default internal DB was not a clean acceptance baseline because old failed/accepted jobs pushed reliability to L3.
    - Recommended fix: define a pre-drill cleanup/reset procedure or run final acceptance on an isolated DB snapshot.
-
