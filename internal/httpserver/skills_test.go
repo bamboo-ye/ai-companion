@@ -115,6 +115,102 @@ func TestSkillRunCanCancelRetryAndEnforcesOwnership(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSkillFileShareRequiresMembershipAndOwnership(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "workspace-skill-file-secret-with-enough-entropy"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	owner := registerSkillUser(t, server, "workspace-skill-owner@example.com", "workspace-skill-owner")
+	member := registerSkillUser(t, server, "workspace-skill-member@example.com", "workspace-skill-member")
+	outsider := registerSkillUser(t, server, "workspace-skill-outsider@example.com", "workspace-skill-outsider")
+
+	workspace := performJSON(t, server, http.MethodPost, "/v1/workspaces", owner, map[string]string{"name": "Skill 产物共享"})
+	if workspace.Code != http.StatusCreated {
+		t.Fatalf("workspace=%d %s", workspace.Code, workspace.Body.String())
+	}
+	var workspacePayload struct {
+		Workspace struct {
+			ID string `json:"id"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(workspace.Body.Bytes(), &workspacePayload); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := workspacePayload.Workspace.ID
+	invite := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/invitations", owner, map[string]string{"email": "workspace-skill-member@example.com", "role": "member"})
+	if invite.Code != http.StatusCreated {
+		t.Fatalf("invite=%d %s", invite.Code, invite.Body.String())
+	}
+	var invitePayload struct {
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.Unmarshal(invite.Body.Bytes(), &invitePayload); err != nil {
+		t.Fatal(err)
+	}
+	accepted := performJSON(t, server, http.MethodPost, "/v1/workspace-invitations/"+invitePayload.Invitation.ID+"/accept", member, nil)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept=%d %s", accepted.Code, accepted.Body.String())
+	}
+
+	candidate := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.markdown_document/runs", owner, "workspace-skill-file-run", map[string]any{"input": map[string]any{"title": "团队周报", "content": "这是给团队共享的产物。"}})
+	if candidate.Code != http.StatusAccepted {
+		t.Fatalf("candidate=%d %s", candidate.Code, candidate.Body.String())
+	}
+	var candidatePayload struct {
+		Run struct {
+			ID string `json:"id"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal(candidate.Body.Bytes(), &candidatePayload); err != nil {
+		t.Fatal(err)
+	}
+	confirmed := performSkillRequest(t, server, http.MethodPost, "/v1/skill-runs/"+candidatePayload.Run.ID+"/confirm", owner, "workspace-skill-file-confirm", map[string]any{})
+	if confirmed.Code != http.StatusOK {
+		t.Fatalf("confirm=%d %s", confirmed.Code, confirmed.Body.String())
+	}
+	var confirmedPayload struct {
+		Files []struct {
+			ID string `json:"id"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(confirmed.Body.Bytes(), &confirmedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmedPayload.Files) != 1 {
+		t.Fatalf("files=%#v", confirmedPayload.Files)
+	}
+	fileID := confirmedPayload.Files[0].ID
+
+	memberShare := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/skill-files", member, map[string]string{"run_id": candidatePayload.Run.ID, "file_id": fileID})
+	if memberShare.Code != http.StatusNotFound {
+		t.Fatalf("member share=%d %s", memberShare.Code, memberShare.Body.String())
+	}
+	shared := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/skill-files", owner, map[string]string{"run_id": candidatePayload.Run.ID, "file_id": fileID})
+	if shared.Code != http.StatusNoContent {
+		t.Fatalf("share=%d %s", shared.Code, shared.Body.String())
+	}
+	reshared := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/skill-files", owner, map[string]string{"run_id": candidatePayload.Run.ID, "file_id": fileID})
+	if reshared.Code != http.StatusNoContent {
+		t.Fatalf("reshare=%d %s", reshared.Code, reshared.Body.String())
+	}
+
+	memberList := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/skill-files", member, nil)
+	if memberList.Code != http.StatusOK || !strings.Contains(memberList.Body.String(), fileID) || !strings.Contains(memberList.Body.String(), "团队周报.md") {
+		t.Fatalf("member list=%d %s", memberList.Code, memberList.Body.String())
+	}
+	memberDownload := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/skill-files/"+fileID, member, nil)
+	if memberDownload.Code != http.StatusOK || memberDownload.Body.String() != "# 团队周报\n\n这是给团队共享的产物。\n" {
+		t.Fatalf("member download=%d %q", memberDownload.Code, memberDownload.Body.String())
+	}
+	outsiderList := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/skill-files", outsider, nil)
+	if outsiderList.Code != http.StatusNotFound {
+		t.Fatalf("outsider list=%d %s", outsiderList.Code, outsiderList.Body.String())
+	}
+	outsiderDownload := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/skill-files/"+fileID, outsider, nil)
+	if outsiderDownload.Code != http.StatusNotFound {
+		t.Fatalf("outsider download=%d %s", outsiderDownload.Code, outsiderDownload.Body.String())
+	}
+}
+
 func TestLongRunningSkillIsAcceptedIntoWorkerQueue(t *testing.T) {
 	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "skill-queue-test-secret-with-enough-entropy", SkillWorkerEnabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	token := registerSkillUser(t, server, "skill-queue@example.com", "queue")

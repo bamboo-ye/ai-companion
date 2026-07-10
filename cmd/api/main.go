@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
+	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/httpserver"
 	"github.com/windcry1/ai-companion/internal/identity"
 	"github.com/windcry1/ai-companion/internal/ledger"
@@ -22,7 +24,9 @@ import (
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/realtime"
 	"github.com/windcry1/ai-companion/internal/reliability"
+	"github.com/windcry1/ai-companion/internal/safety"
 	"github.com/windcry1/ai-companion/internal/skill"
+	"github.com/windcry1/ai-companion/internal/team"
 )
 
 func main() {
@@ -41,6 +45,10 @@ func main() {
 	ledgerStore := ledger.Store(ledger.NewMemoryStore())
 	plannerStore := planner.Store(planner.NewMemoryStore())
 	skillStore := skill.Store(skill.NewMemoryStore())
+	teamStore := team.Store(team.NewMemoryStore())
+	emailStore := email.Store(email.NewMemoryStore())
+	billingStore := billing.Store(billing.NewMemoryStore())
+	safetyStore := safety.Store(safety.NewMemoryStore())
 	localBlobs, err := document.NewLocalBlobStore(cfg.DocumentStorageDir)
 	if err != nil {
 		logger.Error("initialize document storage", "error", err)
@@ -65,6 +73,10 @@ func main() {
 		ledgerStore = persistentStore
 		plannerStore = persistentStore
 		skillStore = persistentStore
+		teamStore = persistentStore
+		emailStore = persistentStore
+		billingStore = persistentStore
+		safetyStore = persistentStore
 		logger.Info("using persistent mysql store")
 	} else {
 		logger.Warn("MYSQL_DSN is empty; using non-persistent in-memory store")
@@ -98,6 +110,10 @@ func main() {
 		os.Exit(1)
 	}
 	server := httpserver.NewWithM4Dependencies(cfg, logger, identityStore, characterStore, conversationStore, memoryStore, documentStore, documentBlobs, ledgerStore, plannerStore, skillStore, skillFiles, provider, realtimeGateway)
+	server.SetTeamStore(teamStore)
+	server.SetEmailStore(emailStore)
+	server.SetBillingStore(billingStore)
+	server.SetSafetyStore(safetyStore)
 	server.SetDocumentIndex(document.NewQdrantIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 10*time.Second))
 	server.SetLedgerExporter(ledger.ArtifactToolExporter{Executable: cfg.SpreadsheetExecutable, ScriptPath: cfg.SpreadsheetWorkerPath, Timeout: 30 * time.Second})
 	ledgerFiles, ledgerFileErr := ledger.NewLocalExportFileStore(cfg.LedgerStorageDir)

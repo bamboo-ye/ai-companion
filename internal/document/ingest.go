@@ -64,6 +64,7 @@ type VectorIndex interface {
 	Ensure(context.Context) error
 	Upsert(context.Context, Document, []Chunk) error
 	Search(context.Context, string, string, []string, int) ([]SearchHit, error)
+	SearchDocuments(context.Context, string, []string, int) ([]SearchHit, error)
 	DeleteDocument(context.Context, string, string) error
 }
 
@@ -72,6 +73,9 @@ type NoopVectorIndex struct{}
 func (NoopVectorIndex) Ensure(context.Context) error                    { return nil }
 func (NoopVectorIndex) Upsert(context.Context, Document, []Chunk) error { return nil }
 func (NoopVectorIndex) Search(context.Context, string, string, []string, int) ([]SearchHit, error) {
+	return nil, nil
+}
+func (NoopVectorIndex) SearchDocuments(context.Context, string, []string, int) ([]SearchHit, error) {
 	return nil, nil
 }
 func (NoopVectorIndex) DeleteDocument(context.Context, string, string) error { return nil }

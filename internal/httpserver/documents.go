@@ -6,10 +6,14 @@ import (
 	"mime/multipart"
 	"net/http"
 
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/document"
 )
 
 func (s *Server) uploadDocument(w http.ResponseWriter, r *http.Request) {
+	if !s.requireQuota(w, r, billing.ResourceDocuments) {
+		return
+	}
 	maxBytes := s.documents.MaxUploadBytes()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+(1<<20))
 	if err := r.ParseMultipartForm(maxBytes); err != nil {

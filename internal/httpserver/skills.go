@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/skill"
 )
 
@@ -42,6 +43,18 @@ func (s *Server) startSkillRun(w http.ResponseWriter, r *http.Request) {
 		Input map[string]any `json:"input"`
 	}
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	manifest, err := s.skills.ManifestForUser(r.Context(), currentAuth(r).User.ID, r.PathValue("skill_name"))
+	if err != nil {
+		writeSkillError(w, err)
+		return
+	}
+	if err = s.userSafety.CheckSkillRisk(r.Context(), currentAuth(r).User.ID, manifest.Name, manifest.RiskLevel); err != nil {
+		writeSafetyError(w, err)
+		return
+	}
+	if !s.requireQuota(w, r, billing.ResourceSkillRuns) {
 		return
 	}
 	run, created, err := s.skills.Start(r.Context(), currentAuth(r).User.ID, r.PathValue("skill_name"), r.Header.Get("Idempotency-Key"), input.Input)

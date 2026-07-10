@@ -126,6 +126,47 @@ paths:
       responses:
         "204": { description: All user sessions revoked. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/billing/me:
+    get:
+      operationId: getBillingSummary
+      tags: [Billing]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current plan, subscription period, and resource usage for the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BillingSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/safety/me:
+    get:
+      operationId: getSafetyPolicy
+      tags: [Safety]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current account-level safety policy for the caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SafetyPolicy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      operationId: updateSafetyPolicy
+      tags: [Safety]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateSafetyPolicyRequest" }
+      responses:
+        "200":
+          description: Safety policy updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SafetyPolicy" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/characters:
     get:
       operationId: listCharacters
@@ -472,6 +513,7 @@ paths:
         "200":
           description: Existing active document returned for duplicate content.
           content: { application/json: { schema: { $ref: "#/components/schemas/DocumentUploadResult" } } }
+        "402": { $ref: "#/components/responses/PaymentRequired" }
         "413": { description: Upload exceeds the configured size limit. }
         "415": { description: File type is unsupported. }
         "422": { description: File failed validation or safety checks. }
@@ -770,6 +812,269 @@ paths:
         "200":
           description: Current degradation level, candidate hysteresis state, sampled signals, and effective policy.
           content: { application/json: { schema: { $ref: "#/components/schemas/ReliabilitySnapshot" } } }
+  /v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Workspaces where the caller is an active member.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Workspace" } }
+    post:
+      operationId: createWorkspace
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateWorkspaceRequest" } } }
+      responses:
+        "201":
+          description: Workspace created with caller as owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspace]
+                properties:
+                  workspace: { $ref: "#/components/schemas/Workspace" }
+        "402": { $ref: "#/components/responses/PaymentRequired" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspaces/{workspace_id}/documents:
+    get:
+      operationId: listWorkspaceDocuments
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Documents shared into the workspace and visible to active members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Document" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: shareWorkspaceDocument
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ShareWorkspaceDocumentRequest" } } }
+      responses:
+        "204":
+          description: Document shared idempotently. The caller must be an active workspace member and the document owner.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspaces/{workspace_id}/documents/query:
+    post:
+      operationId: queryWorkspaceDocuments
+      tags: [Workspace, Document]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/DocumentQueryInput" } } }
+      responses:
+        "200":
+          description: Evidence-grounded answer using only ready documents shared into this workspace.
+          content: { application/json: { schema: { $ref: "#/components/schemas/DocumentQueryResult" } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspaces/{workspace_id}/skill-files:
+    get:
+      operationId: listWorkspaceSkillFiles
+      tags: [Workspace, Skill]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Skill-generated files shared into the workspace and visible to active members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/GeneratedFile" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: shareWorkspaceSkillFile
+      tags: [Workspace, Skill]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ShareWorkspaceSkillFileRequest" } } }
+      responses:
+        "204":
+          description: Skill-generated file shared idempotently. The caller must be an active workspace member and the file owner.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspaces/{workspace_id}/skill-files/{file_id}:
+    get:
+      operationId: downloadWorkspaceSkillFile
+      tags: [Workspace, Skill]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: file_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Shared generated file bytes.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/workspaces/{workspace_id}/ledger-exports:
+    get:
+      operationId: listWorkspaceLedgerExports
+      tags: [Workspace, Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Completed ledger exports shared into the workspace and visible to active members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/LedgerExport" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: shareWorkspaceLedgerExport
+      tags: [Workspace, Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ShareWorkspaceLedgerExportRequest" } } }
+      responses:
+        "204":
+          description: Completed ledger export shared idempotently. The caller must be an active workspace member and the export owner.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspaces/{workspace_id}/ledger-exports/{export_id}:
+    get:
+      operationId: downloadWorkspaceLedgerExport
+      tags: [Workspace, Ledger]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: export_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Shared ledger export bytes.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/workspaces/{workspace_id}/members:
+    get:
+      operationId: listWorkspaceMembers
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Active workspace members visible to active members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/WorkspaceMember" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/workspaces/{workspace_id}/invitations:
+    get:
+      operationId: listWorkspaceInvitations
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Workspace invitations visible to owners and admins.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/WorkspaceInvitation" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createWorkspaceInvitation
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: workspace_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateWorkspaceInvitationRequest" } } }
+      responses:
+        "201":
+          description: Invitation created and email delivery queued for Worker sending.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation]
+                properties:
+                  invitation: { $ref: "#/components/schemas/WorkspaceInvitation" }
+                  email_delivery: { $ref: "#/components/schemas/EmailDelivery" }
+                  email_delivery_error: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/workspace-invitations/{invitation_id}/accept:
+    post:
+      operationId: acceptWorkspaceInvitation
+      tags: [Workspace]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: invitation_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Invitation accepted by the matching authenticated email.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member, invitation]
+                properties:
+                  member: { $ref: "#/components/schemas/WorkspaceMember" }
+                  invitation: { $ref: "#/components/schemas/WorkspaceInvitation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /v1/ops/outbox/dead-letter:
     get:
       operationId: listDeadLetterOutboxEvents
@@ -813,6 +1118,7 @@ paths:
       parameters:
         - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/ReplayOutboxRequest" } } }
@@ -828,6 +1134,7 @@ paths:
                   event: { $ref: "#/components/schemas/OutboxEvent" }
                   compensation: { $ref: "#/components/schemas/CompensationRecord" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
   /v1/ops/kafka/poison-messages:
@@ -846,6 +1153,182 @@ paths:
                 required: [messages]
                 properties:
                   messages: { type: array, items: { $ref: "#/components/schemas/KafkaPoisonMessage" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/email/deliveries:
+    get:
+      operationId: listEmailDeliveries
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [queued, processing, sent, failed] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Recent email deliveries, optionally filtered by delivery status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries]
+                properties:
+                  deliveries: { type: array, items: { $ref: "#/components/schemas/EmailDelivery" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/email/deliveries/{delivery_id}:
+    get:
+      operationId: getEmailDelivery
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Email delivery detail for operator diagnosis.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivery]
+                properties:
+                  delivery: { $ref: "#/components/schemas/EmailDelivery" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/email/deliveries/{delivery_id}/replay:
+    post:
+      operationId: replayEmailDelivery
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReplayEmailDeliveryRequest" } } }
+      responses:
+        "202":
+          description: Failed delivery moved back to queued and a compensation record was written.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [delivery, compensation]
+                properties:
+                  delivery: { $ref: "#/components/schemas/EmailDelivery" }
+                  compensation: { $ref: "#/components/schemas/CompensationRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/users:
+    get:
+      operationId: listOperatorUsers
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 320 } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [active, disabled, deleted] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Operator-visible user accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users: { type: array, items: { $ref: "#/components/schemas/User" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/users/{user_id}:
+    get:
+      operationId: getOperatorUser
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: user_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Operator-visible user detail including disabled accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/users/{user_id}/disable:
+    post:
+      operationId: disableOperatorUser
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UserModerationRequest" } } }
+      responses:
+        "200":
+          description: User disabled and active refresh sessions revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/users/{user_id}/enable:
+    post:
+      operationId: enableOperatorUser
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UserModerationRequest" } } }
+      responses:
+        "200":
+          description: User re-enabled. The user must log in again to obtain a new session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: resource_type, in: query, required: false, schema: { type: string, maxLength: 64 } }
+        - { name: resource_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Recent support audit trail entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [audit_logs]
+                properties:
+                  audit_logs: { type: array, items: { $ref: "#/components/schemas/AuditLog" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/ops/compensations:
     get:
@@ -868,7 +1351,9 @@ paths:
       operationId: createCompensationRecord
       tags: [Operations]
       security: [{ operatorBearerAuth: [] }]
-      parameters: [{ name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }]
+      parameters:
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/CreateCompensationRequest" } } }
@@ -942,6 +1427,8 @@ paths:
         "201": { description: Side-effect-free Skill completed., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
         "202": { description: Run awaits explicit confirmation or durable Worker execution., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
         "200": { description: Idempotent replay returned the original run., content: { application/json: { schema: { $ref: "#/components/schemas/SkillRunEnvelope" } } } }
+        "402": { $ref: "#/components/responses/PaymentRequired" }
+        "403": { $ref: "#/components/responses/SafetyBlocked" }
         "409": { description: Idempotency key or run-state conflict. }
         "422": { $ref: "#/components/responses/ValidationError" }
   /v1/skill-runs:
@@ -1051,7 +1538,7 @@ components:
     operatorBearerAuth:
       type: http
       scheme: bearer
-      description: Uses OPERATOR_TOKEN, not an end-user access token.
+      description: Uses either legacy OPERATOR_TOKEN or an operator account token. When operator MFA is enabled, clients must also send X-Operator-TOTP.
   responses:
     Unauthorized:
       description: Authentication is missing, invalid, expired, or revoked.
@@ -1059,6 +1546,15 @@ components:
     Conflict:
       description: Resource already exists.
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Authenticated operator role lacks permission for the requested action.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    PaymentRequired:
+      description: Current plan does not include enough quota for the requested resource.
+      content: { application/json: { schema: { $ref: "#/components/schemas/QuotaError" } } }
+    SafetyBlocked:
+      description: Account safety policy blocks the requested risky capability.
+      content: { application/json: { schema: { $ref: "#/components/schemas/SafetyCapabilityError" } } }
     ValidationError:
       description: Request failed domain validation.
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -1073,6 +1569,93 @@ components:
       properties:
         code: { type: string }
         message: { type: string }
+    QuotaError:
+      allOf:
+        - { $ref: "#/components/schemas/Error" }
+        - type: object
+          additionalProperties: false
+          required: [resource, plan_code, used, limit]
+          properties:
+            resource: { type: string, enum: [documents, skill_runs, workspaces] }
+            plan_code: { type: string }
+            used: { type: integer, minimum: 0 }
+            limit: { type: integer }
+    BillingLimits:
+      type: object
+      additionalProperties: false
+      required: [documents, skill_runs_per_month, workspaces]
+      properties:
+        documents: { type: integer }
+        skill_runs_per_month: { type: integer }
+        workspaces: { type: integer }
+    BillingPlan:
+      type: object
+      additionalProperties: false
+      required: [code, display_name, status, limits]
+      properties:
+        code: { type: string, enum: [free, pro, team] }
+        display_name: { type: string }
+        status: { type: string, enum: [active, archived] }
+        limits: { $ref: "#/components/schemas/BillingLimits" }
+    BillingSubscription:
+      type: object
+      additionalProperties: false
+      required: [plan_code, status, current_period_start, current_period_end]
+      properties:
+        id: { type: string, format: uuid }
+        plan_code: { type: string }
+        status: { type: string, enum: [implicit, trialing, active, past_due, cancelled, expired] }
+        current_period_start: { type: string, format: date-time }
+        current_period_end: { type: string, format: date-time }
+        provider: { type: string }
+        provider_ref: { type: string }
+    BillingUsageItem:
+      type: object
+      additionalProperties: false
+      required: [resource, used, limit, remaining]
+      properties:
+        resource: { type: string, enum: [documents, skill_runs, workspaces] }
+        used: { type: integer, minimum: 0 }
+        limit: { type: integer }
+        remaining: { type: integer }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+    BillingSummary:
+      type: object
+      additionalProperties: false
+      required: [plan, subscription, usage]
+      properties:
+        plan: { $ref: "#/components/schemas/BillingPlan" }
+        subscription: { $ref: "#/components/schemas/BillingSubscription" }
+        usage: { type: array, items: { $ref: "#/components/schemas/BillingUsageItem" } }
+    SafetyPolicy:
+      type: object
+      additionalProperties: false
+      required: [minor_mode, risky_skills_allowed]
+      properties:
+        minor_mode: { type: boolean }
+        guardian_email: { type: string, format: email }
+        risky_skills_allowed: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    UpdateSafetyPolicyRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        minor_mode: { type: boolean }
+        guardian_email: { type: string, format: email }
+        risky_skills_allowed: { type: boolean }
+    SafetyCapabilityError:
+      allOf:
+        - { $ref: "#/components/schemas/Error" }
+        - type: object
+          additionalProperties: false
+          required: [skill_name, risk_level, minor_mode]
+          properties:
+            skill_name: { type: string }
+            risk_level: { type: string, enum: [medium, high] }
+            minor_mode: { type: boolean }
     DeviceInput:
       type: object
       additionalProperties: false
@@ -1111,6 +1694,7 @@ components:
         display_name: { type: string }
         timezone: { type: string }
         locale: { type: string }
+        status: { type: string, enum: [active, disabled, deleted] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     TokenPair:
@@ -1590,6 +2174,97 @@ components:
         model_error_rate: { type: number, minimum: 0, maximum: 1 }
         p95_latency_ms: { type: integer, minimum: 0 }
         policy: { $ref: "#/components/schemas/ReliabilityPolicy" }
+    CreateWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+    Workspace:
+      type: object
+      additionalProperties: false
+      required: [id, name, owner_id, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        owner_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, disabled, deleted] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ShareWorkspaceDocumentRequest:
+      type: object
+      additionalProperties: false
+      required: [document_id]
+      properties:
+        document_id: { type: string, format: uuid }
+    ShareWorkspaceSkillFileRequest:
+      type: object
+      additionalProperties: false
+      required: [run_id, file_id]
+      properties:
+        run_id: { type: string, format: uuid }
+        file_id: { type: string, format: uuid }
+    ShareWorkspaceLedgerExportRequest:
+      type: object
+      additionalProperties: false
+      required: [export_id]
+      properties:
+        export_id: { type: string, format: uuid }
+    WorkspaceMember:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, user_id, role, status, joined_at, updated_at]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        role: { type: string, enum: [owner, admin, member] }
+        status: { type: string, enum: [active, disabled, removed] }
+        joined_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateWorkspaceInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties:
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, member], default: member }
+    WorkspaceInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, workspace_id, email, role, status, invited_by, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, member] }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        invited_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time }
+    EmailDelivery:
+      type: object
+      additionalProperties: false
+      required: [id, resource_type, resource_id, template, recipient_email, subject, status, attempts, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_id: { type: string, format: uuid }
+        resource_type: { type: string }
+        resource_id: { type: string, format: uuid }
+        template: { type: string }
+        recipient_email: { type: string, format: email }
+        subject: { type: string }
+        body_text: { type: string }
+        status: { type: string, enum: [queued, processing, sent, failed] }
+        provider: { type: string }
+        provider_message_id: { type: string }
+        failure_code: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        sent_at: { type: string, format: date-time }
     OutboxEvent:
       type: object
       additionalProperties: false
@@ -1618,6 +2293,33 @@ components:
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 512 }
+    ReplayEmailDeliveryRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    UserModerationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    AuditLog:
+      type: object
+      additionalProperties: false
+      required: [id, actor_type, action, resource_type, metadata, occurred_at]
+      properties:
+        id: { type: integer, minimum: 1 }
+        actor_type: { type: string }
+        actor_id: { type: string, format: uuid }
+        actor_label: { type: string }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string, format: uuid }
+        trace_id: { type: string }
+        metadata: { type: object, additionalProperties: true }
+        occurred_at: { type: string, format: date-time }
     KafkaPoisonMessage:
       type: object
       additionalProperties: false

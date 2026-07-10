@@ -8,44 +8,56 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/buildinfo"
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
+	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/identity"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/mcpclient"
 	"github.com/windcry1/ai-companion/internal/memory"
+	"github.com/windcry1/ai-companion/internal/opsauth"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/realtime"
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/router"
+	"github.com/windcry1/ai-companion/internal/safety"
 	"github.com/windcry1/ai-companion/internal/skill"
+	"github.com/windcry1/ai-companion/internal/team"
 )
 
 type Server struct {
-	httpServer     *http.Server
-	ready          atomic.Bool
-	identity       *identity.Service
-	characters     *character.Service
-	conversations  *conversation.Service
-	memories       *memory.Service
-	documents      *document.Service
-	ledger         *ledger.Service
-	planner        *planner.Service
-	skills         *skill.Service
-	intentRouter   *router.Router
-	mcp            *mcpclient.Registry
-	reliability    *reliability.Controller
-	metrics        *reliability.Metrics
-	operations     eventbus.OperationsStore
-	operatorToken  string
-	realtime       realtime.Gateway
-	presenceTTL    time.Duration
-	chatRateLimit  int
-	chatRateWindow time.Duration
+	httpServer          *http.Server
+	ready               atomic.Bool
+	identity            *identity.Service
+	identityAdmin       *identity.AdminService
+	characters          *character.Service
+	conversations       *conversation.Service
+	memories            *memory.Service
+	documents           *document.Service
+	ledger              *ledger.Service
+	planner             *planner.Service
+	skills              *skill.Service
+	teams               *team.Service
+	emails              *email.Service
+	billing             *billing.Service
+	userSafety          *safety.Service
+	intentRouter        *router.Router
+	mcp                 *mcpclient.Registry
+	reliability         *reliability.Controller
+	metrics             *reliability.Metrics
+	operations          eventbus.OperationsStore
+	operatorToken       string
+	operatorMFARequired bool
+	operatorAuth        *opsauth.Service
+	realtime            realtime.Gateway
+	presenceTTL         time.Duration
+	chatRateLimit       int
+	chatRateWindow      time.Duration
 }
 
 func New(cfg config.Config, logger *slog.Logger) *Server {
@@ -131,14 +143,23 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	if rateWindow == 0 {
 		rateWindow = time.Minute
 	}
+	var identityAdmin *identity.AdminService
+	if adminStore, ok := identityStore.(identity.AdminStore); ok {
+		identityAdmin = identity.NewAdminService(adminStore)
+	}
+	var operatorAuth *opsauth.Service
+	if operatorStore, ok := identityStore.(opsauth.Store); ok {
+		operatorAuth = opsauth.NewService(operatorStore)
+	}
 	server := &Server{
 		identity:      identity.NewService(identityStore, secret, accessTTL, refreshTTL),
+		identityAdmin: identityAdmin,
 		characters:    characterService,
-		conversations: conversationService, memories: memoryService, documents: documentService, ledger: ledgerService, planner: plannerService, skills: skillService,
+		conversations: conversationService, memories: memoryService, documents: documentService, ledger: ledgerService, planner: plannerService, skills: skillService, teams: team.NewService(team.NewMemoryStore()), emails: email.NewService(email.NewMemoryStore(), email.NoopSender{}), billing: billing.NewService(billing.NewMemoryStore(), billing.DefaultPlans()), userSafety: safety.NewService(safety.NewMemoryStore()),
 		intentRouter: router.New(), mcp: mcpRegistry,
 		reliability: reliabilityController, metrics: reliability.NewMetrics(),
-		operatorToken: cfg.OperatorToken,
-		realtime:      gateway, presenceTTL: presenceTTL, chatRateLimit: rateLimit, chatRateWindow: rateWindow,
+		operatorToken: cfg.OperatorToken, operatorMFARequired: cfg.OperatorMFARequired, operatorAuth: operatorAuth,
+		realtime: gateway, presenceTTL: presenceTTL, chatRateLimit: rateLimit, chatRateWindow: rateWindow,
 	}
 	if operations, ok := skillStore.(eventbus.OperationsStore); ok {
 		server.operations = operations
@@ -153,6 +174,9 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.HandleFunc("POST /v1/auth/refresh", server.refresh)
 	mux.Handle("POST /v1/auth/logout", server.requireAuth(http.HandlerFunc(server.logout)))
 	mux.Handle("POST /v1/auth/logout-all", server.requireAuth(http.HandlerFunc(server.logoutAll)))
+	mux.Handle("GET /v1/billing/me", server.requireAuth(http.HandlerFunc(server.getBillingSummary)))
+	mux.Handle("GET /v1/safety/me", server.requireAuth(http.HandlerFunc(server.getSafetyPolicy)))
+	mux.Handle("PATCH /v1/safety/me", server.requireAuth(http.HandlerFunc(server.updateSafetyPolicy)))
 	mux.Handle("GET /v1/characters", server.requireAuth(http.HandlerFunc(server.listCharacters)))
 	mux.Handle("POST /v1/characters", server.requireAuth(http.HandlerFunc(server.createCharacter)))
 	mux.Handle("GET /v1/characters/{character_id}", server.requireAuth(http.HandlerFunc(server.getCharacter)))
@@ -208,10 +232,33 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("POST /v1/intent/route", server.requireAuth(http.HandlerFunc(server.routeIntent)))
 	mux.Handle("GET /v1/mcp/servers", server.requireAuth(http.HandlerFunc(server.listMCPServers)))
 	mux.Handle("GET /v1/reliability", server.requireAuth(http.HandlerFunc(server.getReliability)))
+	mux.Handle("GET /v1/workspaces", server.requireAuth(http.HandlerFunc(server.listWorkspaces)))
+	mux.Handle("POST /v1/workspaces", server.requireAuth(http.HandlerFunc(server.createWorkspace)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/documents", server.requireAuth(http.HandlerFunc(server.listWorkspaceDocuments)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/documents", server.requireAuth(http.HandlerFunc(server.shareWorkspaceDocument)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/documents/query", server.requireAuth(http.HandlerFunc(server.queryWorkspaceDocuments)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/skill-files", server.requireAuth(http.HandlerFunc(server.listWorkspaceSkillFiles)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/skill-files", server.requireAuth(http.HandlerFunc(server.shareWorkspaceSkillFile)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/skill-files/{file_id}", server.requireAuth(http.HandlerFunc(server.downloadWorkspaceSkillFile)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/ledger-exports", server.requireAuth(http.HandlerFunc(server.listWorkspaceLedgerExports)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/ledger-exports", server.requireAuth(http.HandlerFunc(server.shareWorkspaceLedgerExport)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/ledger-exports/{export_id}", server.requireAuth(http.HandlerFunc(server.downloadWorkspaceLedgerExport)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/members", server.requireAuth(http.HandlerFunc(server.listWorkspaceMembers)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.listWorkspaceInvitations)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.createWorkspaceInvitation)))
+	mux.Handle("POST /v1/workspace-invitations/{invitation_id}/accept", server.requireAuth(http.HandlerFunc(server.acceptWorkspaceInvitation)))
 	mux.Handle("GET /v1/ops/outbox/dead-letter", server.requireOperator(http.HandlerFunc(server.listDeadLetterOutboxEvents)))
 	mux.Handle("GET /v1/ops/outbox/{event_id}", server.requireOperator(http.HandlerFunc(server.getOutboxEvent)))
 	mux.Handle("POST /v1/ops/outbox/{event_id}/replay", server.requireOperator(http.HandlerFunc(server.replayOutboxEvent)))
 	mux.Handle("GET /v1/ops/kafka/poison-messages", server.requireOperator(http.HandlerFunc(server.listPoisonMessages)))
+	mux.Handle("GET /v1/ops/email/deliveries", server.requireOperator(http.HandlerFunc(server.listEmailDeliveries)))
+	mux.Handle("GET /v1/ops/email/deliveries/{delivery_id}", server.requireOperator(http.HandlerFunc(server.getEmailDelivery)))
+	mux.Handle("POST /v1/ops/email/deliveries/{delivery_id}/replay", server.requireOperator(http.HandlerFunc(server.replayEmailDelivery)))
+	mux.Handle("GET /v1/ops/users", server.requireOperator(http.HandlerFunc(server.listOperatorUsers)))
+	mux.Handle("GET /v1/ops/users/{user_id}", server.requireOperator(http.HandlerFunc(server.getOperatorUser)))
+	mux.Handle("POST /v1/ops/users/{user_id}/disable", server.requireOperator(http.HandlerFunc(server.disableOperatorUser)))
+	mux.Handle("POST /v1/ops/users/{user_id}/enable", server.requireOperator(http.HandlerFunc(server.enableOperatorUser)))
+	mux.Handle("GET /v1/ops/audit-logs", server.requireOperator(http.HandlerFunc(server.listAuditLogs)))
 	mux.Handle("GET /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.listCompensationRecords)))
 	mux.Handle("POST /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.createCompensationRecord)))
 
@@ -243,6 +290,28 @@ func (s *Server) SetLedgerExportFileStore(files ledger.ExportFileStore) {
 }
 func (s *Server) SetOperationsStore(store eventbus.OperationsStore) { s.operations = store }
 
+func (s *Server) SetOperatorAuthStore(store opsauth.Store) {
+	s.operatorAuth = opsauth.NewService(store)
+}
+
+func (s *Server) SetTeamStore(store team.Store) { s.teams = team.NewService(store) }
+
+func (s *Server) SetEmailStore(store email.Store) {
+	s.emails = email.NewService(store, email.NoopSender{})
+}
+
+func (s *Server) SetBillingStore(store billing.Store) {
+	s.billing = billing.NewService(store, billing.DefaultPlans())
+}
+
+func (s *Server) SetSafetyStore(store safety.Store) {
+	s.userSafety = safety.NewService(store)
+}
+
+func (s *Server) SetIdentityAdminStore(store identity.AdminStore) {
+	s.identityAdmin = identity.NewAdminService(store)
+}
+
 func (s *Server) ObserveReliability(sample reliability.Sample, now time.Time) reliability.Snapshot {
 	return s.reliability.Observe(sample, now)
 }
@@ -251,7 +320,7 @@ func cors(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin != "" && r.Header.Get("Origin") == origin {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Operator-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Operator-ID, X-Operator-TOTP")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Vary", "Origin")
 		}

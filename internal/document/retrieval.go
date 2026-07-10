@@ -47,13 +47,9 @@ type QueryResult struct {
 }
 
 func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (QueryResult, error) {
-	query := strings.TrimSpace(input.Query)
-	if len([]rune(query)) < 2 || len([]rune(query)) > 1000 {
-		return QueryResult{}, fmt.Errorf("%w: query must contain 2-1000 characters", ErrValidation)
-	}
-	limit := input.Limit
-	if limit <= 0 || limit > 8 {
-		limit = 5
+	query, limit, err := normalizeQuery(input)
+	if err != nil {
+		return QueryResult{}, err
 	}
 	items, err := s.store.ListDocuments(ctx, userID, 200)
 	if err != nil {
@@ -76,14 +72,75 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 	if err != nil {
 		return QueryResult{}, err
 	}
+	allowed := documentsByID(items, readyIDs)
+	return s.answerFromHits(query, limit, allowed, hits), nil
+}
+
+func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input QueryInput) (QueryResult, error) {
+	query, limit, err := normalizeQuery(input)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	items, err := s.store.ListWorkspaceDocuments(ctx, workspaceID, 200)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	requested := map[string]bool{}
+	for _, documentID := range input.DocumentIDs {
+		requested[documentID] = true
+	}
+	readyIDs := make([]string, 0)
+	for _, item := range items {
+		if item.Status == "ready" && (len(requested) == 0 || requested[item.ID]) {
+			readyIDs = append(readyIDs, item.ID)
+		}
+	}
+	if len(readyIDs) == 0 {
+		return insufficientQueryResult(), nil
+	}
+	hits, err := s.index.SearchDocuments(ctx, query, readyIDs, limit*3)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	allowed := documentsByID(items, readyIDs)
+	return s.answerFromHits(query, limit, allowed, hits), nil
+}
+
+func normalizeQuery(input QueryInput) (string, int, error) {
+	query := strings.TrimSpace(input.Query)
+	if len([]rune(query)) < 2 || len([]rune(query)) > 1000 {
+		return "", 0, fmt.Errorf("%w: query must contain 2-1000 characters", ErrValidation)
+	}
+	limit := input.Limit
+	if limit <= 0 || limit > 8 {
+		limit = 5
+	}
+	return query, limit, nil
+}
+
+func documentsByID(items []Document, readyIDs []string) map[string]Document {
+	ready := map[string]bool{}
+	for _, documentID := range readyIDs {
+		ready[documentID] = true
+	}
+	allowed := map[string]Document{}
+	for _, item := range items {
+		if ready[item.ID] && item.Status == "ready" {
+			allowed[item.ID] = item
+		}
+	}
+	return allowed
+}
+
+func (s *Service) answerFromHits(query string, limit int, allowed map[string]Document, hits []SearchHit) QueryResult {
 	citations := make([]Citation, 0, limit)
 	for _, hit := range hits {
-		item, getErr := s.store.GetDocument(ctx, userID, hit.DocumentID)
-		if getErr != nil || item.Status != "ready" || tokenOverlap(query, hit.Content) == 0 {
+		item, ok := allowed[hit.DocumentID]
+		if !ok || item.Status != "ready" || tokenOverlap(query, hit.Content) == 0 {
 			continue
 		}
 		citations = append(citations, Citation{
-			ChunkID: hit.ChunkID, DocumentID: hit.DocumentID, DocumentName: hit.DocumentName,
+			ChunkID: hit.ChunkID, DocumentID: hit.DocumentID, DocumentName: item.Name,
 			PageStart: hit.PageStart, PageEnd: hit.PageEnd, SectionPath: hit.SectionPath,
 			Quote: truncateRunes(hit.Content, 360), Score: hit.Score,
 		})
@@ -92,7 +149,7 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 		}
 	}
 	if len(citations) == 0 {
-		return insufficientQueryResult(), nil
+		return insufficientQueryResult()
 	}
 	top := citations[0]
 	page := fmt.Sprintf("第 %d 页", top.PageStart)
@@ -100,7 +157,7 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 		page = fmt.Sprintf("第 %d–%d 页", top.PageStart, top.PageEnd)
 	}
 	answer := fmt.Sprintf("根据文档《%s》%s：%s", top.DocumentName, page, top.Quote)
-	return QueryResult{Answer: answer, Sufficient: true, Citations: citations}, nil
+	return QueryResult{Answer: answer, Sufficient: true, Citations: citations}
 }
 
 func insufficientQueryResult() QueryResult {

@@ -74,3 +74,27 @@ func TestQdrantIndexLifecycleAndTenantFilter(t *testing.T) {
 		t.Fatalf("query is not dense/sparse RRF: %s", encodedQuery)
 	}
 }
+
+func TestQdrantIndexSharedDocumentSearchUsesDocumentScope(t *testing.T) {
+	var captured map[string]any
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Body != nil {
+			_ = json.NewDecoder(request.Body).Decode(&captured)
+		}
+		response := `{"status":"ok","result":{"points":[]}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
+	})
+	index := NewQdrantIndex("http://qdrant.test", "test_chunks", "", time.Second)
+	index.client.Transport = transport
+	if _, err := index.SearchDocuments(context.Background(), "火星计划何时启动", []string{"doc-1", "doc-2"}, 5); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(captured)
+	body := string(encoded)
+	if !strings.Contains(body, "document_id") || !strings.Contains(body, "doc-1") || !strings.Contains(body, "doc-2") {
+		t.Fatalf("shared search lacks document scope: %s", body)
+	}
+	if strings.Contains(body, "user_id") {
+		t.Fatalf("shared search should not bind to one owner user_id: %s", body)
+	}
+}

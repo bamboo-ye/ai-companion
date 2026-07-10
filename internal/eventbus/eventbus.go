@@ -62,4 +62,5 @@ var knownTopics = map[string]struct{}{
 	"ledger.export.v1":        {},
 	"reminder.confirmed.v1":   {},
 	"notification.deliver.v1": {},
+	"email.deliver.v1":        {},
 }

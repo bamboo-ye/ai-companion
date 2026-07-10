@@ -94,6 +94,88 @@ func TestLedgerCandidateConfirmationAndSummaryAPI(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLedgerExportShareRequiresMembershipAndOwnership(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "workspace-ledger-secret-with-enough-entropy"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.SetLedgerExporter(httpLedgerExporter{})
+	owner := registerSkillUser(t, server, "workspace-ledger-owner@example.com", "workspace-ledger-owner")
+	member := registerSkillUser(t, server, "workspace-ledger-member@example.com", "workspace-ledger-member")
+	outsider := registerSkillUser(t, server, "workspace-ledger-outsider@example.com", "workspace-ledger-outsider")
+
+	workspace := performJSON(t, server, http.MethodPost, "/v1/workspaces", owner, map[string]string{"name": "账本导出共享"})
+	if workspace.Code != http.StatusCreated {
+		t.Fatalf("workspace=%d %s", workspace.Code, workspace.Body.String())
+	}
+	var workspacePayload struct {
+		Workspace struct {
+			ID string `json:"id"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(workspace.Body.Bytes(), &workspacePayload); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := workspacePayload.Workspace.ID
+	invite := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/invitations", owner, map[string]string{"email": "workspace-ledger-member@example.com", "role": "member"})
+	if invite.Code != http.StatusCreated {
+		t.Fatalf("invite=%d %s", invite.Code, invite.Body.String())
+	}
+	var invitePayload struct {
+		Invitation struct {
+			ID string `json:"id"`
+		} `json:"invitation"`
+	}
+	if err := json.Unmarshal(invite.Body.Bytes(), &invitePayload); err != nil {
+		t.Fatal(err)
+	}
+	accepted := performJSON(t, server, http.MethodPost, "/v1/workspace-invitations/"+invitePayload.Invitation.ID+"/accept", member, nil)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept=%d %s", accepted.Code, accepted.Body.String())
+	}
+
+	export := performLedgerExport(t, server, owner, "workspace-ledger-export")
+	if export.Code != http.StatusAccepted {
+		t.Fatalf("export=%d %s", export.Code, export.Body.String())
+	}
+	var exportEnvelope struct {
+		Export ledger.ExportJob `json:"export"`
+	}
+	if err := json.Unmarshal(export.Body.Bytes(), &exportEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := server.ledger.RunExport(context.Background(), exportEnvelope.Export.ID, "workspace-ledger-worker", time.Minute); err != nil || !processed {
+		t.Fatalf("run export processed=%v err=%v", processed, err)
+	}
+
+	memberShare := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/ledger-exports", member, map[string]string{"export_id": exportEnvelope.Export.ID})
+	if memberShare.Code != http.StatusNotFound {
+		t.Fatalf("member share=%d %s", memberShare.Code, memberShare.Body.String())
+	}
+	shared := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/ledger-exports", owner, map[string]string{"export_id": exportEnvelope.Export.ID})
+	if shared.Code != http.StatusNoContent {
+		t.Fatalf("share=%d %s", shared.Code, shared.Body.String())
+	}
+	reshared := performJSON(t, server, http.MethodPost, "/v1/workspaces/"+workspaceID+"/ledger-exports", owner, map[string]string{"export_id": exportEnvelope.Export.ID})
+	if reshared.Code != http.StatusNoContent {
+		t.Fatalf("reshare=%d %s", reshared.Code, reshared.Body.String())
+	}
+
+	memberList := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/ledger-exports", member, nil)
+	if memberList.Code != http.StatusOK || !strings.Contains(memberList.Body.String(), exportEnvelope.Export.ID) || !strings.Contains(memberList.Body.String(), `"status":"completed"`) {
+		t.Fatalf("member list=%d %s", memberList.Code, memberList.Body.String())
+	}
+	memberDownload := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/ledger-exports/"+exportEnvelope.Export.ID, member, nil)
+	if memberDownload.Code != http.StatusOK || memberDownload.Body.String() != "PK-http-workbook" {
+		t.Fatalf("member download=%d %q", memberDownload.Code, memberDownload.Body.String())
+	}
+	outsiderList := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/ledger-exports", outsider, nil)
+	if outsiderList.Code != http.StatusNotFound {
+		t.Fatalf("outsider list=%d %s", outsiderList.Code, outsiderList.Body.String())
+	}
+	outsiderDownload := performJSON(t, server, http.MethodGet, "/v1/workspaces/"+workspaceID+"/ledger-exports/"+exportEnvelope.Export.ID, outsider, nil)
+	if outsiderDownload.Code != http.StatusNotFound {
+		t.Fatalf("outsider download=%d %s", outsiderDownload.Code, outsiderDownload.Body.String())
+	}
+}
+
 func performLedgerExport(t *testing.T, server *Server, token, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, _ := json.Marshal(map[string]string{"month": "2026-07", "timezone": "Asia/Shanghai", "currency": "CNY"})

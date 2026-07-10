@@ -8,15 +8,16 @@ import (
 )
 
 type MemoryStore struct {
-	mu         sync.RWMutex
-	runs       map[string]Run
-	createKeys map[string]string
-	actionKeys map[string]string
-	settings   map[string]bool
+	mu              sync.RWMutex
+	runs            map[string]Run
+	createKeys      map[string]string
+	actionKeys      map[string]string
+	settings        map[string]bool
+	workspaceShares map[string]map[string]time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{runs: make(map[string]Run), createKeys: make(map[string]string), actionKeys: make(map[string]string), settings: make(map[string]bool)}
+	return &MemoryStore{runs: make(map[string]Run), createKeys: make(map[string]string), actionKeys: make(map[string]string), settings: make(map[string]bool), workspaceShares: make(map[string]map[string]time.Time)}
 }
 
 func (s *MemoryStore) ListSkillSettings(_ context.Context, userID string) (map[string]bool, error) {
@@ -198,6 +199,69 @@ func (s *MemoryStore) SaveSkillRun(_ context.Context, run Run, expectedRevision 
 		s.actionKeys[lookup] = run.ID
 	}
 	return nil
+}
+
+func (s *MemoryStore) ShareGeneratedFileWithWorkspace(_ context.Context, userID, workspaceID, runID, fileID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.runs[runID]
+	if !ok || run.UserID != userID {
+		return ErrNotFound
+	}
+	found := false
+	for _, file := range run.Files {
+		if file.ID == fileID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	if s.workspaceShares == nil {
+		s.workspaceShares = make(map[string]map[string]time.Time)
+	}
+	if s.workspaceShares[workspaceID] == nil {
+		s.workspaceShares[workspaceID] = make(map[string]time.Time)
+	}
+	s.workspaceShares[workspaceID][fileID] = now
+	return nil
+}
+
+func (s *MemoryStore) ListWorkspaceGeneratedFiles(_ context.Context, workspaceID string, limit int) ([]GeneratedFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]GeneratedFile, 0)
+	for fileID := range s.workspaceShares[workspaceID] {
+		for _, run := range s.runs {
+			for _, file := range run.Files {
+				if file.ID == fileID {
+					items = append(items, file)
+				}
+			}
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (s *MemoryStore) GetWorkspaceGeneratedFile(_ context.Context, workspaceID, fileID string) (GeneratedFile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaceShares[workspaceID][fileID]; !ok {
+		return GeneratedFile{}, ErrNotFound
+	}
+	for _, run := range s.runs {
+		for _, file := range run.Files {
+			if file.ID == fileID {
+				return file, nil
+			}
+		}
+	}
+	return GeneratedFile{}, ErrNotFound
 }
 
 func cloneRun(run Run) Run {

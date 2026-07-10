@@ -234,6 +234,9 @@ type Store interface {
 	FindSkillRunByCreateKey(context.Context, string, string) (Run, error)
 	ListSkillRuns(context.Context, string, int) ([]Run, error)
 	SaveSkillRun(context.Context, Run, int, []Step, []GeneratedFile) error
+	ShareGeneratedFileWithWorkspace(context.Context, string, string, string, string, time.Time) error
+	ListWorkspaceGeneratedFiles(context.Context, string, int) ([]GeneratedFile, error)
+	GetWorkspaceGeneratedFile(context.Context, string, string) (GeneratedFile, error)
 	ListSkillSettings(context.Context, string) (map[string]bool, error)
 	SetSkillEnabled(context.Context, string, string, bool, time.Time) error
 	RecoverInterruptedSkillRuns(context.Context, time.Time) (int, error)
@@ -288,6 +291,14 @@ func (s *Service) SetEnabled(ctx context.Context, userID, skillName string, enab
 		return Manifest{}, err
 	}
 	definition.Manifest.Enabled = definition.Manifest.Enabled && enabled
+	return definition.Manifest, nil
+}
+
+func (s *Service) ManifestForUser(ctx context.Context, userID, skillName string) (Manifest, error) {
+	definition, err := s.definitionForUser(ctx, userID, skillName)
+	if err != nil {
+		return Manifest{}, err
+	}
 	return definition.Manifest, nil
 }
 
@@ -563,6 +574,38 @@ func (s *Service) Download(ctx context.Context, userID, runID, fileID string) (G
 		}
 	}
 	return GeneratedFile{}, nil, ErrNotFound
+}
+
+func (s *Service) ShareFileWithWorkspace(ctx context.Context, userID, workspaceID, runID, fileID string) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	runID = strings.TrimSpace(runID)
+	fileID = strings.TrimSpace(fileID)
+	if workspaceID == "" || runID == "" || fileID == "" {
+		return ErrValidation
+	}
+	return s.store.ShareGeneratedFileWithWorkspace(ctx, userID, workspaceID, runID, fileID, s.now().UTC())
+}
+
+func (s *Service) ListWorkspaceFiles(ctx context.Context, workspaceID string) ([]GeneratedFile, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, ErrValidation
+	}
+	return s.store.ListWorkspaceGeneratedFiles(ctx, workspaceID, 200)
+}
+
+func (s *Service) DownloadWorkspaceFile(ctx context.Context, workspaceID, fileID string) (GeneratedFile, []byte, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	fileID = strings.TrimSpace(fileID)
+	if workspaceID == "" || fileID == "" {
+		return GeneratedFile{}, nil, ErrValidation
+	}
+	file, err := s.store.GetWorkspaceGeneratedFile(ctx, workspaceID, fileID)
+	if err != nil {
+		return GeneratedFile{}, nil, err
+	}
+	data, err := s.files.Get(ctx, file.StorageKey)
+	return file, data, err
 }
 
 func (s *Service) execute(ctx context.Context, run Run, definition Definition) (Run, error) {
