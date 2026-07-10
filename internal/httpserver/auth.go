@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/windcry1/ai-companion/internal/identity"
+	"github.com/windcry1/ai-companion/internal/opsauth"
 )
 
 type authContextKey struct{}
@@ -21,7 +22,10 @@ type authenticated struct {
 }
 
 type operatorAuth struct {
-	Actor string
+	Actor  string
+	Role   string
+	MFA    bool
+	Legacy bool
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -101,14 +105,29 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 
 func (s *Server) requireOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := r.Header.Get("Authorization")
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			writeJSON(w, http.StatusUnauthorized, apiError{Code: "unauthorized", Message: "运维认证无效"})
+			return
+		}
+		if s.operatorAuth != nil {
+			principal, err := s.operatorAuth.Authenticate(r.Context(), parts[1], r.Header.Get("X-Operator-TOTP"))
+			if err == nil {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorContextKey{}, operatorAuth{Actor: principal.ID, Role: principal.Role, MFA: principal.MFAVerified, Legacy: principal.Legacy})))
+				return
+			}
+		}
+		if s.operatorMFARequired {
+			writeJSON(w, http.StatusUnauthorized, apiError{Code: "operator_mfa_required", Message: "运维账号必须使用 MFA 认证"})
+			return
+		}
 		expected := strings.TrimSpace(s.operatorToken)
 		if expected == "" {
 			writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "operator_auth_unconfigured", Message: "运维认证未配置"})
 			return
 		}
-		header := r.Header.Get("Authorization")
-		parts := strings.SplitN(header, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(expected)) != 1 {
 			writeJSON(w, http.StatusUnauthorized, apiError{Code: "unauthorized", Message: "运维认证无效"})
 			return
 		}
@@ -116,8 +135,20 @@ func (s *Server) requireOperator(next http.Handler) http.Handler {
 		if actor == "" {
 			actor = "operator"
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorContextKey{}, operatorAuth{Actor: actor})))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorContextKey{}, operatorAuth{Actor: actor, Role: "admin", Legacy: true})))
 	})
+}
+
+func (s *Server) requireOperatorRole(w http.ResponseWriter, r *http.Request, role string) bool {
+	operator := currentOperator(r)
+	if operator.Role == "" {
+		operator.Role = "viewer"
+	}
+	if !opsauth.Can(operator.Role, role) {
+		writeJSON(w, http.StatusForbidden, apiError{Code: "operator_forbidden", Message: "当前运维角色无权执行该操作"})
+		return false
+	}
+	return true
 }
 
 func (s *Server) presenceHeartbeat(w http.ResponseWriter, r *http.Request) {

@@ -251,6 +251,45 @@ func (s *Store) FailExport(ctx context.Context, exportID, workerID, code string,
 	return nil
 }
 
+func (s *Store) ShareExportWithWorkspace(ctx context.Context, userID, workspaceID, exportID string, now time.Time) error {
+	if _, err := s.GetExport(ctx, userID, exportID); err != nil {
+		return err
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM ledger_exports WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='completed' AND storage_key IS NOT NULL`, exportID, userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return ledger.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_ledger_export_shares (workspace_id,export_id,shared_by,created_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?) ON DUPLICATE KEY UPDATE created_at=created_at`, workspaceID, exportID, userID, now)
+	return err
+}
+
+func (s *Store) ListWorkspaceExports(ctx context.Context, workspaceID string, limit int) ([]ledger.ExportJob, error) {
+	rows, err := s.db.QueryContext(ctx, ledgerExportSelect+` JOIN workspace_ledger_export_shares wles ON wles.export_id=ledger_exports.id WHERE wles.workspace_id=UUID_TO_BIN(?) AND ledger_exports.status='completed' AND ledger_exports.storage_key IS NOT NULL ORDER BY wles.created_at DESC,ledger_exports.created_at DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ledger.ExportJob, 0)
+	for rows.Next() {
+		item, scanErr := scanLedgerExport(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetWorkspaceExport(ctx context.Context, workspaceID, exportID string) (ledger.ExportJob, error) {
+	item, err := scanLedgerExport(s.db.QueryRowContext(ctx, ledgerExportSelect+` JOIN workspace_ledger_export_shares wles ON wles.export_id=ledger_exports.id WHERE wles.workspace_id=UUID_TO_BIN(?) AND ledger_exports.id=UUID_TO_BIN(?) AND ledger_exports.status='completed' AND ledger_exports.storage_key IS NOT NULL`, workspaceID, exportID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ledger.ExportJob{}, ledger.ErrNotFound
+	}
+	return item, err
+}
+
 const ledgerCandidateSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),COALESCE(BIN_TO_UUID(source_message_id),''),raw_text,COALESCE(direction,''),COALESCE(currency,''),COALESCE(amount_minor,0),category,merchant,occurred_at,timezone,COALESCE(time_precision,''),confidence,needs_clarification,status,created_at,updated_at FROM ledger_candidates`
 const ledgerEntrySelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),COALESCE(BIN_TO_UUID(candidate_id),''),idempotency_key,direction,currency,amount_minor,category,merchant,occurred_at,timezone,note,status,created_at,updated_at,deleted_at FROM ledger_entries`
 const ledgerExportSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),month,currency,timezone,status,COALESCE(storage_key,''),COALESCE(file_name,''),COALESCE(media_type,''),COALESCE(size_bytes,0),COALESCE(sha256,''),COALESCE(failure_code,''),created_at,updated_at,completed_at,COALESCE(worker_id,'') FROM ledger_exports`

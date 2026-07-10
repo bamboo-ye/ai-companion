@@ -128,6 +128,9 @@ type Store interface {
 	ClaimExport(context.Context, string, time.Time, time.Duration) (ExportJob, error)
 	CompleteExport(context.Context, ExportJob) error
 	FailExport(context.Context, string, string, string, time.Time) error
+	ShareExportWithWorkspace(context.Context, string, string, string, time.Time) error
+	ListWorkspaceExports(context.Context, string, int) ([]ExportJob, error)
+	GetWorkspaceExport(context.Context, string, string) (ExportJob, error)
 }
 
 type ExportFileStore interface {
@@ -183,6 +186,40 @@ func (s *Service) GetExport(ctx context.Context, userID, exportID string) (Expor
 
 func (s *Service) DownloadExport(ctx context.Context, userID, exportID string) (ExportJob, []byte, error) {
 	job, err := s.store.GetExport(ctx, userID, exportID)
+	if err != nil || job.Status != "completed" || job.StorageKey == "" {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return ExportJob{}, nil, err
+	}
+	data, err := s.files.Get(ctx, job.StorageKey)
+	return job, data, err
+}
+
+func (s *Service) ShareExportWithWorkspace(ctx context.Context, userID, workspaceID, exportID string) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	exportID = strings.TrimSpace(exportID)
+	if workspaceID == "" || exportID == "" {
+		return ErrValidation
+	}
+	return s.store.ShareExportWithWorkspace(ctx, userID, workspaceID, exportID, s.now().UTC())
+}
+
+func (s *Service) ListWorkspaceExports(ctx context.Context, workspaceID string) ([]ExportJob, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, ErrValidation
+	}
+	return s.store.ListWorkspaceExports(ctx, workspaceID, 200)
+}
+
+func (s *Service) DownloadWorkspaceExport(ctx context.Context, workspaceID, exportID string) (ExportJob, []byte, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	exportID = strings.TrimSpace(exportID)
+	if workspaceID == "" || exportID == "" {
+		return ExportJob{}, nil, ErrValidation
+	}
+	job, err := s.store.GetWorkspaceExport(ctx, workspaceID, exportID)
 	if err != nil || job.Status != "completed" || job.StorageKey == "" {
 		if err == nil {
 			err = ErrNotFound

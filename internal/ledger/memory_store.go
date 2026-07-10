@@ -14,10 +14,11 @@ type MemoryStore struct {
 	idempotencyOwners map[string]string
 	exports           map[string]ExportJob
 	exportKeys        map[string]string
+	workspaceShares   map[string]map[string]time.Time
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{candidates: map[string]Candidate{}, entries: map[string]Entry{}, idempotencyOwners: map[string]string{}, exports: map[string]ExportJob{}, exportKeys: map[string]string{}}
+	return &MemoryStore{candidates: map[string]Candidate{}, entries: map[string]Entry{}, idempotencyOwners: map[string]string{}, exports: map[string]ExportJob{}, exportKeys: map[string]string{}, workspaceShares: map[string]map[string]time.Time{}}
 }
 
 func (s *MemoryStore) CreateCandidate(_ context.Context, item Candidate) error {
@@ -209,4 +210,51 @@ func (s *MemoryStore) FailExport(_ context.Context, exportID, _ string, code str
 	job.Status, job.FailureCode, job.UpdatedAt, job.CompletedAt = "failed", code, now, &now
 	s.exports[exportID] = job
 	return nil
+}
+
+func (s *MemoryStore) ShareExportWithWorkspace(_ context.Context, userID, workspaceID, exportID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.exports[exportID]
+	if !ok || job.UserID != userID || job.Status != "completed" || job.StorageKey == "" {
+		return ErrNotFound
+	}
+	if s.workspaceShares == nil {
+		s.workspaceShares = map[string]map[string]time.Time{}
+	}
+	if s.workspaceShares[workspaceID] == nil {
+		s.workspaceShares[workspaceID] = map[string]time.Time{}
+	}
+	s.workspaceShares[workspaceID][exportID] = now
+	return nil
+}
+
+func (s *MemoryStore) ListWorkspaceExports(_ context.Context, workspaceID string, limit int) ([]ExportJob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]ExportJob, 0)
+	for exportID := range s.workspaceShares[workspaceID] {
+		job, ok := s.exports[exportID]
+		if ok && job.Status == "completed" && job.StorageKey != "" {
+			items = append(items, job)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (s *MemoryStore) GetWorkspaceExport(_ context.Context, workspaceID, exportID string) (ExportJob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.workspaceShares[workspaceID][exportID]; !ok {
+		return ExportJob{}, ErrNotFound
+	}
+	job, ok := s.exports[exportID]
+	if !ok || job.Status != "completed" || job.StorageKey == "" {
+		return ExportJob{}, ErrNotFound
+	}
+	return job, nil
 }

@@ -87,13 +87,25 @@ func (q *QdrantIndex) Upsert(ctx context.Context, item Document, chunks []Chunk)
 }
 
 func (q *QdrantIndex) Search(ctx context.Context, userID, query string, documentIDs []string, limit int) ([]SearchHit, error) {
-	dense, indices, values := vectorize(query)
-	if len(indices) == 0 {
-		return nil, nil
-	}
 	filter := map[string]any{"must": []any{map[string]any{"key": "user_id", "match": map[string]any{"value": userID}}}}
 	if len(documentIDs) > 0 {
 		filter["must"] = append(filter["must"].([]any), map[string]any{"key": "document_id", "match": map[string]any{"any": documentIDs}})
+	}
+	return q.searchWithFilter(ctx, query, filter, limit)
+}
+
+func (q *QdrantIndex) SearchDocuments(ctx context.Context, query string, documentIDs []string, limit int) ([]SearchHit, error) {
+	if len(documentIDs) == 0 {
+		return nil, nil
+	}
+	filter := map[string]any{"must": []any{map[string]any{"key": "document_id", "match": map[string]any{"any": documentIDs}}}}
+	return q.searchWithFilter(ctx, query, filter, limit)
+}
+
+func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter map[string]any, limit int) ([]SearchHit, error) {
+	dense, indices, values := vectorize(query)
+	if len(indices) == 0 {
+		return nil, nil
 	}
 	prefetchLimit := limit * 4
 	if prefetchLimit < 20 {

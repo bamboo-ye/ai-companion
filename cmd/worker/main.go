@@ -13,6 +13,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
+	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
@@ -98,6 +99,11 @@ func main() {
 		ledgerService := ledger.NewService(store)
 		ledgerService.SetExporter(ledger.ArtifactToolExporter{Executable: cfg.SpreadsheetExecutable, ScriptPath: cfg.SpreadsheetWorkerPath, Timeout: 30 * time.Second})
 		ledgerService.SetExportFileStore(ledgerFiles)
+		emailSender := email.Sender(email.NoopSender{})
+		if cfg.SMTPAddr != "" && cfg.SMTPFrom != "" {
+			emailSender = email.SMTPSender{Addr: cfg.SMTPAddr, Host: cfg.SMTPHost, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.SMTPFrom, UseTLS: cfg.SMTPUseTLS}
+		}
+		emailService := email.NewService(store, emailSender)
 		runCtx, cancelRun := context.WithCancel(ctx)
 		errCh := make(chan error, 16)
 		runNamed := func(name string, run func() error) {
@@ -120,6 +126,9 @@ func main() {
 		go runNamed("ledger export reconciler", func() error {
 			return ledgerService.RunExportReconciler(runCtx, workerID, 2*time.Minute, reconcileInterval)
 		})
+		go runNamed("email reconciler", func() error {
+			return emailService.RunReconciler(runCtx, workerID, cfg.EmailWorkerLeaseDuration, cfg.EmailWorkerPollInterval)
+		})
 		go runNamed("reliability sampler", func() error {
 			ticker := time.NewTicker(cfg.ReliabilityPollInterval)
 			defer ticker.Stop()
@@ -139,7 +148,7 @@ func main() {
 				}
 			}
 		})
-		runnerCount := 5
+		runnerCount := 6
 		if cfg.SkillWorkerEnabled {
 			runnerCount++
 			go runNamed("skill reconciler", func() error { return skillRunner.Run(runCtx, skillPollInterval) })
@@ -260,6 +269,16 @@ func main() {
 				}
 				return store.DeliverNotification(processCtx, payload.DeliveryID, time.Now().UTC())
 			})
+			emailProcessor := eventbus.ProcessorFunc(func(processCtx context.Context, event eventbus.Event) error {
+				var payload struct {
+					DeliveryID string `json:"delivery_id"`
+				}
+				if decodeErr := json.Unmarshal(event.Payload, &payload); decodeErr != nil {
+					return decodeErr
+				}
+				_, processErr := emailService.RunDelivery(processCtx, payload.DeliveryID, workerID, cfg.EmailWorkerLeaseDuration)
+				return processErr
+			})
 			for _, consumer := range []struct {
 				name   string
 				topics []string
@@ -271,6 +290,7 @@ func main() {
 				{"memory", []string{"memory.extract.v1"}, memoryProcessor},
 				{"ledger", []string{"ledger.export.v1"}, ledgerProcessor},
 				{"notification", []string{"notification.deliver.v1"}, notificationProcessor},
+				{"email", []string{"email.deliver.v1"}, emailProcessor},
 			} {
 				if consumerErr := startConsumer(consumer.name, consumer.topics, consumer.work); consumerErr != nil {
 					logger.Error("initialize Kafka consumer", "name", consumer.name, "error", consumerErr)

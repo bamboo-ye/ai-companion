@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,29 @@ func (m *memoryIndex) Upsert(_ context.Context, item Document, chunks []Chunk) e
 	return nil
 }
 func (m *memoryIndex) Search(_ context.Context, userID, query string, documentIDs []string, limit int) ([]SearchHit, error) {
+	allowed := map[string]bool{}
+	for _, documentID := range documentIDs {
+		allowed[documentID] = true
+	}
+	result := make([]SearchHit, 0)
+	for _, hit := range m.hits {
+		if !m.deleted[hit.DocumentID] && (len(allowed) == 0 || allowed[hit.DocumentID]) {
+			result = append(result, hit)
+		}
+	}
+	return result, nil
+}
+func (m *memoryIndex) SearchDocuments(ctx context.Context, query string, documentIDs []string, limit int) ([]SearchHit, error) {
+	return m.Search(ctx, "", query, documentIDs, limit)
+}
+func (m *memoryIndex) DeleteDocument(_ context.Context, userID, documentID string) error {
+	m.deleted[documentID] = true
+	return nil
+}
+
+type leakyWorkspaceIndex struct{ memoryIndex }
+
+func (m *leakyWorkspaceIndex) SearchDocuments(_ context.Context, query string, documentIDs []string, limit int) ([]SearchHit, error) {
 	result := make([]SearchHit, 0)
 	for _, hit := range m.hits {
 		if !m.deleted[hit.DocumentID] {
@@ -41,10 +65,6 @@ func (m *memoryIndex) Search(_ context.Context, userID, query string, documentID
 		}
 	}
 	return result, nil
-}
-func (m *memoryIndex) DeleteDocument(_ context.Context, userID, documentID string) error {
-	m.deleted[documentID] = true
-	return nil
 }
 
 func TestIngestQueryAndDeleteLifecycle(t *testing.T) {
@@ -84,6 +104,43 @@ func TestIngestQueryAndDeleteLifecycle(t *testing.T) {
 	afterDelete, err := service.Query(ctx, "user-1", QueryInput{Query: "火星计划什么时候启动？"})
 	if err != nil || afterDelete.Sufficient {
 		t.Fatalf("deleted document answer = %#v, %v", afterDelete, err)
+	}
+}
+
+func TestWorkspaceQueryUsesOnlySharedReadyDocuments(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	blobs := NewMemoryBlobStore()
+	index := &leakyWorkspaceIndex{memoryIndex: memoryIndex{deleted: map[string]bool{}}}
+	service := NewService(store, blobs, 1024)
+	service.SetVectorIndex(index)
+	private, _, err := service.Upload(ctx, "user-2", "private.txt", []byte("项目结论：火星计划在五月启动。"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, _, err := service.Upload(ctx, "user-1", "shared.txt", []byte("项目结论：火星计划在四月启动。"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestor := NewIngestor(store, blobs, fixedParser{}, index, "worker-1")
+	for range 2 {
+		processed, ingestErr := ingestor.RunOnce(ctx)
+		if ingestErr != nil || !processed {
+			t.Fatalf("ingest processed=%v err=%v", processed, ingestErr)
+		}
+	}
+	if err = service.ShareWithWorkspace(ctx, "user-1", "workspace-1", shared.ID); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := service.QueryWorkspace(ctx, "workspace-1", QueryInput{Query: "火星计划什么时候启动？"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Sufficient || len(answer.Citations) != 1 || answer.Citations[0].DocumentID != shared.ID {
+		t.Fatalf("workspace answer used wrong document: %#v", answer)
+	}
+	if answer.Citations[0].DocumentID == private.ID || strings.Contains(answer.Answer, "五月") {
+		t.Fatalf("workspace answer leaked private document: %#v", answer)
 	}
 }
 

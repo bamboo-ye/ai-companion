@@ -44,10 +44,19 @@ type Config struct {
 	SkillWorkerRenewInterval        time.Duration
 	ReliabilityPollInterval         time.Duration
 	NotificationSchedulerInterval   time.Duration
+	EmailWorkerPollInterval         time.Duration
+	EmailWorkerLeaseDuration        time.Duration
+	SMTPAddr                        string
+	SMTPHost                        string
+	SMTPUsername                    string
+	SMTPPassword                    string
+	SMTPFrom                        string
+	SMTPUseTLS                      bool
 	MCPStdioServersJSON             string
 	WebOrigin                       string
 	AuthTokenSecret                 string
 	OperatorToken                   string
+	OperatorMFARequired             bool
 	AccessTokenTTL                  time.Duration
 	RefreshTokenTTL                 time.Duration
 	PresenceTTL                     time.Duration
@@ -127,6 +136,18 @@ func Load(serviceName string) (Config, error) {
 	if err != nil || notificationSchedulerInterval <= 0 {
 		return Config{}, fmt.Errorf("NOTIFICATION_SCHEDULER_INTERVAL must be a positive duration")
 	}
+	emailWorkerPollInterval, err := time.ParseDuration(value("EMAIL_WORKER_POLL_INTERVAL", "1s"))
+	if err != nil || emailWorkerPollInterval <= 0 {
+		return Config{}, fmt.Errorf("EMAIL_WORKER_POLL_INTERVAL must be a positive duration")
+	}
+	emailWorkerLeaseDuration, err := time.ParseDuration(value("EMAIL_WORKER_LEASE_DURATION", "2m"))
+	if err != nil || emailWorkerLeaseDuration <= 0 {
+		return Config{}, fmt.Errorf("EMAIL_WORKER_LEASE_DURATION must be a positive duration")
+	}
+	smtpUseTLS, err := strconv.ParseBool(value("SMTP_USE_TLS", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("SMTP_USE_TLS must be true or false")
+	}
 	chatRateLimit := 30
 	if _, err := fmt.Sscanf(value("CHAT_RATE_LIMIT", "30"), "%d", &chatRateLimit); err != nil || chatRateLimit < 1 {
 		return Config{}, fmt.Errorf("CHAT_RATE_LIMIT must be a positive integer")
@@ -168,6 +189,10 @@ func Load(serviceName string) (Config, error) {
 	operatorToken := value("OPERATOR_TOKEN", "development-operator-token")
 	if value("APP_ENV", "development") == "production" && operatorToken == "development-operator-token" {
 		return Config{}, fmt.Errorf("OPERATOR_TOKEN must be set in production")
+	}
+	operatorMFARequired, err := strconv.ParseBool(value("OPERATOR_MFA_REQUIRED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("OPERATOR_MFA_REQUIRED must be true or false")
 	}
 
 	brokers := splitNonEmpty(value("KAFKA_BROKERS", "127.0.0.1:9092"))
@@ -235,10 +260,19 @@ func Load(serviceName string) (Config, error) {
 		SkillWorkerRenewInterval:      skillWorkerRenewInterval,
 		ReliabilityPollInterval:       reliabilityPollInterval,
 		NotificationSchedulerInterval: notificationSchedulerInterval,
+		EmailWorkerPollInterval:       emailWorkerPollInterval,
+		EmailWorkerLeaseDuration:      emailWorkerLeaseDuration,
+		SMTPAddr:                      value("SMTP_ADDR", ""),
+		SMTPHost:                      value("SMTP_HOST", ""),
+		SMTPUsername:                  value("SMTP_USERNAME", ""),
+		SMTPPassword:                  os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:                      value("SMTP_FROM", ""),
+		SMTPUseTLS:                    smtpUseTLS,
 		MCPStdioServersJSON:           value("MCP_STDIO_SERVERS_JSON", "[]"),
 		WebOrigin:                     value("WEB_ORIGIN", "http://localhost:3000"),
 		AuthTokenSecret:               authTokenSecret,
 		OperatorToken:                 operatorToken,
+		OperatorMFARequired:           operatorMFARequired,
 		AccessTokenTTL:                accessTokenTTL,
 		RefreshTokenTTL:               refreshTokenTTL,
 		PresenceTTL:                   presenceTTL, ChatRateLimit: chatRateLimit, ChatRateWindow: chatRateWindow,

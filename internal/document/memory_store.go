@@ -8,11 +8,12 @@ import (
 )
 
 type MemoryStore struct {
-	mu     sync.RWMutex
-	items  map[string]Document
-	jobs   map[string]memoryJob
-	pages  map[string][]Page
-	chunks map[string][]Chunk
+	mu              sync.RWMutex
+	items           map[string]Document
+	jobs            map[string]memoryJob
+	pages           map[string][]Page
+	chunks          map[string][]Chunk
+	workspaceShares map[string]map[string]time.Time
 }
 
 type memoryJob struct {
@@ -22,7 +23,7 @@ type memoryJob struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}}
+	return &MemoryStore{items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}, workspaceShares: map[string]map[string]time.Time{}}
 }
 
 func (s *MemoryStore) CreateDocument(_ context.Context, item Document) (Document, bool, error) {
@@ -82,6 +83,40 @@ func (s *MemoryStore) DeleteDocument(_ context.Context, userID, documentID strin
 		}
 	}
 	return nil
+}
+
+func (s *MemoryStore) ShareDocumentWithWorkspace(_ context.Context, userID, workspaceID, documentID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[documentID]
+	if !ok || item.UserID != userID || item.Status == "deleted" {
+		return ErrNotFound
+	}
+	if s.workspaceShares == nil {
+		s.workspaceShares = map[string]map[string]time.Time{}
+	}
+	if s.workspaceShares[workspaceID] == nil {
+		s.workspaceShares[workspaceID] = map[string]time.Time{}
+	}
+	s.workspaceShares[workspaceID][documentID] = now
+	return nil
+}
+
+func (s *MemoryStore) ListWorkspaceDocuments(_ context.Context, workspaceID string, limit int) ([]Document, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]Document, 0)
+	for documentID := range s.workspaceShares[workspaceID] {
+		item, ok := s.items[documentID]
+		if ok && item.Status != "deleted" {
+			items = append(items, item)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
 }
 
 func (s *MemoryStore) ClaimIngestJob(_ context.Context, _ string, now time.Time, lease time.Duration) (IngestJob, error) {

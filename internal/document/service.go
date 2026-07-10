@@ -50,6 +50,8 @@ type Store interface {
 	ListDocuments(context.Context, string, int) ([]Document, error)
 	GetDocument(context.Context, string, string) (Document, error)
 	DeleteDocument(context.Context, string, string, time.Time) error
+	ShareDocumentWithWorkspace(context.Context, string, string, string, time.Time) error
+	ListWorkspaceDocuments(context.Context, string, int) ([]Document, error)
 }
 
 type BlobStore interface {
@@ -135,6 +137,23 @@ func (s *Service) List(ctx context.Context, userID string) ([]Document, error) {
 
 func (s *Service) Get(ctx context.Context, userID, documentID string) (Document, error) {
 	return s.store.GetDocument(ctx, userID, documentID)
+}
+
+func (s *Service) ShareWithWorkspace(ctx context.Context, userID, workspaceID, documentID string) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	documentID = strings.TrimSpace(documentID)
+	if workspaceID == "" || documentID == "" {
+		return fmt.Errorf("%w: workspace_id and document_id are required", ErrValidation)
+	}
+	return s.store.ShareDocumentWithWorkspace(ctx, userID, workspaceID, documentID, s.now().UTC())
+}
+
+func (s *Service) ListWorkspace(ctx context.Context, workspaceID string) ([]Document, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
+	}
+	return s.store.ListWorkspaceDocuments(ctx, workspaceID, 200)
 }
 
 func (s *Service) Delete(ctx context.Context, userID, documentID string) error {

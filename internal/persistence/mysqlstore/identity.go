@@ -11,7 +11,10 @@ import (
 )
 
 func (s *Store) CreateUser(ctx context.Context, user identity.User) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO users (id,email,password_hash,display_name,timezone,locale,created_at,updated_at) VALUES (UUID_TO_BIN(?),?,?,?,?,?,?,?)`, user.ID, user.Email, user.PasswordHash, user.DisplayName, user.Timezone, user.Locale, user.CreatedAt, user.UpdatedAt)
+	if user.Status == "" {
+		user.Status = "active"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users (id,email,password_hash,display_name,timezone,locale,status,created_at,updated_at) VALUES (UUID_TO_BIN(?),?,?,?,?,?,?,?,?)`, user.ID, user.Email, user.PasswordHash, user.DisplayName, user.Timezone, user.Locale, user.Status, user.CreatedAt, user.UpdatedAt)
 	if isDuplicate(err) {
 		return identity.ErrConflict
 	}
@@ -19,11 +22,11 @@ func (s *Store) CreateUser(ctx context.Context, user identity.User) error {
 }
 
 func (s *Store) FindUserByEmail(ctx context.Context, email string) (identity.User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id),email,password_hash,display_name,timezone,locale,created_at,updated_at FROM users WHERE email=? AND status='active'`, email))
+	return scanUser(s.db.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id),email,password_hash,display_name,timezone,locale,status,created_at,updated_at FROM users WHERE email=? AND status='active'`, email))
 }
 
 func (s *Store) GetUser(ctx context.Context, userID string) (identity.User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id),email,password_hash,display_name,timezone,locale,created_at,updated_at FROM users WHERE id=UUID_TO_BIN(?) AND status='active'`, userID))
+	return scanUser(s.db.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id),email,password_hash,display_name,timezone,locale,status,created_at,updated_at FROM users WHERE id=UUID_TO_BIN(?) AND status='active'`, userID))
 }
 
 func (s *Store) UpsertDevice(ctx context.Context, device identity.Device) (identity.Device, error) {
@@ -96,7 +99,7 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanUser(row rowScanner) (identity.User, error) {
 	var user identity.User
-	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Timezone, &user.Locale, &user.CreatedAt, &user.UpdatedAt)
+	err := row.Scan(&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Timezone, &user.Locale, &user.Status, &user.CreatedAt, &user.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = identity.ErrNotFound
 	}

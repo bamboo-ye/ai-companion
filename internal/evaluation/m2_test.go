@@ -71,6 +71,22 @@ func (i *baselineIndex) Search(_ context.Context, userID, _ string, documentIDs 
 	}
 	return result, nil
 }
+func (i *baselineIndex) SearchDocuments(_ context.Context, _ string, documentIDs []string, limit int) ([]document.SearchHit, error) {
+	allowed := map[string]bool{}
+	for _, id := range documentIDs {
+		allowed[id] = true
+	}
+	result := make([]document.SearchHit, 0)
+	for _, item := range i.hits {
+		if allowed[item.hit.DocumentID] {
+			result = append(result, item.hit)
+			if len(result) >= limit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
 func (*baselineIndex) DeleteDocument(context.Context, string, string) error { return nil }
 
 func TestM2RAGBaseline(t *testing.T) {

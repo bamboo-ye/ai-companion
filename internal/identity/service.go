@@ -24,6 +24,7 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	Timezone     string    `json:"timezone"`
 	Locale       string    `json:"locale"`
+	Status       string    `json:"status,omitempty"`
 	PasswordHash string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -123,7 +124,7 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (TokenPair,
 	if err != nil {
 		return TokenPair{}, err
 	}
-	user := User{ID: userID, Email: input.Email, DisplayName: strings.TrimSpace(input.DisplayName), Timezone: input.Timezone, Locale: defaultString(input.Locale, "zh-CN"), PasswordHash: hash, CreatedAt: now, UpdatedAt: now}
+	user := User{ID: userID, Email: input.Email, DisplayName: strings.TrimSpace(input.DisplayName), Timezone: input.Timezone, Locale: defaultString(input.Locale, "zh-CN"), Status: "active", PasswordHash: hash, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateUser(ctx, user); err != nil {
 		return TokenPair{}, err
 	}

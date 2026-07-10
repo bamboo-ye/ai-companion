@@ -249,6 +249,45 @@ func (s *Store) SaveSkillRun(ctx context.Context, run skill.Run, expectedRevisio
 	return tx.Commit()
 }
 
+func (s *Store) ShareGeneratedFileWithWorkspace(ctx context.Context, userID, workspaceID, runID, fileID string, now time.Time) error {
+	if _, err := s.GetSkillRun(ctx, userID, runID); err != nil {
+		return err
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM generated_files WHERE id=UUID_TO_BIN(?) AND run_id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, fileID, runID, userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		return skill.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_generated_file_shares (workspace_id,file_id,shared_by,created_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?) ON DUPLICATE KEY UPDATE created_at=created_at`, workspaceID, fileID, userID, now)
+	return err
+}
+
+func (s *Store) ListWorkspaceGeneratedFiles(ctx context.Context, workspaceID string, limit int) ([]skill.GeneratedFile, error) {
+	rows, err := s.db.QueryContext(ctx, skillFileSelect+` JOIN workspace_generated_file_shares wgfs ON wgfs.file_id=generated_files.id WHERE wgfs.workspace_id=UUID_TO_BIN(?) AND generated_files.status='active' ORDER BY wgfs.created_at DESC,generated_files.created_at DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]skill.GeneratedFile, 0)
+	for rows.Next() {
+		item, scanErr := scanSkillFile(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) GetWorkspaceGeneratedFile(ctx context.Context, workspaceID, fileID string) (skill.GeneratedFile, error) {
+	item, err := scanSkillFile(s.db.QueryRowContext(ctx, skillFileSelect+` JOIN workspace_generated_file_shares wgfs ON wgfs.file_id=generated_files.id WHERE wgfs.workspace_id=UUID_TO_BIN(?) AND generated_files.id=UUID_TO_BIN(?) AND generated_files.status='active'`, workspaceID, fileID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return skill.GeneratedFile{}, skill.ErrNotFound
+	}
+	return item, err
+}
+
 func appendSkillQueuedOutbox(ctx context.Context, tx *sql.Tx, run skill.Run) error {
 	if run.Status != "queued" || run.ExecutionMode != "worker" {
 		return nil

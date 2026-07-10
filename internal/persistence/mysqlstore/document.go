@@ -114,6 +114,33 @@ func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, n
 	return tx.Commit()
 }
 
+func (s *Store) ShareDocumentWithWorkspace(ctx context.Context, userID, workspaceID, documentID string, now time.Time) error {
+	if _, err := s.GetDocument(ctx, userID, documentID); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO workspace_document_shares (workspace_id,document_id,shared_by,created_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?) ON DUPLICATE KEY UPDATE created_at=created_at`, workspaceID, documentID, userID, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) ListWorkspaceDocuments(ctx context.Context, workspaceID string, limit int) ([]document.Document, error) {
+	rows, err := s.db.QueryContext(ctx, documentSelect+` JOIN workspace_document_shares wds ON wds.document_id=d.id WHERE wds.workspace_id=UUID_TO_BIN(?) AND d.ingest_status<>'deleted' AND f.status='active' ORDER BY wds.created_at DESC,d.created_at DESC LIMIT ?`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]document.Document, 0)
+	for rows.Next() {
+		item, err := scanDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) DurableCleanupDispatch() bool { return true }
 
 func (s *Store) ClaimCleanupJobByID(ctx context.Context, jobID, workerID string, now time.Time, lease time.Duration) (document.CleanupJob, error) {
