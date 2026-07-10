@@ -10,6 +10,7 @@ import (
 
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/identity"
+	"github.com/windcry1/ai-companion/internal/opsauth"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 )
 
@@ -271,6 +272,143 @@ func (s *Server) moderateOperatorUser(w http.ResponseWriter, r *http.Request, ac
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
+func (s *Server) listOperatorAccounts(w http.ResponseWriter, r *http.Request) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	items, err := service.List(r.Context(), opsauth.OperatorFilter{
+		Role: strings.TrimSpace(r.URL.Query().Get("role")), Status: strings.TrimSpace(r.URL.Query().Get("status")), Limit: queryLimit(r, 100),
+	})
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"operators": items})
+}
+
+func (s *Server) createOperatorAccount(w http.ResponseWriter, r *http.Request) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+		Role        string `json:"role"`
+		Token       string `json:"token"`
+		TOTPSecret  string `json:"totp_secret"`
+		MFAEnabled  bool   `json:"mfa_enabled"`
+		Reason      string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := service.Create(r.Context(), opsauth.CreateInput{
+		ID: input.ID, DisplayName: input.DisplayName, Role: input.Role, Token: input.Token, TOTPSecret: input.TOTPSecret, MFAEnabled: input.MFAEnabled,
+		Actor: currentOperator(r).Actor, Reason: input.Reason,
+	})
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) getOperatorAccount(w http.ResponseWriter, r *http.Request) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	account, err := service.Get(r.Context(), r.PathValue("operator_id"))
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"operator": account})
+}
+
+func (s *Server) disableOperatorAccount(w http.ResponseWriter, r *http.Request) {
+	s.setOperatorAccountStatus(w, r, "disable")
+}
+
+func (s *Server) enableOperatorAccount(w http.ResponseWriter, r *http.Request) {
+	s.setOperatorAccountStatus(w, r, "enable")
+}
+
+func (s *Server) setOperatorAccountStatus(w http.ResponseWriter, r *http.Request, action string) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	var (
+		account opsauth.Account
+		err     error
+	)
+	switch action {
+	case "disable":
+		account, err = service.Disable(r.Context(), r.PathValue("operator_id"), currentOperator(r).Actor, input.Reason)
+	case "enable":
+		account, err = service.Enable(r.Context(), r.PathValue("operator_id"), currentOperator(r).Actor, input.Reason)
+	default:
+		err = opsauth.ErrValidation
+	}
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"operator": account})
+}
+
+func (s *Server) resetOperatorAccountToken(w http.ResponseWriter, r *http.Request) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := service.ResetToken(r.Context(), r.PathValue("operator_id"), currentOperator(r).Actor, input.Reason)
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) resetOperatorAccountMFA(w http.ResponseWriter, r *http.Request) {
+	service, ok := s.requireOperatorAccountAdmin(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Reason     string `json:"reason"`
+		MFAEnabled *bool  `json:"mfa_enabled"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	enabled := true
+	if input.MFAEnabled != nil {
+		enabled = *input.MFAEnabled
+	}
+	result, err := service.ResetMFA(r.Context(), r.PathValue("operator_id"), currentOperator(r).Actor, input.Reason, enabled)
+	if err != nil {
+		writeOperatorAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	admin, ok := s.requireIdentityAdmin(w)
 	if !ok {
@@ -294,6 +432,32 @@ func (s *Server) requireIdentityAdmin(w http.ResponseWriter) (*identity.AdminSer
 		return nil, false
 	}
 	return s.identityAdmin, true
+}
+
+func (s *Server) requireOperatorAccountAdmin(w http.ResponseWriter, r *http.Request) (*opsauth.Service, bool) {
+	if !s.requireOperatorRole(w, r, "admin") {
+		return nil, false
+	}
+	if s.operatorAuth == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "operator_accounts_unavailable", Message: "运维账号存储未启用"})
+		return nil, false
+	}
+	return s.operatorAuth, true
+}
+
+func writeOperatorAccountError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, opsauth.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, apiError{Code: "not_found", Message: "运维账号不存在"})
+	case errors.Is(err, opsauth.ErrConflict):
+		writeJSON(w, http.StatusConflict, apiError{Code: "conflict", Message: "运维账号或令牌已存在"})
+	case errors.Is(err, opsauth.ErrForbidden):
+		writeJSON(w, http.StatusForbidden, apiError{Code: "operator_forbidden", Message: "当前运维角色无权执行该操作"})
+	case errors.Is(err, opsauth.ErrValidation):
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "validation_error", Message: "运维账号字段无效，reason 必填且不能超过 512 字符"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, apiError{Code: "operator_accounts_unavailable", Message: "运维账号服务暂时不可用"})
+	}
 }
 
 func (s *Server) requireOperationsStore(w http.ResponseWriter) (eventbus.OperationsStore, bool) {

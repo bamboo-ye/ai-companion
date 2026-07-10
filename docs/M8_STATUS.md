@@ -357,6 +357,44 @@ Implemented:
 | OpenAPI YAML parse | Passed |
 | Git diff whitespace check | Passed |
 
+## Slice 12: operator account bootstrap and admin management APIs
+
+Implemented:
+
+- Added admin-only operator account APIs:
+  - `GET /v1/ops/operators`
+  - `POST /v1/ops/operators`
+  - `GET /v1/ops/operators/{operator_id}`
+  - `POST /v1/ops/operators/{operator_id}/disable`
+  - `POST /v1/ops/operators/{operator_id}/enable`
+  - `POST /v1/ops/operators/{operator_id}/reset-token`
+  - `POST /v1/ops/operators/{operator_id}/reset-mfa`
+- Preserved legacy `OPERATOR_TOKEN` as an admin bootstrap path when `OPERATOR_MFA_REQUIRED=false`.
+- Creation and reset endpoints return plaintext operator tokens/TOTP secrets only once.
+- Operator account list/detail responses never expose token hashes or TOTP secrets.
+- Added role enforcement so only `admin` operators can manage operator accounts; `viewer`/`support` remain blocked from these APIs.
+- Added MySQL and memory-store support for operator account listing, creation, status changes, token reset, and MFA reset.
+- Operator account mutations write `audit_logs` actions:
+  - `operator.create`
+  - `operator.status.update`
+  - `operator.token.reset`
+  - `operator.mfa.reset`
+- Documented the operator account management APIs in OpenAPI.
+
+## Slice 12 Verification
+
+| Check | Result |
+|---|---|
+| Legacy operator token can bootstrap the first admin account | Passed |
+| Admin can create support and viewer operator accounts | Passed |
+| Viewer operator cannot create/manage operator accounts | Passed |
+| Support operator can authenticate with generated token and TOTP | Passed |
+| Reset token invalidates the old token and returns a one-time replacement | Passed |
+| Disabled operator account cannot authenticate | Passed |
+| Go full test suite | Passed |
+| OpenAPI YAML parse | Passed |
+| Git diff whitespace check | Passed |
+
 ## Next slices
 
-- Admin console bootstrap/user-management APIs for operator accounts.
+- Admin console UI contract and operational audit export.

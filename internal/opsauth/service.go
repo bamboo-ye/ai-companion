@@ -3,6 +3,7 @@ package opsauth
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -21,6 +22,8 @@ var (
 	ErrUnauthorized = errors.New("operator unauthorized")
 	ErrForbidden    = errors.New("operator forbidden")
 	ErrValidation   = errors.New("operator auth validation failed")
+	ErrNotFound     = errors.New("operator account not found")
+	ErrConflict     = errors.New("operator account already exists")
 )
 
 type Account struct {
@@ -46,11 +49,57 @@ type Principal struct {
 type Store interface {
 	FindOperatorByTokenHash(context.Context, string) (Account, error)
 	RecordOperatorAuthenticated(context.Context, string, time.Time) error
+	ListOperators(context.Context, OperatorFilter) ([]Account, error)
+	GetOperator(context.Context, string) (Account, error)
+	CreateOperator(context.Context, Account, AuditInput) (Account, error)
+	SetOperatorStatus(context.Context, string, string, AuditInput) (Account, error)
+	ResetOperatorToken(context.Context, string, string, AuditInput) (Account, error)
+	ResetOperatorMFA(context.Context, string, string, bool, AuditInput) (Account, error)
 }
 
 type Service struct {
 	store Store
 	now   func() time.Time
+}
+
+type OperatorFilter struct {
+	Role   string
+	Status string
+	Limit  int
+}
+
+type AuditInput struct {
+	Actor  string
+	Action string
+	Reason string
+	Now    time.Time
+}
+
+type CreateInput struct {
+	ID          string
+	DisplayName string
+	Role        string
+	Token       string
+	TOTPSecret  string
+	MFAEnabled  bool
+	Actor       string
+	Reason      string
+}
+
+type CreateResult struct {
+	Account    Account `json:"operator"`
+	Token      string  `json:"token,omitempty"`
+	TOTPSecret string  `json:"totp_secret,omitempty"`
+}
+
+type ResetTokenResult struct {
+	Account Account `json:"operator"`
+	Token   string  `json:"token"`
+}
+
+type ResetMFAResult struct {
+	Account    Account `json:"operator"`
+	TOTPSecret string  `json:"totp_secret,omitempty"`
 }
 
 func NewService(store Store) *Service {
@@ -81,9 +130,130 @@ func (s *Service) Authenticate(ctx context.Context, bearerToken, otp string) (Pr
 	return Principal{ID: account.ID, Role: role, MFAVerified: mfaVerified}, nil
 }
 
+func (s *Service) List(ctx context.Context, filter OperatorFilter) ([]Account, error) {
+	filter.Role = strings.TrimSpace(filter.Role)
+	if filter.Role != "" {
+		filter.Role = normalizeRole(filter.Role)
+		if filter.Role == "" {
+			return nil, ErrValidation
+		}
+	}
+	filter.Status = normalizeStatus(filter.Status)
+	if filter.Limit <= 0 || filter.Limit > 500 {
+		filter.Limit = 100
+	}
+	if filter.Status == "" {
+		return nil, ErrValidation
+	}
+	return s.store.ListOperators(ctx, filter)
+}
+
+func (s *Service) Get(ctx context.Context, id string) (Account, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Account{}, ErrValidation
+	}
+	return s.store.GetOperator(ctx, id)
+}
+
+func (s *Service) Create(ctx context.Context, input CreateInput) (CreateResult, error) {
+	input.ID, input.DisplayName = strings.TrimSpace(input.ID), strings.TrimSpace(input.DisplayName)
+	input.Role = normalizeRole(input.Role)
+	input.Actor, input.Reason = strings.TrimSpace(input.Actor), strings.TrimSpace(input.Reason)
+	if input.ID == "" || input.DisplayName == "" || input.Role == "" || input.Actor == "" || input.Reason == "" || len(input.Reason) > 512 {
+		return CreateResult{}, ErrValidation
+	}
+	token := strings.TrimSpace(input.Token)
+	if token == "" {
+		generated, err := RandomToken()
+		if err != nil {
+			return CreateResult{}, err
+		}
+		token = generated
+	}
+	secret := strings.TrimSpace(input.TOTPSecret)
+	if input.MFAEnabled && secret == "" {
+		generated, err := RandomTOTPSecret()
+		if err != nil {
+			return CreateResult{}, err
+		}
+		secret = generated
+	}
+	now := s.now().UTC()
+	account, err := BootstrapAccount(input.ID, input.DisplayName, input.Role, token, secret, input.MFAEnabled, now)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	account, err = s.store.CreateOperator(ctx, account, AuditInput{Actor: input.Actor, Action: "operator.create", Reason: input.Reason, Now: now})
+	if err != nil {
+		return CreateResult{}, err
+	}
+	return CreateResult{Account: account, Token: token, TOTPSecret: secret}, nil
+}
+
+func (s *Service) Disable(ctx context.Context, id, actor, reason string) (Account, error) {
+	return s.setStatus(ctx, id, "disabled", actor, reason)
+}
+
+func (s *Service) Enable(ctx context.Context, id, actor, reason string) (Account, error) {
+	return s.setStatus(ctx, id, "active", actor, reason)
+}
+
+func (s *Service) ResetToken(ctx context.Context, id, actor, reason string) (ResetTokenResult, error) {
+	id, actor, reason = strings.TrimSpace(id), strings.TrimSpace(actor), strings.TrimSpace(reason)
+	if id == "" || actor == "" || reason == "" || len(reason) > 512 {
+		return ResetTokenResult{}, ErrValidation
+	}
+	token, err := RandomToken()
+	if err != nil {
+		return ResetTokenResult{}, err
+	}
+	account, err := s.store.ResetOperatorToken(ctx, id, HashToken(token), AuditInput{Actor: actor, Action: "operator.token.reset", Reason: reason, Now: s.now().UTC()})
+	if err != nil {
+		return ResetTokenResult{}, err
+	}
+	return ResetTokenResult{Account: account, Token: token}, nil
+}
+
+func (s *Service) ResetMFA(ctx context.Context, id, actor, reason string, enabled bool) (ResetMFAResult, error) {
+	id, actor, reason = strings.TrimSpace(id), strings.TrimSpace(actor), strings.TrimSpace(reason)
+	if id == "" || actor == "" || reason == "" || len(reason) > 512 {
+		return ResetMFAResult{}, ErrValidation
+	}
+	secret := ""
+	if enabled {
+		generated, err := RandomTOTPSecret()
+		if err != nil {
+			return ResetMFAResult{}, err
+		}
+		secret = generated
+	}
+	account, err := s.store.ResetOperatorMFA(ctx, id, secret, enabled, AuditInput{Actor: actor, Action: "operator.mfa.reset", Reason: reason, Now: s.now().UTC()})
+	if err != nil {
+		return ResetMFAResult{}, err
+	}
+	return ResetMFAResult{Account: account, TOTPSecret: secret}, nil
+}
+
 func Can(role, required string) bool {
 	rank := map[string]int{"viewer": 1, "support": 2, "admin": 3}
 	return rank[normalizeRole(role)] >= rank[normalizeRole(required)]
+}
+
+func RandomToken() (string, error) {
+	var data [32]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return "op_" + hex.EncodeToString(data[:]), nil
+}
+
+func RandomTOTPSecret() (string, error) {
+	var data [20]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(base32.StdEncoding.EncodeToString(data[:]), "="), nil
 }
 
 func HashToken(token string) string {
@@ -139,7 +309,7 @@ func BootstrapAccount(id, displayName, role, token, totpSecret string, mfaEnable
 func normalizeRole(role string) string {
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role == "" {
-		return "viewer"
+		return ""
 	}
 	switch role {
 	case "viewer", "support", "admin":
@@ -147,6 +317,27 @@ func normalizeRole(role string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return "active"
+	}
+	switch status {
+	case "active", "disabled":
+		return status
+	default:
+		return ""
+	}
+}
+
+func (s *Service) setStatus(ctx context.Context, id, status, actor, reason string) (Account, error) {
+	id, actor, reason = strings.TrimSpace(id), strings.TrimSpace(actor), strings.TrimSpace(reason)
+	if id == "" || actor == "" || reason == "" || len(reason) > 512 {
+		return Account{}, ErrValidation
+	}
+	return s.store.SetOperatorStatus(ctx, id, status, AuditInput{Actor: actor, Action: "operator.status.update", Reason: reason, Now: s.now().UTC()})
 }
 
 func decodeSecret(secret string) ([]byte, error) {
