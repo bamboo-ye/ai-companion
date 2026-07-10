@@ -1310,6 +1310,165 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/operators:
+    get:
+      operationId: listOperatorAccounts
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: role, in: query, required: false, schema: { type: string, enum: [viewer, support, admin] } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [active, disabled], default: active } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Admin-visible operator accounts. Secrets and token hashes are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operators]
+                properties:
+                  operators: { type: array, items: { $ref: "#/components/schemas/OperatorAccount" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    post:
+      operationId: createOperatorAccount
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        description: Creates an operator account. If token or TOTP secret is omitted, the server generates it and returns the plain value once.
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateOperatorAccountRequest" } } }
+      responses:
+        "201":
+          description: Operator account created; token and totp_secret are one-time onboarding credentials.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperatorCredentialEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/operators/{operator_id}:
+    get:
+      operationId: getOperatorAccount
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }]
+      responses:
+        "200":
+          description: Operator account detail without secrets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operator]
+                properties:
+                  operator: { $ref: "#/components/schemas/OperatorAccount" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/operators/{operator_id}/disable:
+    post:
+      operationId: disableOperatorAccount
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/OperatorModerationRequest" } } }
+      responses:
+        "200":
+          description: Operator account disabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operator]
+                properties:
+                  operator: { $ref: "#/components/schemas/OperatorAccount" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/operators/{operator_id}/enable:
+    post:
+      operationId: enableOperatorAccount
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/OperatorModerationRequest" } } }
+      responses:
+        "200":
+          description: Operator account re-enabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operator]
+                properties:
+                  operator: { $ref: "#/components/schemas/OperatorAccount" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/operators/{operator_id}/reset-token:
+    post:
+      operationId: resetOperatorAccountToken
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/OperatorModerationRequest" } } }
+      responses:
+        "200":
+          description: Token reset; the new token is returned once.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperatorTokenEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/operators/{operator_id}/reset-mfa:
+    post:
+      operationId: resetOperatorAccountMFA
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ResetOperatorMFARequest" } } }
+      responses:
+        "200":
+          description: MFA setting reset; the new TOTP secret is returned once when MFA is enabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperatorMFAEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/ops/audit-logs:
     get:
       operationId: listAuditLogs
@@ -2299,6 +2458,70 @@ components:
       required: [reason]
       properties:
         reason: { type: string, minLength: 1, maxLength: 512 }
+    OperatorAccount:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, role, status, mfa_enabled]
+      properties:
+        id: { type: string, maxLength: 128 }
+        display_name: { type: string, maxLength: 191 }
+        role: { type: string, enum: [viewer, support, admin] }
+        status: { type: string, enum: [active, disabled] }
+        mfa_enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_authenticated_at: { type: string, format: date-time }
+    CreateOperatorAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, role, reason]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        display_name: { type: string, minLength: 1, maxLength: 191 }
+        role: { type: string, enum: [viewer, support, admin] }
+        token:
+          type: string
+          description: Optional caller-supplied bootstrap token. Omit to let the server generate one.
+        totp_secret:
+          type: string
+          description: Optional base32 TOTP secret. Omit when mfa_enabled is true to let the server generate one.
+        mfa_enabled: { type: boolean, default: false }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    OperatorCredentialEnvelope:
+      type: object
+      additionalProperties: false
+      required: [operator, token]
+      properties:
+        operator: { $ref: "#/components/schemas/OperatorAccount" }
+        token: { type: string, description: One-time visible operator token. }
+        totp_secret: { type: string, description: One-time visible base32 TOTP secret when MFA is enabled. }
+    OperatorTokenEnvelope:
+      type: object
+      additionalProperties: false
+      required: [operator, token]
+      properties:
+        operator: { $ref: "#/components/schemas/OperatorAccount" }
+        token: { type: string, description: One-time visible replacement token. }
+    OperatorMFAEnvelope:
+      type: object
+      additionalProperties: false
+      required: [operator]
+      properties:
+        operator: { $ref: "#/components/schemas/OperatorAccount" }
+        totp_secret: { type: string, description: One-time visible base32 TOTP secret when MFA is enabled. }
+    OperatorModerationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    ResetOperatorMFARequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        mfa_enabled: { type: boolean, default: true }
     UserModerationRequest:
       type: object
       additionalProperties: false

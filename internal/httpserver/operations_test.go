@@ -242,6 +242,107 @@ func TestOperatorAccountRequiresTOTPAndRoleForMutations(t *testing.T) {
 	}
 }
 
+func TestOperatorAccountManagementLifecycle(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-account-secret-with-enough-entropy", OperatorToken: "legacy-root-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.SetOperatorAuthStore(opsauth.NewMemoryStore())
+
+	adminCreated := performOperatorJSON(t, server, http.MethodPost, "/v1/ops/operators", "legacy-root-token", "bootstrap-root", map[string]any{
+		"id": "admin-1", "display_name": "Admin One", "role": "admin", "mfa_enabled": true, "reason": "bootstrap first admin",
+	})
+	if adminCreated.Code != http.StatusCreated || !strings.Contains(adminCreated.Body.String(), `"id":"admin-1"`) || !strings.Contains(adminCreated.Body.String(), `"token":"op_`) || strings.Contains(adminCreated.Body.String(), "token_hash") {
+		t.Fatalf("admin created=%d %s", adminCreated.Code, adminCreated.Body.String())
+	}
+	var adminEnvelope struct {
+		Token      string `json:"token"`
+		TOTPSecret string `json:"totp_secret"`
+	}
+	if err := json.Unmarshal(adminCreated.Body.Bytes(), &adminEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	adminOTP, err := opsauth.GenerateTOTP(adminEnvelope.TOTPSecret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	supportCreated := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators", adminEnvelope.Token, "", adminOTP, map[string]any{
+		"id": "support-2", "display_name": "Support Two", "role": "support", "mfa_enabled": true, "reason": "bootstrap support operator",
+	})
+	if supportCreated.Code != http.StatusCreated || !strings.Contains(supportCreated.Body.String(), `"role":"support"`) || !strings.Contains(supportCreated.Body.String(), `"totp_secret"`) {
+		t.Fatalf("support created=%d %s", supportCreated.Code, supportCreated.Body.String())
+	}
+	var supportEnvelope struct {
+		Token      string `json:"token"`
+		TOTPSecret string `json:"totp_secret"`
+	}
+	if err := json.Unmarshal(supportCreated.Body.Bytes(), &supportEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	supportOTP, err := opsauth.GenerateTOTP(supportEnvelope.TOTPSecret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	viewerCreated := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators", adminEnvelope.Token, "", adminOTP, map[string]any{
+		"id": "viewer-2", "display_name": "Viewer Two", "role": "viewer", "mfa_enabled": true, "reason": "bootstrap read-only operator",
+	})
+	if viewerCreated.Code != http.StatusCreated {
+		t.Fatalf("viewer created=%d %s", viewerCreated.Code, viewerCreated.Body.String())
+	}
+	var viewerEnvelope struct {
+		Token      string `json:"token"`
+		TOTPSecret string `json:"totp_secret"`
+	}
+	if err := json.Unmarshal(viewerCreated.Body.Bytes(), &viewerEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	viewerOTP, err := opsauth.GenerateTOTP(viewerEnvelope.TOTPSecret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerCreate := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators", viewerEnvelope.Token, "", viewerOTP, map[string]any{
+		"id": "blocked-admin", "display_name": "Blocked Admin", "role": "admin", "mfa_enabled": true, "reason": "should be forbidden",
+	})
+	if viewerCreate.Code != http.StatusForbidden {
+		t.Fatalf("viewer create=%d %s", viewerCreate.Code, viewerCreate.Body.String())
+	}
+
+	supportDeliveries := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/email/deliveries", supportEnvelope.Token, "", supportOTP, nil)
+	if supportDeliveries.Code != http.StatusOK {
+		t.Fatalf("support deliveries=%d %s", supportDeliveries.Code, supportDeliveries.Body.String())
+	}
+	listed := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/operators?role=support", adminEnvelope.Token, "", adminOTP, nil)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"id":"support-2"`) || strings.Contains(listed.Body.String(), `"id":"viewer-2"`) {
+		t.Fatalf("listed=%d %s", listed.Code, listed.Body.String())
+	}
+
+	reset := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators/support-2/reset-token", adminEnvelope.Token, "", adminOTP, map[string]string{"reason": "suspected token exposure"})
+	if reset.Code != http.StatusOK || !strings.Contains(reset.Body.String(), `"token":"op_`) {
+		t.Fatalf("reset=%d %s", reset.Code, reset.Body.String())
+	}
+	var resetEnvelope struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(reset.Body.Bytes(), &resetEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	oldToken := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/email/deliveries", supportEnvelope.Token, "", supportOTP, nil)
+	if oldToken.Code != http.StatusUnauthorized {
+		t.Fatalf("old token=%d %s", oldToken.Code, oldToken.Body.String())
+	}
+	newToken := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/email/deliveries", resetEnvelope.Token, "", supportOTP, nil)
+	if newToken.Code != http.StatusOK {
+		t.Fatalf("new token=%d %s", newToken.Code, newToken.Body.String())
+	}
+	disabled := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators/support-2/disable", adminEnvelope.Token, "", adminOTP, map[string]string{"reason": "contract ended"})
+	if disabled.Code != http.StatusOK || !strings.Contains(disabled.Body.String(), `"status":"disabled"`) {
+		t.Fatalf("disabled=%d %s", disabled.Code, disabled.Body.String())
+	}
+	disabledToken := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/email/deliveries", resetEnvelope.Token, "", supportOTP, nil)
+	if disabledToken.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled token=%d %s", disabledToken.Code, disabledToken.Body.String())
+	}
+}
+
 type alwaysFailPublisher struct{}
 
 func (alwaysFailPublisher) Publish(context.Context, eventbus.Event) (eventbus.PublishAck, error) {
