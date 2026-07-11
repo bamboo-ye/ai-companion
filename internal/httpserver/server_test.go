@@ -38,6 +38,31 @@ func TestHealthAndReadiness(t *testing.T) {
 	}
 }
 
+func TestSecurityHeaders(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+
+	server.httpServer.Handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	for header, want := range map[string]string{
+		"X-Content-Type-Options":     "nosniff",
+		"X-Frame-Options":            "DENY",
+		"Referrer-Policy":            "no-referrer",
+		"Cross-Origin-Opener-Policy": "same-origin",
+	} {
+		if got := response.Header().Get(header); got != want {
+			t.Fatalf("%s = %q, want %q", header, got, want)
+		}
+	}
+	if got := response.Header().Get("Permissions-Policy"); !strings.Contains(got, "camera=()") || !strings.Contains(got, "microphone=()") {
+		t.Fatalf("Permissions-Policy = %q", got)
+	}
+}
+
 func TestTracePropagationAndReliabilityEndpointAuthentication(t *testing.T) {
 	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "reliability-test-secret-with-enough-entropy"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)

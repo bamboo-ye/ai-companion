@@ -33,6 +33,8 @@ type UserModerationInput struct {
 type AuditLogFilter struct {
 	ResourceType string
 	ResourceID   string
+	ActorType    string
+	Action       string
 	Limit        int
 }
 
@@ -89,7 +91,15 @@ func (s *AdminService) EnableUser(ctx context.Context, userID, actor, reason str
 func (s *AdminService) ListAuditLogs(ctx context.Context, filter AuditLogFilter) ([]AuditLog, error) {
 	filter.ResourceType = strings.TrimSpace(filter.ResourceType)
 	filter.ResourceID = strings.TrimSpace(filter.ResourceID)
-	if filter.Limit <= 0 || filter.Limit > 500 {
+	filter.ActorType = strings.ToLower(strings.TrimSpace(filter.ActorType))
+	filter.Action = strings.TrimSpace(filter.Action)
+	if filter.ActorType != "" && filter.ActorType != "user" && filter.ActorType != "operator" && filter.ActorType != "system" {
+		return nil, ErrValidation
+	}
+	if len(filter.ResourceType) > 64 || len(filter.Action) > 128 {
+		return nil, ErrValidation
+	}
+	if filter.Limit <= 0 || filter.Limit > 5000 {
 		filter.Limit = 100
 	}
 	return s.store.ListAuditLogs(ctx, filter)

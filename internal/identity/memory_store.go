@@ -223,6 +223,12 @@ func (s *MemoryStore) ListAuditLogs(_ context.Context, filter AuditLogFilter) ([
 		if filter.ResourceID != "" && record.ResourceID != filter.ResourceID {
 			continue
 		}
+		if filter.ActorType != "" && record.ActorType != filter.ActorType {
+			continue
+		}
+		if filter.Action != "" && record.Action != filter.Action {
+			continue
+		}
 		record.Metadata = append([]byte(nil), record.Metadata...)
 		items = append(items, record)
 	}

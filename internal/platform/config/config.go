@@ -76,6 +76,8 @@ type Config struct {
 }
 
 func Load(serviceName string) (Config, error) {
+	environment := value("APP_ENV", "development")
+	production := environment == "production"
 	shutdownTimeout, err := time.ParseDuration(value("SHUTDOWN_TIMEOUT", "10s"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse SHUTDOWN_TIMEOUT: %w", err)
@@ -183,16 +185,23 @@ func Load(serviceName string) (Config, error) {
 		return Config{}, fmt.Errorf("DOCUMENT_MAX_UPLOAD_BYTES must be a positive integer")
 	}
 	authTokenSecret := value("AUTH_TOKEN_SECRET", "development-only-change-me")
-	if value("APP_ENV", "development") == "production" && authTokenSecret == "development-only-change-me" {
+	if production && authTokenSecret == "development-only-change-me" {
 		return Config{}, fmt.Errorf("AUTH_TOKEN_SECRET must be set in production")
 	}
 	operatorToken := value("OPERATOR_TOKEN", "development-operator-token")
-	if value("APP_ENV", "development") == "production" && operatorToken == "development-operator-token" {
+	if production && operatorToken == "development-operator-token" {
 		return Config{}, fmt.Errorf("OPERATOR_TOKEN must be set in production")
 	}
 	operatorMFARequired, err := strconv.ParseBool(value("OPERATOR_MFA_REQUIRED", "false"))
 	if err != nil {
 		return Config{}, fmt.Errorf("OPERATOR_MFA_REQUIRED must be true or false")
+	}
+	if production && !operatorMFARequired {
+		return Config{}, fmt.Errorf("OPERATOR_MFA_REQUIRED must be true in production")
+	}
+	webOrigin := value("WEB_ORIGIN", "http://localhost:3000")
+	if production && !strings.HasPrefix(webOrigin, "https://") {
+		return Config{}, fmt.Errorf("WEB_ORIGIN must use https in production")
 	}
 
 	brokers := splitNonEmpty(value("KAFKA_BROKERS", "127.0.0.1:9092"))
@@ -225,7 +234,7 @@ func Load(serviceName string) (Config, error) {
 	}
 
 	return Config{
-		Environment:                   value("APP_ENV", "development"),
+		Environment:                   environment,
 		ServiceName:                   serviceName,
 		LogLevel:                      value("LOG_LEVEL", "info"),
 		HTTPAddr:                      value("API_HTTP_ADDR", ":8080"),
@@ -269,7 +278,7 @@ func Load(serviceName string) (Config, error) {
 		SMTPFrom:                      value("SMTP_FROM", ""),
 		SMTPUseTLS:                    smtpUseTLS,
 		MCPStdioServersJSON:           value("MCP_STDIO_SERVERS_JSON", "[]"),
-		WebOrigin:                     value("WEB_ORIGIN", "http://localhost:3000"),
+		WebOrigin:                     webOrigin,
 		AuthTokenSecret:               authTokenSecret,
 		OperatorToken:                 operatorToken,
 		OperatorMFARequired:           operatorMFARequired,

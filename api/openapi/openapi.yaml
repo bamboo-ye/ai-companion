@@ -1469,12 +1469,39 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/console/bootstrap:
+    get:
+      operationId: getOperatorConsoleBootstrap
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Admin console navigation, capability, filter, and limit contract for the authenticated operator.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperatorConsoleBootstrap" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/release-readiness:
+    get:
+      operationId: getReleaseReadiness
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Admin-only release readiness checklist for production/internal release gates.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReleaseReadiness" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/ops/audit-logs:
     get:
       operationId: listAuditLogs
       tags: [Operations]
       security: [{ operatorBearerAuth: [] }]
       parameters:
+        - { name: actor_type, in: query, required: false, schema: { type: string, enum: [user, operator, system] } }
+        - { name: action, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: resource_type, in: query, required: false, schema: { type: string, maxLength: 64 } }
         - { name: resource_id, in: query, required: false, schema: { type: string, format: uuid } }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
@@ -1489,6 +1516,30 @@ paths:
                 properties:
                   audit_logs: { type: array, items: { $ref: "#/components/schemas/AuditLog" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/audit-logs/export:
+    get:
+      operationId: exportAuditLogs
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: format, in: query, required: false, schema: { type: string, enum: [csv], default: csv } }
+        - { name: actor_type, in: query, required: false, schema: { type: string, enum: [user, operator, system] } }
+        - { name: action, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: resource_type, in: query, required: false, schema: { type: string, maxLength: 64 } }
+        - { name: resource_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 } }
+      responses:
+        "200":
+          description: CSV audit log export. Requires an admin operator role.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/ops/compensations:
     get:
       operationId: listCompensationRecords
@@ -2522,6 +2573,72 @@ components:
       properties:
         reason: { type: string, minLength: 1, maxLength: 512 }
         mfa_enabled: { type: boolean, default: true }
+    OperatorConsoleBootstrap:
+      type: object
+      additionalProperties: false
+      required: [operator, capabilities, sections, filters, limits]
+      properties:
+        operator:
+          type: object
+          additionalProperties: false
+          required: [actor, role, mfa_verified, legacy]
+          properties:
+            actor: { type: string }
+            role: { type: string, enum: [viewer, support, admin] }
+            mfa_verified: { type: boolean }
+            legacy: { type: boolean }
+        capabilities:
+          type: object
+          additionalProperties: false
+          required: [view_operations, replay_operations, manage_users, manage_operator_accounts, export_audit_logs]
+          properties:
+            view_operations: { type: boolean }
+            replay_operations: { type: boolean }
+            manage_users: { type: boolean }
+            manage_operator_accounts: { type: boolean }
+            export_audit_logs: { type: boolean }
+        sections:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, label, required_role, routes]
+            properties:
+              key: { type: string }
+              label: { type: string }
+              required_role: { type: string, enum: [viewer, support, admin] }
+              routes: { type: array, items: { type: string } }
+        filters:
+          type: object
+          additionalProperties: true
+        limits:
+          type: object
+          additionalProperties: false
+          required: [default_page_size, max_page_size, max_export_rows]
+          properties:
+            default_page_size: { type: integer }
+            max_page_size: { type: integer }
+            max_export_rows: { type: integer }
+    ReleaseReadiness:
+      type: object
+      additionalProperties: false
+      required: [status, environment, generated_at, checks, warnings_only]
+      properties:
+        status: { type: string, enum: [ready, blocked] }
+        environment: { type: string }
+        generated_at: { type: string, format: date-time }
+        warnings_only: { type: boolean }
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, status, required, message]
+            properties:
+              key: { type: string }
+              status: { type: string, enum: [passed, warning, failed] }
+              required: { type: boolean }
+              message: { type: string }
     UserModerationRequest:
       type: object
       additionalProperties: false

@@ -89,11 +89,17 @@ func (s *Store) SetOperatorStatus(ctx context.Context, id, status string, audit 
 		return opsauth.Account{}, err
 	}
 	defer tx.Rollback()
-	var current string
-	if err = tx.QueryRowContext(ctx, `SELECT status FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&current); errors.Is(err, sql.ErrNoRows) {
+	var role, current string
+	var mfaEnabled bool
+	if err = tx.QueryRowContext(ctx, `SELECT role,status,mfa_enabled FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&role, &current, &mfaEnabled); errors.Is(err, sql.ErrNoRows) {
 		return opsauth.Account{}, opsauth.ErrNotFound
 	} else if err != nil {
 		return opsauth.Account{}, err
+	}
+	if status == "disabled" {
+		if err = preventOperatorAdminLockout(ctx, tx, role, current, mfaEnabled, true, false); err != nil {
+			return opsauth.Account{}, err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET status=?,updated_at=? WHERE id=?`, status, audit.Now, id); err != nil {
 		return opsauth.Account{}, err
@@ -139,11 +145,17 @@ func (s *Store) ResetOperatorMFA(ctx context.Context, id, secret string, enabled
 		return opsauth.Account{}, err
 	}
 	defer tx.Rollback()
+	var role, current string
 	var previous bool
-	if err = tx.QueryRowContext(ctx, `SELECT mfa_enabled FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&previous); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT role,status,mfa_enabled FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&role, &current, &previous); errors.Is(err, sql.ErrNoRows) {
 		return opsauth.Account{}, opsauth.ErrNotFound
 	} else if err != nil {
 		return opsauth.Account{}, err
+	}
+	if !enabled {
+		if err = preventOperatorAdminLockout(ctx, tx, role, current, previous, false, true); err != nil {
+			return opsauth.Account{}, err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET totp_secret=?,mfa_enabled=?,updated_at=? WHERE id=?`, secret, enabled, audit.Now, id); err != nil {
 		return opsauth.Account{}, err
@@ -155,6 +167,40 @@ func (s *Store) ResetOperatorMFA(ctx context.Context, id, secret string, enabled
 		return opsauth.Account{}, err
 	}
 	return s.GetOperator(ctx, id)
+}
+
+func preventOperatorAdminLockout(ctx context.Context, tx *sql.Tx, role, status string, targetMFAEnabled, disablingAccount, disablingMFA bool) error {
+	if role != "admin" || status != "active" {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,mfa_enabled FROM operator_accounts WHERE role='admin' AND status='active' FOR UPDATE`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	activeAdmins := 0
+	activeMFAAdmins := 0
+	for rows.Next() {
+		var id string
+		var mfaEnabled bool
+		if err = rows.Scan(&id, &mfaEnabled); err != nil {
+			return err
+		}
+		activeAdmins++
+		if mfaEnabled {
+			activeMFAAdmins++
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if disablingAccount && activeAdmins <= 1 {
+		return opsauth.ErrAdminLockout
+	}
+	if targetMFAEnabled && (disablingAccount || disablingMFA) && activeMFAAdmins <= 1 {
+		return opsauth.ErrAdminLockout
+	}
+	return nil
 }
 
 func insertOperatorAudit(ctx context.Context, tx *sql.Tx, audit opsauth.AuditInput, operatorID string, extra map[string]string) error {

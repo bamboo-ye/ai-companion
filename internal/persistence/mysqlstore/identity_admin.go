@@ -89,6 +89,14 @@ func (s *Store) ListAuditLogs(ctx context.Context, filter identity.AuditLogFilte
 		query += ` AND resource_id=UUID_TO_BIN(?)`
 		args = append(args, filter.ResourceID)
 	}
+	if filter.ActorType != "" {
+		query += ` AND actor_type=?`
+		args = append(args, filter.ActorType)
+	}
+	if filter.Action != "" {
+		query += ` AND action=?`
+		args = append(args, filter.Action)
+	}
 	query += ` ORDER BY occurred_at DESC,id DESC LIMIT ?`
 	args = append(args, filter.Limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
