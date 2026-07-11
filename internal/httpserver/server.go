@@ -51,6 +51,10 @@ type Server struct {
 	reliability         *reliability.Controller
 	metrics             *reliability.Metrics
 	operations          eventbus.OperationsStore
+	environment         string
+	webOrigin           string
+	kafkaEnabled        bool
+	modelProvider       string
 	operatorToken       string
 	operatorMFARequired bool
 	operatorAuth        *opsauth.Service
@@ -158,6 +162,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 		conversations: conversationService, memories: memoryService, documents: documentService, ledger: ledgerService, planner: plannerService, skills: skillService, teams: team.NewService(team.NewMemoryStore()), emails: email.NewService(email.NewMemoryStore(), email.NoopSender{}), billing: billing.NewService(billing.NewMemoryStore(), billing.DefaultPlans()), userSafety: safety.NewService(safety.NewMemoryStore()),
 		intentRouter: router.New(), mcp: mcpRegistry,
 		reliability: reliabilityController, metrics: reliability.NewMetrics(),
+		environment: cfg.Environment, webOrigin: cfg.WebOrigin, kafkaEnabled: cfg.KafkaEnabled, modelProvider: cfg.ModelProvider,
 		operatorToken: cfg.OperatorToken, operatorMFARequired: cfg.OperatorMFARequired, operatorAuth: operatorAuth,
 		realtime: gateway, presenceTTL: presenceTTL, chatRateLimit: rateLimit, chatRateWindow: rateWindow,
 	}
@@ -265,13 +270,16 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("POST /v1/ops/operators/{operator_id}/enable", server.requireOperator(http.HandlerFunc(server.enableOperatorAccount)))
 	mux.Handle("POST /v1/ops/operators/{operator_id}/reset-token", server.requireOperator(http.HandlerFunc(server.resetOperatorAccountToken)))
 	mux.Handle("POST /v1/ops/operators/{operator_id}/reset-mfa", server.requireOperator(http.HandlerFunc(server.resetOperatorAccountMFA)))
+	mux.Handle("GET /v1/ops/release-readiness", server.requireOperator(http.HandlerFunc(server.getReleaseReadiness)))
+	mux.Handle("GET /v1/ops/console/bootstrap", server.requireOperator(http.HandlerFunc(server.getOperatorConsoleBootstrap)))
 	mux.Handle("GET /v1/ops/audit-logs", server.requireOperator(http.HandlerFunc(server.listAuditLogs)))
+	mux.Handle("GET /v1/ops/audit-logs/export", server.requireOperator(http.HandlerFunc(server.exportAuditLogs)))
 	mux.Handle("GET /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.listCompensationRecords)))
 	mux.Handle("POST /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.createCompensationRecord)))
 
 	server.httpServer = &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           traceRequests(requestLog(logger, server.metrics, cors(cfg.WebOrigin, mux))),
+		Handler:           traceRequests(securityHeaders(requestLog(logger, server.metrics, cors(cfg.WebOrigin, mux)))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -335,6 +343,17 @@ func cors(origin string, next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
 }

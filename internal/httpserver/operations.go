@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -409,6 +410,126 @@ func (s *Server) resetOperatorAccountMFA(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, result)
 }
 
+type releaseReadinessCheck struct {
+	Key      string `json:"key"`
+	Status   string `json:"status"`
+	Required bool   `json:"required"`
+	Message  string `json:"message"`
+}
+
+func (s *Server) getReleaseReadiness(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOperatorRole(w, r, "admin") {
+		return
+	}
+	environment := strings.TrimSpace(s.environment)
+	if environment == "" {
+		environment = "development"
+	}
+	production := environment == "production"
+	modelProvider := strings.TrimSpace(s.modelProvider)
+	if modelProvider == "" {
+		modelProvider = "development"
+	}
+	activeAdmin := false
+	activeMFAAdmin := false
+	if s.operatorAuth != nil {
+		accounts, err := s.operatorAuth.List(r.Context(), opsauth.OperatorFilter{Role: "admin", Status: "active", Limit: 100})
+		activeAdmin = err == nil && len(accounts) > 0
+		if err == nil {
+			for _, account := range accounts {
+				if account.MFAEnabled {
+					activeMFAAdmin = true
+					break
+				}
+			}
+		}
+	}
+	checks := make([]releaseReadinessCheck, 0, 11)
+	add := func(key string, passed, required bool, message string) {
+		status := "passed"
+		if !passed {
+			if required {
+				status = "failed"
+			} else {
+				status = "warning"
+			}
+		}
+		checks = append(checks, releaseReadinessCheck{Key: key, Status: status, Required: required, Message: message})
+	}
+	add("service_ready", s.ready.Load(), true, "HTTP server readiness flag must be true.")
+	add("operator_mfa_required", s.operatorMFARequired, production, "Production operator access must require MFA.")
+	add("operator_account_store", s.operatorAuth != nil, production, "Operator account store must be configured before production release.")
+	add("active_admin_operator", activeAdmin, production, "At least one active admin operator account must exist before production release.")
+	add("active_mfa_admin_operator", activeMFAAdmin, production, "At least one active admin operator account must have MFA enabled before production release.")
+	add("identity_admin_store", s.identityAdmin != nil, true, "User moderation and audit APIs require an identity admin store.")
+	add("operations_store", s.operations != nil, true, "DLQ, poison-message, and compensation operations require an operations store.")
+	add("kafka_transport_enabled", s.kafkaEnabled, production, "Production asynchronous transport must use Kafka.")
+	add("https_web_origin", !production || strings.HasPrefix(strings.TrimSpace(s.webOrigin), "https://"), production, "Production WEB_ORIGIN must use https://.")
+	add("security_headers_enabled", true, true, "Global security headers are installed on all HTTP responses.")
+	add("model_provider_configured", modelProvider != "development", production, "Production should configure an approved non-development model provider.")
+
+	status := "ready"
+	for _, check := range checks {
+		if check.Status == "failed" {
+			status = "blocked"
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":        status,
+		"environment":   environment,
+		"generated_at":  time.Now().UTC(),
+		"checks":        checks,
+		"warnings_only": status == "ready",
+	})
+}
+
+func (s *Server) getOperatorConsoleBootstrap(w http.ResponseWriter, r *http.Request) {
+	operator := currentOperator(r)
+	if operator.Role == "" {
+		operator.Role = "viewer"
+	}
+	capabilities := map[string]bool{
+		"view_operations":          opsauth.Can(operator.Role, "viewer"),
+		"replay_operations":        opsauth.Can(operator.Role, "support"),
+		"manage_users":             opsauth.Can(operator.Role, "support"),
+		"manage_operator_accounts": opsauth.Can(operator.Role, "admin"),
+		"export_audit_logs":        opsauth.Can(operator.Role, "admin"),
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"operator": map[string]any{
+			"actor":        operator.Actor,
+			"role":         operator.Role,
+			"mfa_verified": operator.MFA,
+			"legacy":       operator.Legacy,
+		},
+		"capabilities": capabilities,
+		"sections": []map[string]any{
+			{"key": "queues", "label": "Queues", "required_role": "viewer", "routes": []string{"/v1/ops/outbox/dead-letter", "/v1/ops/kafka/poison-messages"}},
+			{"key": "email", "label": "Email Deliveries", "required_role": "viewer", "routes": []string{"/v1/ops/email/deliveries"}},
+			{"key": "users", "label": "Users", "required_role": "support", "routes": []string{"/v1/ops/users"}},
+			{"key": "operators", "label": "Operator Accounts", "required_role": "admin", "routes": []string{"/v1/ops/operators"}},
+			{"key": "audit", "label": "Audit Logs", "required_role": "viewer", "routes": []string{"/v1/ops/audit-logs", "/v1/ops/audit-logs/export"}},
+		},
+		"filters": map[string]any{
+			"audit_logs": map[string]any{
+				"actor_type":    []string{"user", "operator", "system"},
+				"resource_type": []string{"user", "operator_account", "email_delivery", "skill_run", "ledger_entry", "reminder", "skill", "user_safety_policy"},
+				"export_format": []string{"csv"},
+			},
+			"operator_accounts": map[string]any{
+				"role":   []string{"viewer", "support", "admin"},
+				"status": []string{"active", "disabled"},
+			},
+		},
+		"limits": map[string]int{
+			"default_page_size": 100,
+			"max_page_size":     500,
+			"max_export_rows":   5000,
+		},
+	})
+}
+
 func (s *Server) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	admin, ok := s.requireIdentityAdmin(w)
 	if !ok {
@@ -417,13 +538,64 @@ func (s *Server) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	records, err := admin.ListAuditLogs(r.Context(), identity.AuditLogFilter{
 		ResourceType: strings.TrimSpace(r.URL.Query().Get("resource_type")),
 		ResourceID:   strings.TrimSpace(r.URL.Query().Get("resource_id")),
+		ActorType:    strings.TrimSpace(r.URL.Query().Get("actor_type")),
+		Action:       strings.TrimSpace(r.URL.Query().Get("action")),
 		Limit:        queryLimit(r, 100),
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, apiError{Code: "audit_unavailable", Message: "审计日志暂时不可用"})
+		writeAuditLogError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"audit_logs": records})
+}
+
+func (s *Server) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOperatorRole(w, r, "admin") {
+		return
+	}
+	admin, ok := s.requireIdentityAdmin(w)
+	if !ok {
+		return
+	}
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "" {
+		format = "csv"
+	}
+	if format != "csv" {
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "validation_error", Message: "仅支持 csv 审计导出格式"})
+		return
+	}
+	records, err := admin.ListAuditLogs(r.Context(), identity.AuditLogFilter{
+		ResourceType: strings.TrimSpace(r.URL.Query().Get("resource_type")),
+		ResourceID:   strings.TrimSpace(r.URL.Query().Get("resource_id")),
+		ActorType:    strings.TrimSpace(r.URL.Query().Get("actor_type")),
+		Action:       strings.TrimSpace(r.URL.Query().Get("action")),
+		Limit:        queryLimitMax(r, 1000, 5000),
+	})
+	if err != nil {
+		writeAuditLogError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="audit-logs.csv"`)
+	w.WriteHeader(http.StatusOK)
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"id", "occurred_at", "actor_type", "actor_id", "actor_label", "action", "resource_type", "resource_id", "trace_id", "metadata"})
+	for _, record := range records {
+		_ = writer.Write([]string{
+			strconv.FormatUint(record.ID, 10),
+			record.OccurredAt.UTC().Format(time.RFC3339Nano),
+			record.ActorType,
+			record.ActorID,
+			record.ActorLabel,
+			record.Action,
+			record.ResourceType,
+			record.ResourceID,
+			record.TraceID,
+			string(record.Metadata),
+		})
+	}
+	writer.Flush()
 }
 
 func (s *Server) requireIdentityAdmin(w http.ResponseWriter) (*identity.AdminService, bool) {
@@ -445,12 +617,22 @@ func (s *Server) requireOperatorAccountAdmin(w http.ResponseWriter, r *http.Requ
 	return s.operatorAuth, true
 }
 
+func writeAuditLogError(w http.ResponseWriter, err error) {
+	if errors.Is(err, identity.ErrValidation) {
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "validation_error", Message: "审计日志筛选条件无效"})
+		return
+	}
+	writeJSON(w, http.StatusInternalServerError, apiError{Code: "audit_unavailable", Message: "审计日志暂时不可用"})
+}
+
 func writeOperatorAccountError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, opsauth.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, apiError{Code: "not_found", Message: "运维账号不存在"})
 	case errors.Is(err, opsauth.ErrConflict):
 		writeJSON(w, http.StatusConflict, apiError{Code: "conflict", Message: "运维账号或令牌已存在"})
+	case errors.Is(err, opsauth.ErrAdminLockout):
+		writeJSON(w, http.StatusForbidden, apiError{Code: "operator_admin_lockout_protection", Message: "至少保留一个启用 MFA 的活跃 admin 运维账号"})
 	case errors.Is(err, opsauth.ErrForbidden):
 		writeJSON(w, http.StatusForbidden, apiError{Code: "operator_forbidden", Message: "当前运维角色无权执行该操作"})
 	case errors.Is(err, opsauth.ErrValidation):
@@ -482,12 +664,16 @@ func (s *Server) recordCompensation(r *http.Request, store eventbus.OperationsSt
 }
 
 func queryLimit(r *http.Request, fallback int) int {
+	return queryLimitMax(r, fallback, 500)
+}
+
+func queryLimitMax(r *http.Request, fallback, max int) int {
 	value, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
 	if err != nil || value <= 0 {
 		return fallback
 	}
-	if value > 500 {
-		return 500
+	if value > max {
+		return max
 	}
 	return value
 }

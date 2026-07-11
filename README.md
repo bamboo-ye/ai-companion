@@ -1,8 +1,8 @@
 # 伴AI
 
-伴AI is a conversational personal AI workspace spanning emotional companionship, life assistance, and work skills. M1 now provides persistent accounts, versioned personas, and reliable streaming chat.
+伴AI is a conversational personal AI workspace spanning emotional companionship, life assistance, work skills, collaboration, billing/safety controls, and operator-run internal-release workflows.
 
-Current milestone verification is recorded in [`docs/M1_STATUS.md`](docs/M1_STATUS.md).
+Current completion scope and verification are recorded in [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md).
 
 ## Repository map
 
@@ -61,6 +61,12 @@ Run the locally available quality gate:
 make check
 ```
 
+Run the backend/internal-release gate used for the completed M0-M8 scope:
+
+```bash
+make release-check
+```
+
 Run the M2 retrieval quality gate:
 
 ```bash
@@ -89,12 +95,10 @@ pnpm dev
 - The Android project is pinned to AGP 9.2, Gradle 9.4.1, Kotlin 2.4, API 37, and the stable June 2026 Compose BOM.
 - System reminder writes are never silent: users authorize and confirm them. The app remains the durable source if a platform permission is denied or revoked.
 
-## Current milestone boundary
+## Current completion boundary
 
-M1, M2, and M3 are complete. M2 provides controllable long-term memory with date decay, token-budgeted recent context, durable rolling summaries, authenticated PDF/text intake, page-level pypdf extraction, structural chunks, leased ingest jobs, Qdrant dense/sparse RRF retrieval, page citations, evidence-insufficient behavior, deletion, the Web document library, and a checked-in 100-case quality gate. The deterministic hashing embedding remains an offline baseline; provider-specific embeddings, OCR/visual fallback, MinIO, and reliability automation are Beta/production-hardening work.
+M0-M4, M6, and the M8 Web/backend platform scope are complete. M5 financial research and M7 native Android/iOS client expansion are skipped by explicit product decision for this completion pass.
 
-M3 adds safe ledger and reminder candidates from chat, explicit idempotent confirmation, ledger CRUD/monthly summaries/Excel export, daily plans, timezone and DST-safe reminders, durable in-app notification records, explicit system-sync states, iOS EventKit and Android Calendar/Alarm adapters, and the Web life-assistant workspace. Platform permission denial never removes the application reminder or masquerades as a successful system write. See [`docs/M3_STATUS.md`](docs/M3_STATUS.md) for acceptance evidence and later production-hardening boundaries.
+The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, Kafka-based asynchronous execution, reliability/degradation controls, team workspaces, email delivery/replay operations, billing quota guards, minor-mode safety gating, operator MFA/RBAC/admin APIs, audit CSV export, release-readiness checks, and automated release evidence collection/validation.
 
-M4 is complete. It provides a bounded, versioned Skill/Tool Runtime, seven working office Skills, per-user controls, deterministic intent routing, and an MCP 2025-11-25 stdio client guarded by operator-owned server and tool allowlists. Long-running Office work uses a durable MySQL queue with renewable leases, expired-lease takeover, and revision fencing against stale Worker commits. Routing only suggests an action; it never executes one. Risk-aware confirmation, authenticated generated files, and the isolated Python Office process preserve the rule that source files are never overwritten. Acceptance evidence and current limits are recorded in [`docs/M4_STATUS.md`](docs/M4_STATUS.md).
-
-M5 financial research is skipped by explicit product decision. M6 is in progress; it now covers trace propagation, Prometheus metrics, real queue/model signal sampling, a hysteretic L0-L3 reliability control plane, Kafka async recovery, operator DLQ replay, model circuit breakers, internal-release alerts/runbooks, and Web PWA packaging. See [`docs/M6_STATUS.md`](docs/M6_STATUS.md).
+See [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md), [`docs/M6_STATUS.md`](docs/M6_STATUS.md), and [`docs/M8_STATUS.md`](docs/M8_STATUS.md) for acceptance evidence and remaining deployment-only prerequisites.

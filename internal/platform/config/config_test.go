@@ -133,11 +133,33 @@ func TestLoadRejectsInvalidModelCircuit(t *testing.T) {
 func TestLoadRequiresOperatorTokenInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("AUTH_TOKEN_SECRET", "production-auth-token-secret")
+	t.Setenv("WEB_ORIGIN", "https://app.example.com")
+	t.Setenv("OPERATOR_MFA_REQUIRED", "true")
 	t.Setenv("OPERATOR_TOKEN", "")
 	if _, err := Load("test-service"); err == nil {
 		t.Fatal("Load() expected an error")
 	}
 	t.Setenv("OPERATOR_TOKEN", "production-operator-token")
+	if _, err := Load("test-service"); err != nil {
+		t.Fatalf("Load() unexpected error = %v", err)
+	}
+}
+
+func TestLoadRequiresOperatorMFAAndHTTPSOriginInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AUTH_TOKEN_SECRET", "production-auth-token-secret")
+	t.Setenv("OPERATOR_TOKEN", "production-operator-token")
+	t.Setenv("WEB_ORIGIN", "https://app.example.com")
+	t.Setenv("OPERATOR_MFA_REQUIRED", "false")
+	if _, err := Load("test-service"); err == nil {
+		t.Fatal("Load() expected MFA-required production error")
+	}
+	t.Setenv("OPERATOR_MFA_REQUIRED", "true")
+	t.Setenv("WEB_ORIGIN", "http://app.example.com")
+	if _, err := Load("test-service"); err == nil {
+		t.Fatal("Load() expected HTTPS-origin production error")
+	}
+	t.Setenv("WEB_ORIGIN", "https://app.example.com")
 	if _, err := Load("test-service"); err != nil {
 		t.Fatalf("Load() unexpected error = %v", err)
 	}

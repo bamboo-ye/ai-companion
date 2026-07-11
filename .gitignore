@@ -52,5 +52,6 @@ mobile/ios/*.xcodeproj/xcuserdata/
 # Runtime data
 .cache/
 .data/
+.release-evidence/
 tmp/
 dist/

@@ -114,6 +114,10 @@ func (s *Server) requireOperator(next http.Handler) http.Handler {
 		if s.operatorAuth != nil {
 			principal, err := s.operatorAuth.Authenticate(r.Context(), parts[1], r.Header.Get("X-Operator-TOTP"))
 			if err == nil {
+				if s.operatorMFARequired && !principal.MFAVerified {
+					writeJSON(w, http.StatusUnauthorized, apiError{Code: "operator_mfa_required", Message: "运维账号必须使用 MFA 认证"})
+					return
+				}
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorContextKey{}, operatorAuth{Actor: principal.ID, Role: principal.Role, MFA: principal.MFAVerified, Legacy: principal.Legacy})))
 				return
 			}

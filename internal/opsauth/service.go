@@ -21,6 +21,7 @@ import (
 var (
 	ErrUnauthorized = errors.New("operator unauthorized")
 	ErrForbidden    = errors.New("operator forbidden")
+	ErrAdminLockout = fmt.Errorf("%w: admin lockout protection", ErrForbidden)
 	ErrValidation   = errors.New("operator auth validation failed")
 	ErrNotFound     = errors.New("operator account not found")
 	ErrConflict     = errors.New("operator account already exists")
@@ -119,7 +120,7 @@ func (s *Service) Authenticate(ctx context.Context, bearerToken, otp string) (Pr
 	if role == "" {
 		return Principal{}, ErrUnauthorized
 	}
-	mfaVerified := !account.MFAEnabled
+	mfaVerified := false
 	if account.MFAEnabled {
 		if !ValidateTOTP(account.TOTPSecret, otp, s.now().UTC()) {
 			return Principal{}, ErrUnauthorized
@@ -219,6 +220,11 @@ func (s *Service) ResetMFA(ctx context.Context, id, actor, reason string, enable
 	id, actor, reason = strings.TrimSpace(id), strings.TrimSpace(actor), strings.TrimSpace(reason)
 	if id == "" || actor == "" || reason == "" || len(reason) > 512 {
 		return ResetMFAResult{}, ErrValidation
+	}
+	if !enabled {
+		if err := s.preventAdminLockout(ctx, id, false, true); err != nil {
+			return ResetMFAResult{}, err
+		}
 	}
 	secret := ""
 	if enabled {
@@ -337,7 +343,41 @@ func (s *Service) setStatus(ctx context.Context, id, status, actor, reason strin
 	if id == "" || actor == "" || reason == "" || len(reason) > 512 {
 		return Account{}, ErrValidation
 	}
+	if status == "disabled" {
+		if err := s.preventAdminLockout(ctx, id, true, false); err != nil {
+			return Account{}, err
+		}
+	}
 	return s.store.SetOperatorStatus(ctx, id, status, AuditInput{Actor: actor, Action: "operator.status.update", Reason: reason, Now: s.now().UTC()})
+}
+
+func (s *Service) preventAdminLockout(ctx context.Context, targetID string, disablingAccount, disablingMFA bool) error {
+	account, err := s.store.GetOperator(ctx, targetID)
+	if err != nil {
+		return err
+	}
+	if account.Status != "active" || normalizeRole(account.Role) != "admin" {
+		return nil
+	}
+	activeAdmins, err := s.store.ListOperators(ctx, OperatorFilter{Role: "admin", Status: "active", Limit: 500})
+	if err != nil {
+		return err
+	}
+	if disablingAccount && len(activeAdmins) <= 1 {
+		return ErrAdminLockout
+	}
+	if account.MFAEnabled && (disablingAccount || disablingMFA) {
+		activeMFAAdmins := 0
+		for _, admin := range activeAdmins {
+			if admin.MFAEnabled {
+				activeMFAAdmins++
+			}
+		}
+		if activeMFAAdmins <= 1 {
+			return ErrAdminLockout
+		}
+	}
+	return nil
 }
 
 func decodeSecret(secret string) ([]byte, error) {

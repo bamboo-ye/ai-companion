@@ -193,6 +193,100 @@ func TestOperatorCanModerateUsersAndInspectAuditLogs(t *testing.T) {
 	}
 }
 
+func TestOperatorConsoleBootstrapAndAuditCSVExport(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-console-secret-with-enough-entropy", OperatorToken: "ops-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
+		"email": "audit-export-target@example.com", "password": "correct-horse-battery", "display_name": "Audit Export Target", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "audit-export-target", "name": "web", "platform": "web"},
+	})
+	var tokens struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(register.Body.Bytes(), &tokens); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/console/bootstrap", "ops-token", "console-admin", nil)
+	if bootstrap.Code != http.StatusOK || !strings.Contains(bootstrap.Body.String(), `"manage_operator_accounts":true`) || !strings.Contains(bootstrap.Body.String(), `"export_audit_logs":true`) || !strings.Contains(bootstrap.Body.String(), `"key":"audit"`) {
+		t.Fatalf("bootstrap=%d %s", bootstrap.Code, bootstrap.Body.String())
+	}
+	disabled := performOperatorJSON(t, server, http.MethodPost, "/v1/ops/users/"+tokens.User.ID+"/disable", "ops-token", "console-admin", map[string]string{"reason": "audit export coverage"})
+	if disabled.Code != http.StatusOK {
+		t.Fatalf("disabled=%d %s", disabled.Code, disabled.Body.String())
+	}
+	filtered := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/audit-logs?actor_type=operator&action=user.status.update", "ops-token", "console-admin", nil)
+	if filtered.Code != http.StatusOK || !strings.Contains(filtered.Body.String(), `"action":"user.status.update"`) || !strings.Contains(filtered.Body.String(), `"actor_label":"console-admin"`) {
+		t.Fatalf("filtered=%d %s", filtered.Code, filtered.Body.String())
+	}
+	exported := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/audit-logs/export?actor_type=operator&action=user.status.update&limit=10", "ops-token", "console-admin", nil)
+	if exported.Code != http.StatusOK || !strings.Contains(exported.Header().Get("Content-Type"), "text/csv") || !strings.Contains(exported.Header().Get("Content-Disposition"), "audit-logs.csv") {
+		t.Fatalf("export headers=%d content-type=%q disposition=%q body=%s", exported.Code, exported.Header().Get("Content-Type"), exported.Header().Get("Content-Disposition"), exported.Body.String())
+	}
+	body := exported.Body.String()
+	if !strings.Contains(body, "id,occurred_at,actor_type,actor_id,actor_label,action,resource_type,resource_id,trace_id,metadata") || !strings.Contains(body, "console-admin") || !strings.Contains(body, "audit export coverage") {
+		t.Fatalf("export body=%s", body)
+	}
+	invalidExport := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/audit-logs/export?format=json", "ops-token", "console-admin", nil)
+	if invalidExport.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid export=%d %s", invalidExport.Code, invalidExport.Body.String())
+	}
+}
+
+func TestOperatorReleaseReadinessChecklist(t *testing.T) {
+	blocked := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "production", AuthTokenSecret: "ops-readiness-secret-with-enough-entropy", OperatorToken: "ops-token", WebOrigin: "http://app.example.com"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	blockedResponse := performOperatorJSON(t, blocked, http.MethodGet, "/v1/ops/release-readiness", "ops-token", "release-admin", nil)
+	if blockedResponse.Code != http.StatusOK || !strings.Contains(blockedResponse.Body.String(), `"status":"blocked"`) || !strings.Contains(blockedResponse.Body.String(), `"key":"operator_mfa_required"`) || !strings.Contains(blockedResponse.Body.String(), `"key":"active_admin_operator"`) || !strings.Contains(blockedResponse.Body.String(), `"key":"active_mfa_admin_operator"`) || !strings.Contains(blockedResponse.Body.String(), `"status":"failed"`) {
+		t.Fatalf("blocked readiness=%d %s", blockedResponse.Code, blockedResponse.Body.String())
+	}
+
+	secret := "JBSWY3DPEHPK3PXP"
+	admin, err := opsauth.BootstrapAccount("release-admin", "Release Admin", "admin", "release-admin-token", secret, true, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := New(config.Config{
+		HTTPAddr: ":0", ServiceName: "test", Environment: "production", AuthTokenSecret: "ops-readiness-secret-with-enough-entropy",
+		OperatorToken: "legacy-disabled-by-mfa", OperatorMFARequired: true, WebOrigin: "https://app.example.com", KafkaEnabled: true, ModelProvider: "openai-compatible",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ready.SetOperationsStore(eventbus.NewMemoryStore())
+	ready.SetOperatorAuthStore(opsauth.NewMemoryStore(admin))
+	otp, err := opsauth.GenerateTOTP(secret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewer, err := opsauth.BootstrapAccount("release-viewer", "Release Viewer", "viewer", "release-viewer-token", secret, true, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready.SetOperatorAuthStore(opsauth.NewMemoryStore(admin, viewer))
+	viewerOTP, err := opsauth.GenerateTOTP(secret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := performOperatorJSONWithOTP(t, ready, http.MethodGet, "/v1/ops/release-readiness", "release-viewer-token", "", viewerOTP, nil)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("viewer readiness=%d %s", forbidden.Code, forbidden.Body.String())
+	}
+	readyResponse := performOperatorJSONWithOTP(t, ready, http.MethodGet, "/v1/ops/release-readiness", "release-admin-token", "", otp, nil)
+	if readyResponse.Code != http.StatusOK || !strings.Contains(readyResponse.Body.String(), `"status":"ready"`) || !strings.Contains(readyResponse.Body.String(), `"key":"kafka_transport_enabled"`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_admin_operator"`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_mfa_admin_operator"`) || strings.Contains(readyResponse.Body.String(), `"status":"failed"`) {
+		t.Fatalf("ready readiness=%d %s", readyResponse.Code, readyResponse.Body.String())
+	}
+}
+
+func TestOperatorMFARequiredRejectsAccountWithoutMFA(t *testing.T) {
+	account, err := opsauth.BootstrapAccount("admin-no-mfa", "Admin No MFA", "admin", "admin-no-mfa-token", "", false, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-mfa-enforce-secret-with-enough-entropy", OperatorToken: "legacy-token", OperatorMFARequired: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server.SetOperatorAuthStore(opsauth.NewMemoryStore(account))
+	response := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/console/bootstrap", "admin-no-mfa-token", "", nil)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "operator_mfa_required") {
+		t.Fatalf("non-mfa operator response=%d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestOperatorAccountRequiresTOTPAndRoleForMutations(t *testing.T) {
 	store := eventbus.NewMemoryStore()
 	now := time.Now().UTC().Add(-time.Minute)
@@ -304,6 +398,14 @@ func TestOperatorAccountManagementLifecycle(t *testing.T) {
 	})
 	if viewerCreate.Code != http.StatusForbidden {
 		t.Fatalf("viewer create=%d %s", viewerCreate.Code, viewerCreate.Body.String())
+	}
+	lastAdminDisable := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators/admin-1/disable", adminEnvelope.Token, "", adminOTP, map[string]string{"reason": "should preserve break-glass admin"})
+	if lastAdminDisable.Code != http.StatusForbidden || !strings.Contains(lastAdminDisable.Body.String(), "operator_admin_lockout_protection") {
+		t.Fatalf("last admin disable=%d %s", lastAdminDisable.Code, lastAdminDisable.Body.String())
+	}
+	lastMFAReset := performOperatorJSONWithOTP(t, server, http.MethodPost, "/v1/ops/operators/admin-1/reset-mfa", adminEnvelope.Token, "", adminOTP, map[string]any{"mfa_enabled": false, "reason": "should preserve mfa admin"})
+	if lastMFAReset.Code != http.StatusForbidden || !strings.Contains(lastMFAReset.Body.String(), "operator_admin_lockout_protection") {
+		t.Fatalf("last mfa reset=%d %s", lastMFAReset.Code, lastMFAReset.Body.String())
 	}
 
 	supportDeliveries := performOperatorJSONWithOTP(t, server, http.MethodGet, "/v1/ops/email/deliveries", supportEnvelope.Token, "", supportOTP, nil)
