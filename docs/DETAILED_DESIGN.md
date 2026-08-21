@@ -97,7 +97,7 @@ API Gateway / Go Application
   |-- Ledger / Plan / Reminder
   |-- File / Finance / Notification
   |
-  +--> MySQL 8.4 LTS        权威业务数据、事务、审计、Outbox
+  +--> PostgreSQL 18        权威业务数据、事务、审计、Outbox、Agent 检查点
   +--> Redis                缓存、限流、在线状态、实时分发、短期回放
   +--> Kafka (KRaft)        异步命令、任务事件、重试与死信
   +--> Qdrant               稠密/稀疏混合向量检索
@@ -122,8 +122,8 @@ Go Workers / Python Algorithm Workers
 
 ### 5.2 推荐技术基线
 
-- Go 1.26；HTTP 使用 `net/http` + `chi`，数据库使用 `sqlc` + `database/sql`，迁移使用 `goose`。
-- MySQL 8.4 LTS；Redis 使用当前受支持稳定版；Kafka 使用当前稳定版并以 KRaft 模式部署。
+- Go 1.26；HTTP 使用 `net/http`，数据库通过 `database/sql` + `pgx` 访问，迁移由仓库内版本化迁移器执行。
+- PostgreSQL 18；Redis 使用当前受支持稳定版；Kafka 使用当前稳定版并以 KRaft 模式部署。
 - Web：Next.js + TypeScript + Tailwind CSS；客户端数据请求使用 TanStack Query。
 - Android：Kotlin、Jetpack Compose、Coroutines/Flow、Room；iOS：Swift、SwiftUI、async/await、SwiftData/Core Data。双端共享 OpenAPI 契约、设计令牌和交互规范，但不共享 UI 代码。
 - Python Worker：只承担依赖 Python 生态的文档、表格、金融和媒体算法，通过 Kafka/gRPC 与 Go 控制面交互；不能直接绕过 Go 权限层对外产生副作用。
@@ -156,22 +156,22 @@ Go Workers / Python Algorithm Workers
 - 相同会话按 `conversation_id` 分区并串行处理，避免回复乱序。
 - AI 长回复按语义边界拆为 2～5 个气泡；不按固定字数粗暴截断。每个气泡保留顺序、完整文本与发送时间。
 - 支持停止生成、重新生成、编辑后重试、引用回复和失败恢复。
-- 已完成回复进入 MySQL；Redis 只承担在线分发和短期重放，不作为唯一消息存储。
+- 已完成回复进入 PostgreSQL；Redis 只承担在线分发和短期重放，不作为唯一消息存储。
 
 ### 6.4 Intent Router
 
-采用分层识别，降低成本并限制误调用：
+采用“模型决策、确定性校验”的分层识别，避免模式匹配绕过 Agent：
 
-1. **规则层**：明确命令、金额/时间表达式、斜杠命令、当前页面上下文。
-2. **小模型层**：分类 `casual_chat / ledger / reminder / document_qa / office / finance / image / unknown`，返回置信度与候选槽位。
-3. **大模型层**：仅在低置信度、复合任务或高语义歧义时使用。
-4. **策略层**：根据权限、风险和资源状态决定直接回复、展示确认卡、调用 Skill 或降级。
+1. **模型路由层**：基于当前角色、页面上下文和可用工具分类 `casual_chat / ledger / reminder / plan / document_qa / office / unknown`，输出结构化工具调用与置信度。
+2. **领域校验层**：金额、时间、文件类型和必填槽位使用确定性解析器规范化与校验；解析器不能自行查询或修改业务库。
+3. **澄清层**：低置信度、缺少必填槽位或上午/下午无法判断时，由模型生成针对性追问。
+4. **策略层**：根据权限、风险、配额和可靠性级别决定直接回复、展示确认卡、调用工具或降级。
 
 路由结果必须包含 `intent`、`confidence`、`required_slots`、`risk_level`、`suggested_skill` 和可追踪版本。
 
 ### 6.5 Agent / Skill Runtime
 
-首版不引入不可控的无限自治循环，而使用显式有限状态图：
+Agent 主运行时使用 LangGraph 显式有限状态图，不允许无限自治循环：
 
 ```text
 Receive -> Classify -> BuildContext -> Plan(max steps)
@@ -185,7 +185,12 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 - Tool 定义统一为 JSON Schema 输入/输出，声明风险等级、幂等性、超时、是否需确认。
 - Skill 是“提示词 + 工具白名单 + 状态图 + 输出契约 + 测试集”的版本化包。
 - MCP 用于接入外部工具、资源和提示词；内部核心业务仍调用类型安全接口，避免让协议成为领域模型。
-- LangChain/LangGraph 不作为 Go 主后端的基础依赖。若后续出现大量复杂图工作流，可在独立算法 worker 中评估 LangGraph，并保持 Kafka/gRPC 契约不变。
+- LangGraph 运行在独立 Python Agent Worker 中，使用 PostgreSQL checkpointer；Go API 继续掌管鉴权、配额和业务事实。
+- Supervisor 根据角色模块选择 companion/life/work 子图。所有业务工具经 Go Tool Gateway 调用，Python Worker 不直写 `app` schema。
+- Tool Gateway 只信任 `agent.runs` 中的用户、会话、角色、模块和原始消息；Python Worker 不得通过请求参数覆盖这些身份。Go 侧按当前模块的精确工具定义再次校验白名单。
+- 写操作使用 Go 签发的短时 HMAC 确认令牌，令牌绑定 run、工具、候选和规范化变更；commit 使用领域幂等键，重放不得产生第二条业务记录。
+- `agent_run_id` 是 LangGraph `thread_id`；Kafka 只负责创建或恢复运行，不能用 `conversation_id` 复用检查点。
+- 需要确认的账本、提醒、计划和文件写操作通过 `interrupt()` 暂停，收到 Go 控制面签发的确认结果后使用 `Command(resume=...)` 恢复。
 - 所谓 harness/loop engineering 落实为：受限循环、检查点、执行日志、预算、策略验证、确定性重试和评测集，而不是开放式自我循环。
 
 ### 6.6 Context & Memory
@@ -207,7 +212,7 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 - 写入前做相似去重、事实冲突检测和敏感字段分类。
 - 冲突事实不直接覆盖，保存 `valid_from/valid_to/supersedes_id`。
 - 用户可查看“AI 记住了什么”、来源会话、编辑、固定、删除和一键清空。
-- 记忆提取、摘要和向量化异步执行，不阻塞首条回复；明确要求“记住”时可同步确认。
+- 用户明确要求长期记住的信息，由聊天 Worker 通过模型工具选择并在服务端校验后写入；提醒、计划、账单和临时任务禁止写入长期记忆。当前不启用基于关键词的自动记忆提取，未来若增加推断式提取，必须独立评估、异步执行并提供可审计来源。
 
 ### 6.7 RAG 文档处理
 
@@ -226,7 +231,7 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 
 - 从消息抽取金额、币种、收支方向、分类、商户、时间、备注和置信度。
 - 明确且低风险时展示单击确认卡；缺少金额/方向/日期时追问。默认不静默记账。
-- 确认后写 MySQL 并生成审计记录；支持修改、撤销、按日/月/分类查询。
+- 确认后写 PostgreSQL 并生成审计记录；支持修改、撤销、按日/月/分类查询。
 - Excel 为导出物，不是主数据库。导出包含原始记录、汇总和生成时间，文件存对象存储并提供短时签名链接。
 
 ### 6.9 Plan & Reminder
@@ -307,7 +312,7 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 | Topic | Key | 用途 |
 |---|---|---|
 | `chat.command.v1` | conversation_id | 对话生成，保证会话内顺序 |
-| `memory.extract.v1` | user_id | 摘要和长期记忆提取 |
+| `memory.extract.v1` | user_id | 已弃用兼容 Topic：仅排空历史事件，不再产生新的记忆提取命令 |
 | `document.ingest.v1` | document_id | 文档解析和索引 |
 | `document.cleanup.v1` | document_id | 删除文档后的向量索引与对象清理 |
 | `skill.execute.v1` | job_id | Office/Finance/Media 异步任务 |
@@ -327,20 +332,20 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 | 级别 | 触发示例 | 行为 |
 |---|---|---|
 | L0 正常 | 指标健康 | 完整记忆、RAG、重排和主模型 |
-| L1 轻度 | lag/延迟连续升高 | 缩小 top-k、跳过低价值记忆提取、意图优先小模型 |
+| L1 轻度 | lag/延迟连续升高 | 缩小 top-k、跳过非必要上下文增强、工具意图优先低延迟模型 |
 | L2 重度 | 积压超过 SLO | 闲聊跳过 RAG/重排，切低延迟模型；耗时 Skill 转后台 |
 | L3 保护 | 模型/算法服务不可用 | 保存请求并返回明确排队状态；只执行本地确定性能力 |
 
 恢复按 L3→L2→L1→L0 逐级进行。任何级别都不能丢用户输入、伪造已执行结果或绕过高风险确认。
 
-策略不仅用于展示：聊天、记忆提取、长期记忆/RAG 上下文、文档问答和模型调用都会读取当前策略。L3 时聊天请求只持久化为 accepted job，不启动模型；Worker 收到命令也保持 durable job 等待恢复。模型供应商通过熔断器保护，熔断打开时已领取的生成任务会重新变为 accepted 并延后 `available_at`，而不是被错误标记为失败。
+策略不仅用于展示：聊天、模型选择的显式记忆写入、长期记忆/RAG 上下文、文档问答和模型调用都会读取当前策略。L3 时聊天请求只持久化为 accepted job，不启动模型；Worker 收到命令也保持 durable job 等待恢复。模型供应商通过熔断器保护，熔断打开时已领取的生成任务会重新变为 accepted 并延后 `available_at`，而不是被错误标记为失败。
 
 ### 7.3 Redis 混合推送
 
 - `presence:{user_id}` 保存带 TTL 的设备在线状态。
 - 在线：worker 发布结果事件，网关经 Redis Pub/Sub 或 Stream 推送 WebSocket。
-- 离线：事件权威副本在 MySQL `notification_deliveries`；Redis Stream 保存有限时长的快速回放。
-- 重连：客户端携带 `last_event_id`，先补拉 MySQL/Stream 缺口，再切实时订阅。
+- 离线：事件权威副本在 PostgreSQL `app.notification_deliveries`；Redis Stream 保存有限时长的快速回放。
+- 重连：客户端携带 `last_event_id`，先补拉 PostgreSQL/Stream 缺口，再切实时订阅。
 - 客户端按 `event_id` 去重并发送 ack；过期未读事件可转 APNs/FCM。
 
 ## 8. 数据模型
@@ -462,7 +467,7 @@ M6 内测发布包含可导入的 Prometheus 告警规则、Grafana dashboard、
 ## 13. 测试与评测
 
 - 单元测试：领域规则、时间/金额解析、拆气泡、幂等、降级状态机、指标计算。
-- 集成测试：MySQL/Redis/Kafka/Qdrant/对象存储 Testcontainers 或 Compose 环境。
+- 集成测试：PostgreSQL/Redis/Kafka/Qdrant/对象存储 Testcontainers 或 Compose 环境。
 - 契约测试：客户端 API、Kafka schema、MCP Tool schema 和模型供应商适配器。
 - 端到端：注册→建角色→聊天→记忆→记账确认→提醒→离线补投。
 - 提醒同步测试：权限允许/拒绝/撤回、重复同步、跨端修改、完成状态、时区/DST、系统条目被删除和冲突恢复。

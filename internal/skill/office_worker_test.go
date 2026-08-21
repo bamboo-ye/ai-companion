@@ -3,11 +3,26 @@ package skill
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestParseOfficeWorkerFailurePreservesRepairContract(t *testing.T) {
+	failure, ok := parseOfficeWorkerFailure(`{"contract_version":"tool-failure-v1","code":"invalid_output_filename","category":"argument_validation","phase":"pre_execution","message":"safe","retry_same_input":false,"repairable":true,"side_effect_state":"none","field_paths":["/filename"],"allowed_repairs":["filename.safe_basename"]}`)
+	if !ok || failure.Code != "invalid_output_filename" || !failure.Repairable || failure.SideEffectState != "none" {
+		t.Fatalf("failure = %#v ok=%v", failure, ok)
+	}
+	err := NewToolExecutionError(failure, errors.New("worker exit"))
+	if structured := toolFailureFromError(err, "tool_failed"); structured.Code != failure.Code {
+		t.Fatalf("structured = %#v", structured)
+	}
+	if _, accepted := parseOfficeWorkerFailure(`{"contract_version":"tool-failure-v0","code":"invalid_output_filename"}`); accepted {
+		t.Fatal("incompatible failure contract was accepted")
+	}
+}
 
 type fakeOfficeWorker struct{ calls []string }
 

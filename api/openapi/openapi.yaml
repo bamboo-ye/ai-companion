@@ -291,6 +291,19 @@ paths:
         "201":
           description: Conversation created.
           content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } }
+  /v1/conversations/{conversation_id}:
+    parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: deleteConversation
+      tags: [Conversation]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Conversation soft-deleted and active generation cancelled. }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/conversations/{conversation_id}/messages:
     parameters:
       - name: conversation_id
@@ -336,20 +349,22 @@ paths:
                 content: { type: string, minLength: 1, maxLength: 8000 }
       responses:
         "202":
-          description: Message persisted and generation accepted.
+          description: Message persisted and exactly one runtime accepted. Modules not cut over return a GenerationJob; Agent-enabled modules return an AgentRun and never create a legacy generation job.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  message: { $ref: "#/components/schemas/Message" }
-                  job: { $ref: "#/components/schemas/GenerationJob" }
-                  ledger_candidate:
-                    allOf: [{ $ref: "#/components/schemas/LedgerCandidate" }]
-                    description: Present only when the message contains a plausible ledger record; confirmation is still required.
-                  reminder_candidate:
-                    allOf: [{ $ref: "#/components/schemas/Reminder" }]
-                    description: Present only when the message contains a reminder intent; absolute time confirmation is still required.
+                oneOf:
+                  - type: object
+                    required: [message, job]
+                    properties:
+                      message: { $ref: "#/components/schemas/Message" }
+                      job: { $ref: "#/components/schemas/GenerationJob" }
+                  - type: object
+                    required: [message, agent_run, runtime]
+                    properties:
+                      message: { $ref: "#/components/schemas/Message" }
+                      agent_run: { $ref: "#/components/schemas/AgentRun" }
+                      runtime: { type: string, const: agent }
   /v1/generation-jobs/{job_id}:
     get:
       operationId: getGenerationJob
@@ -360,6 +375,75 @@ paths:
         "200":
           description: Current persisted generation state.
           content: { application/json: { schema: { $ref: "#/components/schemas/GenerationJob" } } }
+  /v1/agent-runs/{run_id}:
+    get:
+      operationId: getAgentRun
+      tags: [Agent]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: run_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: User-owned Agent Run state. Confirmation tokens and internal input are never exposed.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentRun" } } }
+        "404": { description: Run does not exist or belongs to another user. }
+  /v1/agent-runs/{run_id}/resolve:
+    post:
+      operationId: resolveAgentRunApproval
+      tags: [Agent]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved]
+              properties:
+                approved: { type: boolean }
+      responses:
+        "202":
+          description: Approval decision persisted and resume event accepted.
+        "200":
+          description: Idempotent replay of the same approval decision.
+        "409": { description: Run is not waiting for approval or the decision conflicts. }
+  /v1/agent-runs/{run_id}/cancel:
+    post:
+      operationId: cancelAgentRun
+      tags: [Agent]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      responses:
+        "202":
+          description: Cancellation persisted. A running worker observes cancel_requested and terminates its executor before finalizing cancelled.
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        "200":
+          description: Idempotent replay after cancellation was already requested or finalized.
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        "404": { description: Run does not exist or belongs to another user. }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/agent-runs/{run_id}/retry:
+    post:
+      operationId: retryAgentRun
+      tags: [Agent]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      responses:
+        "202":
+          description: A new Agent Run was accepted for the same persisted user message. The failed exchange remains in chat history.
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        "200":
+          description: Idempotent replay of an already accepted retry.
+          content: { application/json: { schema: { type: object, additionalProperties: true } } }
+        "404": { description: Run does not exist or belongs to another user. }
+        "409": { description: Only failed, timed out, or cancelled runs can be retried. }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/generation-jobs/{job_id}/events:
     get:
       operationId: streamGenerationEvents
@@ -728,6 +812,73 @@ paths:
       responses:
         "201": { description: Plan created., content: { application/json: { schema: { $ref: "#/components/schemas/Plan" } } } }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/today:
+    get:
+      operationId: getTodayPlan
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: timezone, in: query, schema: { type: string, example: Asia/Shanghai } }
+      responses:
+        "200":
+          description: Today's stored plan items combined with reminders due that day and active overdue reminders from earlier dates.
+          content: { application/json: { schema: { $ref: "#/components/schemas/TodayPlan" } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/today/items:
+    post:
+      operationId: addTodayPlanItem
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 255 }
+                local_date: { type: string, format: date }
+                timezone: { type: string, example: Asia/Shanghai }
+                source: { type: string, maxLength: 64, default: web }
+      responses:
+        "201": { description: Item added to today's plan., content: { application/json: { schema: { $ref: "#/components/schemas/PlanItem" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/plans/today/items/{item_id}/complete:
+    post:
+      operationId: completeTodayPlanItem
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Today's plan item marked completed. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/plans/today/items/{item_id}/schedule:
+    post:
+      operationId: scheduleTodayPlanItem
+      tags: [Planner]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: item_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [starts_at]
+              properties:
+                starts_at: { type: string, format: date-time, description: "Confirmed future start time on the plan's local date." }
+                expected_updated_at: { type: string, format: date-time, description: "Optimistic concurrency value shown in the confirmation candidate." }
+      responses:
+        "200": { description: Plan item scheduled after explicit user confirmation., content: { application/json: { schema: { $ref: "#/components/schemas/TodayPlanItem" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/reminders/candidates:
     post:
       operationId: createReminderCandidate
@@ -788,6 +939,29 @@ paths:
       responses:
         "204": { description: Reminder completed and queued application notification cancelled. }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/reminders/{reminder_id}/reschedule:
+    post:
+      operationId: rescheduleReminder
+      tags: [Reminder]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: reminder_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [local_due]
+              properties:
+                local_due: { type: string, example: "2026-07-18 15:30", description: "Confirmed future local date or date-time." }
+                timezone: { type: string, example: Asia/Shanghai }
+                expected_updated_at: { type: string, format: date-time, description: "Optimistic concurrency value shown in the confirmation candidate." }
+      responses:
+        "200": { description: Reminder rescheduled and its application notification replaced., content: { application/json: { schema: { $ref: "#/components/schemas/Reminder" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/reminders/{reminder_id}/system-sync:
     post:
       operationId: reportReminderSystemSync
@@ -1646,7 +1820,9 @@ paths:
       operationId: listSkillRuns
       tags: [Skill]
       security: [{ bearerAuth: [] }]
-      parameters: [{ name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: conversation_id, in: query, schema: { type: string, format: uuid }, description: Return only tasks linked to this conversation. }
       responses:
         "200":
           description: Caller-owned Skill runs and their checkpoints.
@@ -1921,9 +2097,10 @@ components:
     CharacterInput:
       type: object
       additionalProperties: false
-      required: [name]
+      description: Empty or omitted persona fields are filled with module-specific defaults during character creation.
       properties:
-        name: { type: string, minLength: 1, maxLength: 40 }
+        module: { type: string, enum: [companion, life, work], default: companion }
+        name: { type: string, maxLength: 40, description: Uses the selected module's default name when empty or omitted. }
         avatar_url: { type: string }
         relationship: { type: string }
         personality: { type: string, maxLength: 1000 }
@@ -1938,7 +2115,7 @@ components:
       allOf:
         - { $ref: "#/components/schemas/CharacterInput" }
         - type: object
-          required: [id, persona_version, status, created_at, updated_at]
+          required: [id, module, name, relationship, personality, speech_style, persona_version, status, created_at, updated_at]
           properties:
             id: { type: string, format: uuid }
             persona_version: { type: integer, minimum: 1 }
@@ -1962,11 +2139,12 @@ components:
         persona: { $ref: "#/components/schemas/PersonaVersion" }
     Conversation:
       type: object
-      required: [id, character_id, title, created_at, updated_at]
+      required: [id, character_id, title, status, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         character_id: { type: string, format: uuid }
         title: { type: string }
+        status: { type: string, enum: [active] }
         last_message_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -2000,6 +2178,39 @@ components:
         error_message: { type: string }
         created_at: { type: string, format: date-time }
         started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    AgentRun:
+      type: object
+      required: [id, conversation_id, character_id, module, status, revision, deadline_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        character_id: { type: string, format: uuid }
+        module: { type: string, enum: [companion, life, work] }
+        status: { type: string, enum: [accepted, queued, running, waiting_approval, waiting_tool, completed, failed, cancel_requested, cancelled, timed_out] }
+        revision: { type: integer, minimum: 1 }
+        deadline_at: { type: string, format: date-time, description: "Fixed total deadline; retries and approval resumes do not extend it." }
+        output:
+          type: object
+          additionalProperties: true
+          properties:
+            response: { type: string }
+            interrupts:
+              type: array
+              maxItems: 1
+              items:
+                type: object
+                required: [type, summary]
+                properties:
+                  type: { type: string, enum: [tool_approval] }
+                  summary: { type: string }
+                  tool_name: { type: string }
+                  risk_level: { type: string, enum: [none, low, medium, high] }
+                  arguments: { type: object, additionalProperties: true }
+        error_code: { type: string }
+        error_message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     Memory:
       type: object
@@ -2208,6 +2419,32 @@ components:
         items: { type: array, items: { $ref: "#/components/schemas/PlanItem" } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    TodayPlanItem:
+      type: object
+      required: [id, title, local_date, priority, status, source, created_at, updated_at]
+      properties:
+        id: { type: string }
+        plan_id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 255 }
+        local_date: { type: string, format: date, description: "事项所属日期；逾期提醒保留原提醒日期。" }
+        overdue: { type: boolean, default: false, description: "仅当提醒日期早于查询日期且仍未完成时为 true。" }
+        priority: { type: string, enum: [low, medium, high] }
+        estimated_minutes: { type: integer, minimum: 0, maximum: 1440 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        location: { type: string }
+        status: { type: string, enum: [pending, in_progress, completed] }
+        source: { type: string, description: "web、reminder 或带消息标识的 chat 来源。" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    TodayPlan:
+      type: object
+      required: [local_date, timezone, items, updated_at]
+      properties:
+        local_date: { type: string, format: date }
+        timezone: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/TodayPlanItem" } }
+        updated_at: { type: string, format: date-time }
     Reminder:
       type: object
       required: [id, raw_text, title, timezone, recurrence, needs_clarification, status, system_sync_status, created_at, updated_at]
@@ -2218,7 +2455,7 @@ components:
         raw_text: { type: string }
         title: { type: string }
         due_at: { type: string, format: date-time }
-        local_due: { type: string, example: "2026-07-04 09:00" }
+        local_due: { type: string, description: "本地日期或日期时间；日期级提醒使用 YYYY-MM-DD", example: "2026-07-04 09:00" }
         timezone: { type: string, example: Asia/Shanghai }
         time_precision: { type: string, enum: [minute, part_of_day, date] }
         recurrence: { type: string, enum: [none, daily, weekly] }
@@ -2308,6 +2545,8 @@ components:
         requires_confirmation: { type: boolean }
         input: { type: object, additionalProperties: true }
         output: { type: object, additionalProperties: true }
+        conversation_id: { type: string, format: uuid }
+        origin_message_id: { type: string, format: uuid }
         attempt: { type: integer, minimum: 1 }
         max_steps: { type: integer, minimum: 1 }
         timeout_ms: { type: integer, minimum: 1 }

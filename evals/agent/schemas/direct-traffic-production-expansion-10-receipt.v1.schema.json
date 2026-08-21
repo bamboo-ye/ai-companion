@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-expansion-10-receipt.v1.schema.json",
+  "title": "Direct traffic production 5%-to-10% receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "namespace_sha256", "operation_id", "decision_id", "outcome", "current_traffic_percent", "revision", "history_chain_sha256", "adapter_certification_id", "shadow_attestation_id", "expansion_gate_attestation_id", "recovery_operation_id", "remote_reused", "local_reused", "applied_at"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-expansion-10-receipt-v1"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "operation_id": {"type": "string", "pattern": "^direct-traffic-op-[0-9a-f]{32}$"},
+    "decision_id": {"type": "string", "pattern": "^direct-rollout-[0-9a-f]{32}$"},
+    "outcome": {"enum": ["applied", "no_op"]},
+    "current_traffic_percent": {"const": 10},
+    "revision": {"const": 4},
+    "history_chain_sha256": {"$ref": "#/$defs/digest"},
+    "adapter_certification_id": {"type": "string", "pattern": "^direct-traffic-adapter-cert-[0-9a-f]{32}$"},
+    "shadow_attestation_id": {"type": "string", "pattern": "^direct-traffic-shadow-attestation-[0-9a-f]{32}$"},
+    "expansion_gate_attestation_id": {"type": "string", "pattern": "^direct-traffic-production-expansion-10-gate-attestation-[0-9a-f]{32}$"},
+    "recovery_operation_id": {"type": "string", "pattern": "^direct-traffic-op-[0-9a-f]{32}$"},
+    "remote_reused": {"type": "boolean"},
+    "local_reused": {"type": "boolean"},
+    "applied_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

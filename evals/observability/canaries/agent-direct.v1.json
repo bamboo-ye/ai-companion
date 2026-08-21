@@ -1,0 +1,7 @@
+{
+  "schema_version": "observability-canary-command-v1",
+  "name": "agent-direct",
+  "command": ["sh", "scripts/run_agent_direct_canary.sh"],
+  "timeout_seconds": 240,
+  "stabilization_seconds": 1
+}

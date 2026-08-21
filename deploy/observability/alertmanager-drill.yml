@@ -1,0 +1,16 @@
+global:
+  resolve_timeout: 30s
+
+route:
+  receiver: retry-drill
+  group_by:
+    - alertname
+  group_wait: 1s
+  group_interval: 1s
+  repeat_interval: 1h
+
+receivers:
+  - name: retry-drill
+    webhook_configs:
+      - url: http://drill-sink:18080/webhook
+        send_resolved: true

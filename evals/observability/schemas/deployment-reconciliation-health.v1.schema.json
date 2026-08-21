@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-reconciliation-health.v1.schema.json",
+  "title": "Observability deployment reconciliation health v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "accepted_pending",
+    "due",
+    "overdue_deadline",
+    "schedule_missing",
+    "indeterminate",
+    "oldest_accepted_age_seconds"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-reconciliation-health-v1"
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "accepted_pending": {"type": "integer", "minimum": 0},
+    "due": {"type": "integer", "minimum": 0},
+    "overdue_deadline": {"type": "integer", "minimum": 0},
+    "schedule_missing": {"type": "integer", "minimum": 0},
+    "indeterminate": {"type": "integer", "minimum": 0},
+    "oldest_accepted_age_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    }
+  }
+}

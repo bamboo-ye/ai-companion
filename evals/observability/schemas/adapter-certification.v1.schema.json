@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-adapter-certification.v1.schema.json",
+  "title": "Observability deployment adapter certification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adapter",
+    "passed",
+    "idempotent_submit",
+    "lookup",
+    "request_sha256",
+    "external_operation_sha256",
+    "submit_statuses",
+    "lookup_status"
+  ],
+  "properties": {
+    "schema_version": {"const": "observability-adapter-certification-v1"},
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "passed": {"const": true},
+    "idempotent_submit": {"const": true},
+    "lookup": {"const": true},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "external_operation_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "submit_statuses": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {"enum": ["accepted", "completed"]}
+    },
+    "lookup_status": {"enum": ["accepted", "completed"]}
+  }
+}

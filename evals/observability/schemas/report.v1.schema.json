@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-release-report.v1.schema.json",
+  "title": "Observability release comparison report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "summary", "regression"],
+  "properties": {
+    "schema_version": {"const": "observability-release-report-v1"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_sha256", "after_sha256"],
+      "properties": {
+        "before_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "delta"],
+      "properties": {
+        "before": {"$ref": "#/$defs/metrics"},
+        "after": {"$ref": "#/$defs/metrics"},
+        "delta": {"$ref": "#/$defs/delta"}
+      }
+    },
+    "regression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_version", "violations"],
+      "properties": {
+        "baseline_version": {"type": "string", "minLength": 1},
+        "violations": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "$defs": {
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "degradation_level",
+        "queue_lag",
+        "oldest_job_age_seconds",
+        "model_error_ratio",
+        "model_latency_p95_seconds",
+        "agent_run_duration_p95_seconds",
+        "agent_runs_completed",
+        "agent_runs_failed",
+        "agent_runs_timed_out",
+        "retry_scheduled",
+        "retry_recovered",
+        "retry_exhausted",
+        "retry_deadline_exhausted",
+        "retry_recovery_ratio",
+        "agent_terminal_failures",
+        "retry_exhausted_total",
+        "retry_settled"
+      ],
+      "properties": {
+        "degradation_level": {"type": "number", "minimum": 0},
+        "queue_lag": {"type": "number", "minimum": 0},
+        "oldest_job_age_seconds": {"type": "number", "minimum": 0},
+        "model_error_ratio": {"type": "number", "minimum": 0},
+        "model_latency_p95_seconds": {"type": "number", "minimum": 0},
+        "agent_run_duration_p95_seconds": {"type": "number", "minimum": 0},
+        "agent_runs_completed": {"type": "number", "minimum": 0},
+        "agent_runs_failed": {"type": "number", "minimum": 0},
+        "agent_runs_timed_out": {"type": "number", "minimum": 0},
+        "retry_scheduled": {"type": "number", "minimum": 0},
+        "retry_recovered": {"type": "number", "minimum": 0},
+        "retry_exhausted": {"type": "number", "minimum": 0},
+        "retry_deadline_exhausted": {"type": "number", "minimum": 0},
+        "retry_recovery_ratio": {"type": "number", "minimum": 0},
+        "agent_terminal_failures": {"type": "number", "minimum": 0},
+        "retry_exhausted_total": {"type": "number", "minimum": 0},
+        "retry_settled": {"type": "number", "minimum": 0}
+      }
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "degradation_level",
+        "queue_lag",
+        "oldest_job_age_seconds",
+        "model_error_ratio",
+        "model_latency_p95_seconds",
+        "agent_run_duration_p95_seconds",
+        "agent_runs_completed",
+        "agent_runs_failed",
+        "agent_runs_timed_out",
+        "retry_scheduled",
+        "retry_recovered",
+        "retry_exhausted",
+        "retry_deadline_exhausted",
+        "retry_recovery_ratio",
+        "agent_terminal_failures",
+        "retry_exhausted_total",
+        "retry_settled"
+      ],
+      "properties": {
+        "degradation_level": {"type": "number"},
+        "queue_lag": {"type": "number"},
+        "oldest_job_age_seconds": {"type": "number"},
+        "model_error_ratio": {"type": "number"},
+        "model_latency_p95_seconds": {"type": "number"},
+        "agent_run_duration_p95_seconds": {"type": "number"},
+        "agent_runs_completed": {"type": "number"},
+        "agent_runs_failed": {"type": "number"},
+        "agent_runs_timed_out": {"type": "number"},
+        "retry_scheduled": {"type": "number"},
+        "retry_recovered": {"type": "number"},
+        "retry_exhausted": {"type": "number"},
+        "retry_deadline_exhausted": {"type": "number"},
+        "retry_recovery_ratio": {"type": "number"},
+        "agent_terminal_failures": {"type": "number"},
+        "retry_exhausted_total": {"type": "number"},
+        "retry_settled": {"type": "number"}
+      }
+    }
+  }
+}

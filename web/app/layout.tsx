@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: "伴AI",
   description: "懂陪伴，也能一起把事情做好。",
   applicationName: "伴AI",
+  icons: {
+    icon: "/icons/logo.png",
+    apple: "/icons/logo.png",
+  },
   appleWebApp: {
     capable: true,
     title: "伴AI",

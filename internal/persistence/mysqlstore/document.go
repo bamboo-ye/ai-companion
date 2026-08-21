@@ -75,6 +75,43 @@ func (s *Store) GetDocument(ctx context.Context, userID, documentID string) (doc
 	return item, err
 }
 
+func (s *Store) ListDocumentChunks(
+	ctx context.Context,
+	userID string,
+	documentID string,
+	limit int,
+) ([]document.Chunk, error) {
+	if limit <= 0 {
+		limit = 10_000
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT BIN_TO_UUID(id),BIN_TO_UUID(point_id),ordinal_no,page_start,page_end,
+			section_path,content,token_count,content_hash,parser_version,embedding_version
+		FROM document_chunks
+		WHERE user_id=UUID_TO_BIN(?) AND document_id=UUID_TO_BIN(?)
+		ORDER BY ordinal_no
+		LIMIT ?`,
+		userID, documentID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	chunks := make([]document.Chunk, 0)
+	for rows.Next() {
+		var chunk document.Chunk
+		if err = rows.Scan(
+			&chunk.ID, &chunk.PointID, &chunk.Ordinal, &chunk.PageStart, &chunk.PageEnd,
+			&chunk.SectionPath, &chunk.Content, &chunk.TokenCount, &chunk.ContentHash,
+			&chunk.ParserVersion, &chunk.EmbeddingVersion,
+		); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks, rows.Err()
+}
+
 func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

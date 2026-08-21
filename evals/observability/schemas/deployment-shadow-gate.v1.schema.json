@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/deployment-shadow-gate.v1.schema.json",
+  "title": "Deployment shadow stable-window gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "gate_id",
+    "generated_at",
+    "decision",
+    "provider_instance_sha256",
+    "policy",
+    "window",
+    "violations"
+  ],
+  "properties": {
+    "schema_version": { "const": "observability-deployment-shadow-gate-v1" },
+    "gate_id": {
+      "type": "string",
+      "pattern": "^shadow-gate-[0-9a-f]{32}$"
+    },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "decision": { "enum": ["pass", "hold"] },
+    "provider_instance_sha256": { "$ref": "#/$defs/digest" },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_runs",
+        "minimum_window_seconds",
+        "minimum_selected_total",
+        "maximum_gap_seconds",
+        "maximum_report_age_seconds",
+        "maximum_drift_total",
+        "maximum_lookup_errors_total"
+      ],
+      "properties": {
+        "minimum_runs": { "$ref": "#/$defs/count" },
+        "minimum_window_seconds": { "$ref": "#/$defs/count" },
+        "minimum_selected_total": { "$ref": "#/$defs/count" },
+        "maximum_gap_seconds": { "$ref": "#/$defs/count" },
+        "maximum_report_age_seconds": { "$ref": "#/$defs/count" },
+        "maximum_drift_total": { "$ref": "#/$defs/count" },
+        "maximum_lookup_errors_total": { "$ref": "#/$defs/count" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "ended_at",
+        "duration_seconds",
+        "runs",
+        "successful_runs",
+        "failed_runs",
+        "selected_total",
+        "drift_total",
+        "lookup_errors_total",
+        "retried_lookups_total",
+        "maximum_gap_seconds",
+        "last_report_age_seconds",
+        "first_event_id",
+        "last_event_id",
+        "history_chain_sha256"
+      ],
+      "properties": {
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "ended_at": { "type": ["string", "null"], "format": "date-time" },
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "runs": { "$ref": "#/$defs/count" },
+        "successful_runs": { "$ref": "#/$defs/count" },
+        "failed_runs": { "$ref": "#/$defs/count" },
+        "selected_total": { "$ref": "#/$defs/count" },
+        "drift_total": { "$ref": "#/$defs/count" },
+        "lookup_errors_total": { "$ref": "#/$defs/count" },
+        "retried_lookups_total": { "$ref": "#/$defs/count" },
+        "maximum_gap_seconds": { "type": "number", "minimum": 0 },
+        "last_report_age_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "first_event_id": {
+          "type": ["string", "null"],
+          "pattern": "^shadow-event-[0-9a-f]{32}$"
+        },
+        "last_event_id": {
+          "type": ["string", "null"],
+          "pattern": "^shadow-event-[0-9a-f]{32}$"
+        },
+        "history_chain_sha256": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "violations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "expected", "actual"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "expected": { "type": "string", "minLength": 1 },
+          "actual": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

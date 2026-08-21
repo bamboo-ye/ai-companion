@@ -73,7 +73,10 @@ func (s *Server) startSkillRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSkillRuns(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	runs, err := s.skills.List(r.Context(), currentAuth(r).User.ID, limit)
+	runs, err := s.skills.ListForConversation(
+		r.Context(), currentAuth(r).User.ID,
+		r.URL.Query().Get("conversation_id"), limit,
+	)
 	if err != nil {
 		writeSkillError(w, err)
 		return

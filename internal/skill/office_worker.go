@@ -30,6 +30,20 @@ type officeWorkerResponse struct {
 	Files  []officeWorkerFileDTO `json:"files"`
 }
 
+type officeWorkerFailure struct {
+	ContractVersion string         `json:"contract_version"`
+	Code            string         `json:"code"`
+	Category        string         `json:"category"`
+	Phase           string         `json:"phase"`
+	Message         string         `json:"message"`
+	RetrySameInput  bool           `json:"retry_same_input"`
+	Repairable      bool           `json:"repairable"`
+	SideEffectState string         `json:"side_effect_state"`
+	FieldPaths      []string       `json:"field_paths"`
+	AllowedRepairs  []string       `json:"allowed_repairs"`
+	SafeDetails     map[string]any `json:"safe_details"`
+}
+
 type officeWorkerFileDTO struct {
 	Name       string `json:"name"`
 	MediaType  string `json:"media_type"`
@@ -64,7 +78,11 @@ func (w PythonOfficeWorker) Execute(ctx context.Context, operation string, input
 		if errors.Is(executeCtx.Err(), context.DeadlineExceeded) {
 			return ToolResult{}, fmt.Errorf("office worker timed out")
 		}
-		return ToolResult{}, fmt.Errorf("office worker failed: %s", strings.TrimSpace(stderr.String()))
+		message := strings.TrimSpace(stderr.String())
+		if failure, ok := parseOfficeWorkerFailure(message); ok {
+			return ToolResult{}, NewToolExecutionError(failure, err)
+		}
+		return ToolResult{}, fmt.Errorf("office worker failed: %s", message)
 	}
 	if stdout.total > maxOfficeWorkerOutput {
 		return ToolResult{}, fmt.Errorf("office worker output exceeds limit")
@@ -87,6 +105,32 @@ func (w PythonOfficeWorker) Execute(ctx context.Context, operation string, input
 		result.Files = append(result.Files, FileOutput{Name: file.Name, MediaType: file.MediaType, Data: data})
 	}
 	return result, nil
+}
+
+func parseOfficeWorkerFailure(value string) (ToolFailure, bool) {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		var envelope officeWorkerFailure
+		if json.Unmarshal([]byte(strings.TrimSpace(lines[index])), &envelope) != nil ||
+			envelope.ContractVersion != ToolFailureContractVersion ||
+			strings.TrimSpace(envelope.Code) == "" {
+			continue
+		}
+		return normalizeToolFailure(ToolFailure{
+			ContractVersion: envelope.ContractVersion,
+			Code:            envelope.Code,
+			Category:        envelope.Category,
+			Phase:           envelope.Phase,
+			Message:         envelope.Message,
+			RetrySameInput:  envelope.RetrySameInput,
+			Repairable:      envelope.Repairable,
+			SideEffectState: envelope.SideEffectState,
+			FieldPaths:      envelope.FieldPaths,
+			AllowedRepairs:  envelope.AllowedRepairs,
+			SafeDetails:     envelope.SafeDetails,
+		}), true
+	}
+	return ToolFailure{}, false
 }
 
 type boundedBuffer struct {

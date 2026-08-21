@@ -57,6 +57,72 @@ groups:
           description: "模型 p95 >= 10s，系统应进入 L2 以上降级；检查供应商延迟、区域网络和超时配置。"
           runbook: "docs/runbooks/incident-response.md#模型供应商故障"
 
+      - alert: AICompanionAgentRetryStorm
+        expr: ai_companion_agent_execution_retries_recent{outcome="scheduled"} >= 20
+        for: 1m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI Agent 执行重试出现风暴"
+          description: "最近五分钟执行重试调度数持续 >= 20。检查供应商限流、共享截止时间、Worker 版本和退避配置，必要时暂停高风险发布。"
+          runbook: "docs/runbooks/incident-response.md#agent-执行重试异常"
+
+      - alert: AICompanionAgentRetryRecoveryLow
+        expr: (sum(ai_companion_agent_execution_retries_recent{outcome=~"recovered|exhausted|deadline_exhausted"}) >= 5) and on() (ai_companion_agent_execution_retry_recovery_ratio < 0.8)
+        for: 1m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI Agent 重试恢复率过低"
+          description: "最近五分钟至少 5 个重试运行已结算且恢复率持续低于 80%。检查错误分类、供应商状态、最大尝试数和总时限。"
+          runbook: "docs/runbooks/incident-response.md#agent-执行重试异常"
+
+      - alert: AICompanionAgentRetryExhausted
+        expr: sum(ai_companion_agent_execution_retries_recent{outcome=~"exhausted|deadline_exhausted"}) >= 3
+        for: 1m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "伴AI Agent 重试耗尽增加"
+          description: "最近五分钟尝试次数耗尽或总时限耗尽的运行持续达到 3 个。检查是否需要回滚模型路由、减少单次超时或隔离异常供应商。"
+          runbook: "docs/runbooks/incident-response.md#agent-执行重试异常"
+
+      - alert: AICompanionAgentWorkerUnavailable
+        expr: up{job="agent-worker"} == 0 or ai_companion_agent_worker_up == 0
+        for: 2m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI Agent Worker 指标端点不可用"
+          description: "Agent Worker scrape target 不可达或进程 up=0 已持续 2 分钟。事件唤醒仍可能由 durable reconciler 回退，但时延目标不可保证。"
+          runbook: "docs/runbooks/incident-response.md#agent-事件唤醒与调度"
+
+      - alert: AICompanionAgentToolWakeLatencyHigh
+        expr: (histogram_quantile(0.95, sum by (le) (rate(ai_companion_agent_tool_wake_latency_seconds_bucket[5m]))) > 1) and on() (sum(increase(ai_companion_agent_tool_wake_latency_seconds_count[5m])) >= 5)
+        for: 2m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "伴AI 工具终态事件唤醒 p95 超过 1 秒"
+          description: "最近五分钟至少有 5 个终态事件样本，事件发生至持久化唤醒并进入分发队列的 p95 持续超过 1 秒。"
+          runbook: "docs/runbooks/incident-response.md#agent-事件唤醒与调度"
+
+      - alert: AICompanionAgentDispatchReplayStorm
+        expr: ((sum(rate(ai_companion_agent_dispatch_hints_total{outcome="replay_requested"}[5m])) / clamp_min(sum(rate(ai_companion_agent_dispatch_hints_total[5m])), 0.000001)) > 0.25) and on() (sum(increase(ai_companion_agent_dispatch_hints_total[5m])) >= 20)
+        for: 2m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "伴AI 调度尾随重放比例异常"
+          description: "最近五分钟至少有 20 个分发提示，超过 25% 在运行执行期间要求尾随重放。检查重复事件、状态抖动和下游执行时长。"
+          runbook: "docs/runbooks/incident-response.md#agent-事件唤醒与调度"
+
       - alert: AICompanionHTTP5xxHigh
         expr: sum(increase(ai_companion_http_requests_total{status=~"5.."}[5m])) >= 10
         for: 5m
@@ -78,3 +144,91 @@ groups:
           summary: "伴AI 可能存在需要人工检查的失败事件"
           description: "系统持续降级但 runnable lag 为 0，检查 /v1/ops/outbox/dead-letter 和 compensation_records。"
           runbook: "docs/runbooks/incident-response.md#dlq-重放与补偿"
+
+      - alert: AICompanionDeploymentSchedulerUnavailable
+        expr: up{job="deployment-scheduler-sandbox"} == 0 or ai_companion_deployment_scheduler_up == 0
+        for: 2m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "部署对账调度器不可用"
+          description: "已配置的 scheduler scrape target 不可达或进程 up=0 已持续 2 分钟。检查隔离 profile、认证证书、状态卷和进程退出码。"
+          runbook: "docs/runbooks/incident-response.md#部署对账调度器"
+
+      - alert: AICompanionDeploymentSchedulerFailures
+        expr: ai_companion_deployment_scheduler_consecutive_failures >= 3
+        for: 1m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "部署对账调度器连续失败"
+          description: "调度器连续失败达到停止预算。认证失败会在 Provider lookup 前关闭；检查证书有效期、实例绑定和台账权限。"
+          runbook: "docs/runbooks/incident-response.md#部署对账调度器"
+
+      - alert: AICompanionDeploymentSchedulerCertificationExpiring
+        expr: ai_companion_deployment_scheduler_certification_expiry_timestamp_seconds - time() < 900
+        for: 5m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "部署调度器认证即将过期"
+          description: "当前适配器认证剩余不足 15 分钟。使用新 nonce 重新认证并重启隔离调度服务。"
+          runbook: "docs/runbooks/incident-response.md#部署对账调度器"
+
+      - alert: AICompanionDeploymentSchedulerBacklog
+        expr: ai_companion_deployment_scheduler_due >= 10 or ai_companion_deployment_scheduler_overdue_deadline > 0
+        for: 5m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "部署对账任务积压"
+          description: "到期对账任务达到 10 个或出现截止时间逾期。检查 Provider、租约竞争、批次上限和调度间隔。"
+          runbook: "docs/runbooks/incident-response.md#部署对账调度器"
+
+      - alert: AICompanionDeploymentShadowUnavailable
+        expr: up{job="deployment-shadow-preprod"} == 0 or ai_companion_deployment_shadow_up == 0
+        for: 2m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "只读部署 shadow 服务不可用"
+          description: "已配置的预发布 shadow target 不可达或进程 up=0。检查只读账本挂载、HTTPS allowlist、令牌和进程退出码。"
+          runbook: "docs/runbooks/incident-response.md#只读-provider-shadow-对账"
+
+      - alert: AICompanionDeploymentShadowFailures
+        expr: ai_companion_deployment_shadow_consecutive_failures >= 3
+        for: 1m
+        labels:
+          severity: page
+          service: ai-companion
+        annotations:
+          summary: "只读部署 shadow 连续失败"
+          description: "shadow 服务已达到连续失败预算。检查控制账本、Provider 契约、DNS/TLS 和运行状态文件。"
+          runbook: "docs/runbooks/incident-response.md#只读-provider-shadow-对账"
+
+      - alert: AICompanionDeploymentShadowDrift
+        expr: ai_companion_deployment_shadow_drift > 0
+        for: 5m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "控制账本与 Provider 状态存在差异"
+          description: "只读比较持续发现平台领先、平台落后、记录缺失、外部 ID 冲突或状态冲突。禁止据此自动写入，先核查 shadow 报告。"
+          runbook: "docs/runbooks/incident-response.md#只读-provider-shadow-对账"
+
+      - alert: AICompanionDeploymentShadowLookupErrors
+        expr: ai_companion_deployment_shadow_lookup_errors > 0
+        for: 5m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "只读 Provider 查询持续失败"
+          description: "shadow 批次在有限安全重试后仍有查询错误。检查 401/403、限流、TLS、响应大小和 JSON 契约。"
+          runbook: "docs/runbooks/incident-response.md#只读-provider-shadow-对账"

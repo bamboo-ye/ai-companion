@@ -58,7 +58,7 @@ func (s *Store) Update(ctx context.Context, item character.Character, persona ch
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE characters SET name=?,avatar_url=?,relationship_label=?,personality=?,speech_style=?,hobbies=?,boundaries=?,initiative=?,reply_length=?,sticker_style=?,raw_prompt=?,persona_version=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, item.Name, nullString(item.AvatarURL), item.Relationship, item.Personality, item.SpeechStyle, hobbies, boundaries, item.Initiative, item.ReplyLength, item.StickerStyle, item.RawPrompt, item.PersonaVersion, item.UpdatedAt, item.ID, item.UserID)
+	result, err := tx.ExecContext(ctx, `UPDATE characters SET module_key=?,name=?,avatar_url=?,relationship_label=?,personality=?,speech_style=?,hobbies=?,boundaries=?,initiative=?,reply_length=?,sticker_style=?,raw_prompt=?,persona_version=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, item.Module, item.Name, nullString(item.AvatarURL), item.Relationship, item.Personality, item.SpeechStyle, hobbies, boundaries, item.Initiative, item.ReplyLength, item.StickerStyle, item.RawPrompt, item.PersonaVersion, item.UpdatedAt, item.ID, item.UserID)
 	if err != nil {
 		return err
 	}
@@ -108,12 +108,12 @@ func (s *Store) ListPersonaVersions(ctx context.Context, userID, characterID str
 	return result, rows.Err()
 }
 
-const characterSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),name,COALESCE(avatar_url,''),relationship_label,personality,speech_style,hobbies,boundaries,initiative,reply_length,sticker_style,raw_prompt,persona_version,status,created_at,updated_at FROM characters`
+const characterSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),module_key,name,COALESCE(avatar_url,''),relationship_label,personality,speech_style,hobbies,boundaries,initiative,reply_length,sticker_style,raw_prompt,persona_version,status,created_at,updated_at FROM characters`
 
 func insertCharacter(ctx context.Context, tx *sql.Tx, item character.Character) error {
 	hobbies, _ := json.Marshal(item.Hobbies)
 	boundaries, _ := json.Marshal(item.Boundaries)
-	_, err := tx.ExecContext(ctx, `INSERT INTO characters (id,user_id,name,avatar_url,relationship_label,personality,speech_style,hobbies,boundaries,initiative,reply_length,sticker_style,raw_prompt,persona_version,status,created_at,updated_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.UserID, item.Name, nullString(item.AvatarURL), item.Relationship, item.Personality, item.SpeechStyle, hobbies, boundaries, item.Initiative, item.ReplyLength, item.StickerStyle, item.RawPrompt, item.PersonaVersion, item.Status, item.CreatedAt, item.UpdatedAt)
+	_, err := tx.ExecContext(ctx, `INSERT INTO characters (id,user_id,module_key,name,avatar_url,relationship_label,personality,speech_style,hobbies,boundaries,initiative,reply_length,sticker_style,raw_prompt,persona_version,status,created_at,updated_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, item.ID, item.UserID, item.Module, item.Name, nullString(item.AvatarURL), item.Relationship, item.Personality, item.SpeechStyle, hobbies, boundaries, item.Initiative, item.ReplyLength, item.StickerStyle, item.RawPrompt, item.PersonaVersion, item.Status, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 func insertPersona(ctx context.Context, tx *sql.Tx, item character.PersonaVersion) error {
@@ -127,7 +127,7 @@ func insertPersona(ctx context.Context, tx *sql.Tx, item character.PersonaVersio
 func scanCharacter(row rowScanner) (character.Character, error) {
 	var item character.Character
 	var hobbies, boundaries []byte
-	err := row.Scan(&item.ID, &item.UserID, &item.Name, &item.AvatarURL, &item.Relationship, &item.Personality, &item.SpeechStyle, &hobbies, &boundaries, &item.Initiative, &item.ReplyLength, &item.StickerStyle, &item.RawPrompt, &item.PersonaVersion, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.UserID, &item.Module, &item.Name, &item.AvatarURL, &item.Relationship, &item.Personality, &item.SpeechStyle, &hobbies, &boundaries, &item.Initiative, &item.ReplyLength, &item.StickerStyle, &item.RawPrompt, &item.PersonaVersion, &item.Status, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return item, err
 	}

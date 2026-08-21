@@ -48,3 +48,31 @@ func TestControllerResetsFlappingCandidateAndL3PreservesRequests(t *testing.T) {
 		t.Fatalf("L3 snapshot = %#v", got)
 	}
 }
+
+func TestControllerPreservesAgentMetricsInSnapshot(t *testing.T) {
+	controller := NewController(Config{})
+	snapshot := controller.Observe(Sample{
+		AgentRuns:    AgentRunMetrics{Running: 2, CancelRequested: 1, P95DurationMS: 800},
+		AgentRetries: AgentRetryMetrics{ScheduledRecent: 3, RecoveredRecent: 2, ExhaustedRecent: 1, RecoveryRatio: 2.0 / 3.0},
+		ModelUsage:   ModelUsageMetrics{Calls: 4, PromptTokens: 120, CompletionTokens: 30, CostMicros: 9},
+		Repairs:      RepairMetrics{Attempts: 2, Succeeded: 1, Blocked: 1, ModelCalls: 1, ModelCostMicros: 5},
+	}, time.Now())
+	if snapshot.AgentRuns.Running != 2 ||
+		snapshot.AgentRuns.CancelRequested != 1 ||
+		snapshot.AgentRuns.P95DurationMS != 800 {
+		t.Fatalf("agent metrics = %#v", snapshot.AgentRuns)
+	}
+	if snapshot.ModelUsage.Calls != 4 ||
+		snapshot.ModelUsage.PromptTokens != 120 ||
+		snapshot.ModelUsage.CompletionTokens != 30 ||
+		snapshot.ModelUsage.CostMicros != 9 {
+		t.Fatalf("model usage metrics = %#v", snapshot.ModelUsage)
+	}
+	if snapshot.Repairs.Attempts != 2 || snapshot.Repairs.Succeeded != 1 || snapshot.Repairs.ModelCostMicros != 5 {
+		t.Fatalf("repair metrics = %#v", snapshot.Repairs)
+	}
+	if snapshot.AgentRetries.ScheduledRecent != 3 || snapshot.AgentRetries.RecoveredRecent != 2 ||
+		snapshot.AgentRetries.ExhaustedRecent != 1 || snapshot.AgentRetries.RecoveryRatio != 2.0/3.0 {
+		t.Fatalf("agent retry metrics = %#v", snapshot.AgentRetries)
+	}
+}

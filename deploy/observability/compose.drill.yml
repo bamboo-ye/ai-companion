@@ -1,0 +1,55 @@
+name: ai-companion-observability-drill
+
+services:
+  drill-sink:
+    image: python:3.13.5-slim
+    command:
+      - python
+      - -u
+      - /opt/drill/observability_drill.py
+      - serve
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ../../scripts/observability_drill.py:/opt/drill/observability_drill.py:ro
+    networks:
+      - drill
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=1h
+      - --web.enable-lifecycle
+    read_only: true
+    tmpfs:
+      - /prometheus:mode=1777
+    volumes:
+      - ./prometheus-drill.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+    depends_on:
+      - drill-sink
+      - alertmanager
+    networks:
+      - drill
+
+  alertmanager:
+    image: prom/alertmanager:v0.33.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    read_only: true
+    tmpfs:
+      - /alertmanager:mode=1777
+    volumes:
+      - ./alertmanager-drill.yml:/etc/alertmanager/alertmanager.yml:ro
+    depends_on:
+      - drill-sink
+    networks:
+      - drill
+
+networks:
+  drill:
+    internal: true

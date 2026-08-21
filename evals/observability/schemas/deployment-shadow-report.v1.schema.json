@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/deployment-shadow-report.v1.schema.json",
+  "title": "Read-only deployment shadow reconciliation report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "adapter",
+    "implementation_version",
+    "provider_instance_sha256",
+    "batch",
+    "results"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-shadow-report-v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "adapter": {
+      "$ref": "#/$defs/identifier"
+    },
+    "implementation_version": {
+      "$ref": "#/$defs/identifier"
+    },
+    "provider_instance_sha256": {
+      "$ref": "#/$defs/digest"
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected",
+        "retried_lookups",
+        "match",
+        "provider_ahead",
+        "provider_behind",
+        "provider_missing",
+        "external_id_mismatch",
+        "status_mismatch",
+        "ledger_indeterminate",
+        "lookup_error"
+      ],
+      "properties": {
+        "selected": { "$ref": "#/$defs/count" },
+        "retried_lookups": { "$ref": "#/$defs/count" },
+        "match": { "$ref": "#/$defs/count" },
+        "provider_ahead": { "$ref": "#/$defs/count" },
+        "provider_behind": { "$ref": "#/$defs/count" },
+        "provider_missing": { "$ref": "#/$defs/count" },
+        "external_id_mismatch": { "$ref": "#/$defs/count" },
+        "status_mismatch": { "$ref": "#/$defs/count" },
+        "ledger_indeterminate": { "$ref": "#/$defs/count" },
+        "lookup_error": { "$ref": "#/$defs/count" }
+      }
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deployment_id",
+          "ledger_status",
+          "provider_status",
+          "outcome",
+          "error_code",
+          "attempts",
+          "observed_at"
+        ],
+        "properties": {
+          "deployment_id": { "$ref": "#/$defs/identifier" },
+          "ledger_status": {
+            "enum": ["accepted", "completed", "indeterminate"]
+          },
+          "provider_status": {
+            "type": ["string", "null"],
+            "enum": ["accepted", "completed", "failed", null]
+          },
+          "outcome": {
+            "enum": [
+              "match",
+              "provider_ahead",
+              "provider_behind",
+              "provider_missing",
+              "external_id_mismatch",
+              "status_mismatch",
+              "ledger_indeterminate",
+              "lookup_error"
+            ]
+          },
+          "error_code": {
+            "type": ["string", "null"],
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

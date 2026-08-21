@@ -9,7 +9,7 @@ Implemented in the working tree:
 - A versioned Skill registry with JSON input/output contracts, risk level, confirmation policy, timeout, step budget, and a typed Tool handler.
 - Explicit finite states and persisted checkpoints: `receive → validate → plan → confirm/execute → deliver`, with terminal `failed` and `cancelled` states.
 - Optimistic revision checks and user-scoped create/confirm/cancel/retry idempotency keys.
-- Queryable task steps, attempts, failure codes, Tool execution records, audit records, and `skill.run.succeeded.v1` outbox events.
+- Queryable task steps, attempts, failure codes, Tool execution records, audit records, and transactional succeeded/failed/cancelled Skill terminal outbox events. Agent-originated async Skills use these events for immediate resume while preserving scheduled reconciliation fallback.
 - Generated-file metadata and authenticated download; files use new UUID storage keys and never overwrite source files.
 - Three built-in starter Skills:
   - `office.translate`: deterministic side-effect-free translation preview.

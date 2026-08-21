@@ -16,6 +16,8 @@ func TestRouterExtractsRiskSkillAndSlots(t *testing.T) {
 	}{
 		{text: "把这段话翻译成英文", intent: "office", skill: "office.translate", risk: "none"},
 		{text: "给 client@example.com 写一封邮件", intent: "office", skill: "office.email_draft", risk: "none", required: []string{"subject"}},
+		{text: "帮我写一封邮件，询问A学期可以选project课吗", intent: "office", skill: "office.email_draft", risk: "none", required: []string{"subject"}},
+		{text: "帮我写一封英文邮件，询问课程安排", intent: "office", skill: "office.email_draft", risk: "none", required: []string{"subject"}},
 		{text: "生成 8 页 PPT 给管理层", intent: "office", skill: "office.pptx_generate", risk: "medium", required: []string{"style"}},
 		{text: "明早提醒我开会", intent: "reminder", risk: "medium"},
 		{text: "昨晚打车 36 元，帮我记账", intent: "ledger", risk: "medium"},
@@ -31,6 +33,10 @@ func TestRouterExtractsRiskSkillAndSlots(t *testing.T) {
 				t.Fatalf("route(%q) required slots = %v, missing %s", test.text, result.RequiredSlots, slot)
 			}
 		}
+	}
+	englishEmail, err := router.Route(Input{Text: "帮我写一封英文邮件，询问课程安排"})
+	if err != nil || englishEmail.Slots["output_language"] != "en-US" {
+		t.Fatalf("English email language slot = %#v err=%v", englishEmail.Slots, err)
 	}
 }
 

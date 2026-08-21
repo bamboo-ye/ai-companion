@@ -1,0 +1,26 @@
+{
+  "schema_version": "agent-direct-rollout-policy-v1",
+  "version": "agent-direct-rollout-policy-v1",
+  "traffic_stages": [0, 5, 10, 25, 50, 100],
+  "fast_window_runs": 1,
+  "stable_window_runs": 3,
+  "minimum_stable_window_seconds": 600,
+  "maximum_gap_seconds": 600,
+  "maximum_report_age_seconds": 300,
+  "minimum": {
+    "direct_rate": 1.0,
+    "single_model_call_rate": 1.0,
+    "quality_pass_rate": 1.0,
+    "content_pass_rate": 1.0,
+    "repair_success_rate": 1.0
+  },
+  "maximum": {
+    "duration_p95_ms": 15000,
+    "assistant_delivery_violations": 0,
+    "duplicate_violations": 0,
+    "response_quality_failures": 0,
+    "planned_runs": 0,
+    "tool_actions": 0,
+    "rewrite_runs": 0
+  }
+}

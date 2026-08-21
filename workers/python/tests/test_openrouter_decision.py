@@ -1,0 +1,1209 @@
+from __future__ import annotations
+
+import json
+import os
+import time
+import unittest
+from typing import Any, Mapping
+from unittest.mock import patch
+
+from ai_companion_worker.openrouter_decision import (
+    OpenRouterConfig,
+    OpenRouterDecisionPort,
+    OpenRouterError,
+)
+from ai_companion_worker.agent_runtime import ModelBudgetExceeded
+
+
+class StubOpenRouter(OpenRouterDecisionPort):
+    def __init__(
+        self,
+        responses: list[dict[str, Any] | OpenRouterError],
+        *,
+        elapsed_seconds: list[float] | None = None,
+    ) -> None:
+        self.now = 0.0
+        super().__init__(
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openrouter/free", "free/fallback"),
+            ),
+            monotonic=lambda: self.now,
+        )
+        self.responses = responses
+        self.elapsed_seconds = list(elapsed_seconds or ())
+        self.requests: list[dict[str, Any]] = []
+        self.request_timeouts: list[float] = []
+
+    def _request(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        self.requests.append(dict(payload))
+        self.request_timeouts.append(timeout_seconds)
+        if self.elapsed_seconds:
+            self.now += self.elapsed_seconds.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, OpenRouterError):
+            raise response
+        return response
+
+
+def tool_response(name: str, arguments: str = "{}") -> dict[str, Any]:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": arguments,
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+
+def context() -> dict[str, Any]:
+    return {
+        "tools": [
+            {
+                "name": "life_query_today_plan",
+                "description": "查询真实今日计划",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "life_no_tool",
+                "description": "仅普通聊天时选择",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ],
+        "system_prompt": "你是小满；没有真实数据时不得杜撰。",
+    }
+
+
+class OpenRouterDecisionPortTest(unittest.TestCase):
+    def test_default_profile_prefers_deepseek_and_keeps_gpt_fallbacks(self) -> None:
+        with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}, clear=True):
+            config = OpenRouterConfig.from_env()
+        self.assertEqual(
+            config.models,
+            (
+                "deepseek/deepseek-v4-flash-0731",
+                "openai/gpt-5-mini",
+            ),
+        )
+        self.assertEqual(
+            config.models_for("router"),
+            (
+                "deepseek/deepseek-v4-flash-0731",
+                "openai/gpt-5-nano",
+            ),
+        )
+        self.assertEqual(
+            config.models_for("composer"),
+            (
+                "deepseek/deepseek-v4-flash-0731",
+                "openai/gpt-5-mini",
+            ),
+        )
+        self.assertEqual(
+            config.models_for("repairer"),
+            ("deepseek/deepseek-v4-flash-0731",),
+        )
+        self.assertEqual(
+            config.models_for("companion_responder"),
+            (
+                "openai/gpt-oss-20b:free",
+                "google/gemma-4-31b-it:free",
+                "inclusionai/ling-3.0-flash:free",
+            ),
+        )
+        self.assertEqual(
+            config.config_version,
+            "2026-08-bounded-fallback-v1",
+        )
+        self.assertEqual(config.preferred_max_latency_p90, 8)
+        self.assertEqual(config.timeout_seconds, 30)
+        self.assertEqual(config.attempt_timeout_seconds, 15)
+        self.assertEqual(config.composer_timeout_seconds, 45)
+        self.assertEqual(config.composer_attempt_timeout_seconds, 30)
+        self.assertEqual(config.min_fallback_timeout_seconds, 5)
+
+    def test_model_generates_structured_execution_plan(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"objective":"根据附件制作演示文稿",'
+                                    '"steps":["提取附件正文","观察提取结果",'
+                                    '"生成PPTX","观察并交付文件"],'
+                                    '"success_criteria":"返回可下载的PPTX文件"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        plan = port.plan(
+            module="work",
+            message="根据附件做一个PPT",
+            context=context(),
+        )
+        self.assertEqual(plan.objective, "根据附件制作演示文稿")
+        self.assertEqual(plan.steps[0], "提取附件正文")
+        self.assertNotIn("tools", port.requests[0])
+        self.assertNotIn("tool_choice", port.requests[0])
+        self.assertNotIn("temperature", port.requests[0])
+        self.assertEqual(
+            port.requests[0]["response_format"],
+            {"type": "json_object"},
+        )
+
+    def test_life_completion_plan_requires_lookup_disambiguation_and_confirmation(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"objective":"安全完成选课事项",'
+                                    '"steps":["查询未完成事项","按标题和日期消歧",'
+                                    '"请求确认","确认后更新并校验"],'
+                                    '"success_criteria":"唯一匹配且经确认后状态为已完成"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        port.plan(
+            module="life",
+            message="我完成了8月10号的选课",
+            context={
+                "tools": [
+                    {
+                        "name": "life_prepare_task_completion",
+                        "description": "先查找唯一候选再准备完成",
+                        "parameters": {"type": "object", "properties": {}},
+                        "requires_plan": True,
+                    }
+                ]
+            },
+        )
+        request = port.requests[0]
+        system_prompt = request["messages"][0]["content"]
+        user_payload = json.loads(request["messages"][1]["content"])
+        self.assertIn("查询真实未完成事项", system_prompt)
+        self.assertIn("无匹配或多匹配", system_prompt)
+        self.assertTrue(user_payload["available_tools"][0]["requires_plan"])
+
+    def test_plan_failure_uses_generic_decoupled_fallback(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response("work_generate_pptx"),
+                OpenRouterError("rate limited", status_code=429),
+            ]
+        )
+        plan = port.plan(
+            module="work",
+            message="根据附件做一个PPT",
+            context=context(),
+        )
+        self.assertEqual(plan.objective, "根据附件做一个PPT")
+        self.assertIn("独立工具", plan.steps[1])
+        self.assertIn("观察", plan.steps[2])
+        self.assertEqual(len(port.requests), 2)
+
+    def test_semantically_empty_plan_uses_default_without_losing_usage(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"objective":"   ","steps":["x"],"success_criteria":"   "}'
+                                )
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 30,
+                        "completion_tokens": 9,
+                        "cost": 0.000004,
+                    },
+                }
+            ]
+        )
+        plan = port.plan(
+            module="work",
+            message="根据附件做一个PPT",
+            context=context(),
+        )
+        self.assertEqual(plan.objective, "根据附件做一个PPT")
+        events = port.consume_observability()
+        self.assertEqual(events[0]["prompt_tokens"], 30)
+        self.assertEqual(events[0]["cost_micros"], 4)
+
+    def test_returns_exact_model_selected_tool(self) -> None:
+        port = StubOpenRouter(
+            [tool_response("life_query_today_plan", '{"local_date":"2026-07-24"}')]
+        )
+        decision = port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=context(),
+        )
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(
+            decision.tool_arguments,
+            {"local_date": "2026-07-24"},
+        )
+        self.assertEqual(port.requests[0]["tool_choice"], "auto")
+        self.assertNotIn("parallel_tool_calls", port.requests[0])
+        self.assertEqual(port.requests[0]["model"], "openrouter/free")
+        self.assertNotIn("models", port.requests[0])
+        self.assertEqual(port.requests[0]["provider"]["sort"], "price")
+        self.assertEqual(
+            port.requests[0]["provider"]["preferred_max_latency"],
+            {"p90": 8},
+        )
+        self.assertTrue(port.requests[0]["provider"]["require_parameters"])
+        self.assertTrue(port.requests[0]["provider"]["allow_fallbacks"])
+        self.assertEqual(
+            port.requests[0]["provider"]["max_price"],
+            {"prompt": 0.3, "completion": 2.5},
+        )
+
+    def test_life_router_receives_contrastive_completion_few_shots(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response(
+                    "life_prepare_task_completion",
+                    '{"title":"选课"}',
+                )
+            ]
+        )
+        life_context = {
+            "tools": [
+                {
+                    "name": "life_prepare_task_completion",
+                    "description": "完成已有事项",
+                    "parameters": {"type": "object", "properties": {}},
+                    "requires_plan": True,
+                },
+                {
+                    "name": "life_query_active_reminders",
+                    "description": "查询提醒",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_prepare_today_plan",
+                    "description": "新增今日计划",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ]
+        }
+
+        decision = port.decide(
+            module="life",
+            message="我完成了8月10号的选课",
+            context=life_context,
+        )
+
+        self.assertEqual(decision.tool_name, "life_prepare_task_completion")
+        self.assertEqual(decision.tool_arguments, {"title": "选课"})
+        prompt = "\n".join(
+            str(message.get("content", ""))
+            for message in port.requests[0]["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("我完成了8月10号的选课", prompt)
+        self.assertIn("life_prepare_task_completion", prompt)
+        self.assertIn("8月10号有选课提醒吗", prompt)
+        self.assertIn("life_query_active_reminders", prompt)
+        self.assertIn("把选课加入今日计划", prompt)
+        self.assertIn("我还没完成选课", prompt)
+        self.assertIn("我准备完成选课", prompt)
+        self.assertIn("date_hint", prompt)
+        self.assertIn("不能只凭关键词", prompt)
+
+    def test_life_router_treats_direct_answer_as_missing_reminder_slot(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response(
+                    "life_prepare_reminder",
+                    '{"title":"提交报销材料","date_hint":"下周五"}',
+                )
+            ]
+        )
+        life_context = {
+            "history": [
+                {"role": "user", "content": "提醒我提交报销材料"},
+                {"role": "assistant", "content": "还需要补充提醒日期。"},
+            ],
+            "tools": [
+                {
+                    "name": "life_prepare_reminder",
+                    "description": "创建或继续补充提醒",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "date_hint": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "name": "life_no_tool",
+                    "description": "无需工具",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
+        }
+
+        decision = port.decide(
+            module="life",
+            message="下周五",
+            context=life_context,
+        )
+
+        self.assertEqual(decision.tool_name, "life_prepare_reminder")
+        self.assertEqual(
+            decision.tool_arguments,
+            {"title": "提交报销材料", "date_hint": "下周五"},
+        )
+        prompt = "\n".join(
+            str(message.get("content", ""))
+            for message in port.requests[0]["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("上一轮明确追问某个缺失字段", prompt)
+        self.assertIn("continue_create", prompt)
+
+    def test_router_selects_and_composer_builds_complex_tool_arguments(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response(
+                    "work_create_markdown_document",
+                    '{"content":"must be discarded"}',
+                ),
+                tool_response(
+                    "work_create_markdown_document",
+                    '{"title":"方案","content":"# 方案\\n\\n完整正文"}',
+                ),
+            ]
+        )
+        complex_context = {
+            "tools": [
+                {
+                    "name": "work_create_markdown_document",
+                    "description": "创建 Markdown 文档",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "content"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "content": {"type": "string", "maxLength": 10000},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "compose_arguments": True,
+                }
+            ]
+        }
+        decision = port.decide(
+            module="work",
+            message="创建一份方案文档",
+            context=complex_context,
+        )
+        self.assertTrue(decision.requires_argument_composition)
+        self.assertEqual(decision.tool_arguments, {})
+        router_schema = port.requests[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(router_schema["properties"], {})
+
+        arguments = port.compose_arguments(
+            module="work",
+            message="创建一份方案文档",
+            tool_name=decision.tool_name,
+            context=complex_context,
+        )
+        self.assertEqual(arguments["title"], "方案")
+        self.assertIn("完整正文", arguments["content"])
+        composer_tool = port.requests[1]["tools"][0]["function"]
+        self.assertIn("content", composer_tool["parameters"]["properties"])
+        self.assertEqual(
+            port.requests[1]["tool_choice"],
+            {
+                "type": "function",
+                "function": {"name": "work_create_markdown_document"},
+            },
+        )
+        self.assertEqual(port.requests[1]["max_tokens"], 4096)
+
+    def test_email_composer_uses_profile_language_contract_and_quality_fallback(self) -> None:
+        arguments = {
+            "to": [],
+            "subject": "Question About Project Courses",
+            "purpose": "Ask whether a Project course may be taken in Semester A.",
+            "output_language": "en-US",
+            "relationship": "first_contact",
+            "introduction_policy": "required",
+            "sender_name": "Alex Chen",
+            "salutation": "Dear Sir or Madam,",
+            "introduction": "My name is Alex Chen, and I am a prospective student.",
+            "body_paragraphs": ["The Project course is part of my planned Semester A schedule."],
+            "request_or_next_step": "Could you please share the prerequisites?",
+            "courtesy": "Thank you for your time and assistance.",
+            "closing": "Kind regards,",
+            "signature_lines": ["Alex Chen"],
+            "tone": "formal",
+        }
+        port = StubOpenRouter(
+            [
+                tool_response("work_draft_email", json.dumps(arguments)),
+                tool_response("work_draft_email", json.dumps(arguments)),
+            ]
+        )
+        email_context = {
+            "tools": [
+                {
+                    "name": "work_draft_email",
+                    "description": "生成完整邮件草稿",
+                    "compose_arguments": True,
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            "email_profile": {
+                "sender_name": "Alex Chen",
+                "default_language": "zh-CN",
+            },
+        }
+        composed = port.compose_arguments(
+            module="work",
+            message="请写一封英文邮件询问 Project 课",
+            tool_name="work_draft_email",
+            context=email_context,
+        )
+        self.assertEqual(composed["output_language"], "en-US")
+        self.assertEqual(port.requests[0]["model"], "openrouter/free")
+        self.assertEqual(port.requests[0]["max_tokens"], 1200)
+        self.assertIn("邮件专用编排", port.requests[0]["messages"][0]["content"])
+        self.assertIn("body_paragraphs 只能写背景", port.requests[0]["messages"][0]["content"])
+        self.assertIn("各字段不得换一种说法重复", port.requests[0]["messages"][0]["content"])
+        routed = json.loads(port.requests[0]["messages"][1]["content"])
+        self.assertEqual(routed["email_profile"]["sender_name"], "Alex Chen")
+
+        retry_context = dict(email_context)
+        retry_context["email_validation"] = {
+            "passed": False,
+            "violations": ["english_language_contamination"],
+        }
+        port.compose_arguments(
+            module="work",
+            message="请写一封英文邮件询问 Project 课",
+            tool_name="work_draft_email",
+            context=retry_context,
+        )
+        self.assertEqual(port.requests[1]["model"], "free/fallback")
+        self.assertIn(
+            "english_language_contamination",
+            port.requests[1]["messages"][0]["content"],
+        )
+
+    def test_repairer_returns_strict_allowlisted_plan(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"strategy":"operator",'
+                                    '"operator_id":"filename.safe_basename",'
+                                    '"patches":[],"reason_code":"path_separator"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        decision = port.repair(
+            module="work",
+            message="生成 PPT",
+            tool_name="work_generate_pptx",
+            arguments={"filename": "A/B.pptx"},
+            failure={
+                "code": "invalid_output_filename",
+                "category": "argument_validation",
+                "phase": "pre_execution",
+                "field_paths": ["/filename"],
+                "allowed_repairs": ["filename.safe_basename"],
+            },
+            context={
+                "repair_history": [],
+                "repair_policies": [
+                    {
+                        "operator_id": "filename.safe_basename",
+                        "field_path": "/filename",
+                        "extension": ".pptx",
+                        "semantics_preserving": True,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(decision.operator_id, "filename.safe_basename")
+        response_format = port.requests[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
+        self.assertEqual(
+            response_format["json_schema"]["schema"]["properties"]["operator_id"]["enum"],
+            ["filename.safe_basename"],
+        )
+        repair_request = json.loads(port.requests[0]["messages"][1]["content"])
+        self.assertEqual(
+            repair_request["operator_catalog"][0]["operator_id"],
+            "filename.safe_basename",
+        )
+        self.assertEqual(port.requests[0]["temperature"], 0)
+        self.assertEqual(port.requests[0]["max_tokens"], 256)
+
+    def test_no_tool_returns_conversation_in_the_routing_call(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response("life_no_tool"),
+                {"choices": [{"message": {"content": "我在，想聊什么都可以。"}}]},
+            ]
+        )
+        decision = port.decide(
+            module="life",
+            message="今天心情不错",
+            context=context(),
+        )
+        self.assertEqual(decision.tool_name, "")
+        self.assertFalse(decision.needs_response)
+        self.assertEqual(decision.response, "我在，想聊什么都可以。")
+        self.assertEqual(len(port.requests), 2)
+        self.assertIn("tools", port.requests[0])
+        self.assertNotIn("tools", port.requests[1])
+
+    def test_records_openrouter_usage_and_actual_model(self) -> None:
+        response = tool_response("life_query_today_plan")
+        response.update(
+            {
+                "id": "gen-1",
+                "model": "openai/gpt-5-nano",
+                "provider": "OpenAI",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 12,
+                    "cost": 0.0000004,
+                    "prompt_tokens_details": {"cached_tokens": 40},
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                },
+            }
+        )
+        port = StubOpenRouter([response])
+        port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=context(),
+        )
+        events = port.consume_observability()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["returned_model"], "openai/gpt-5-nano")
+        self.assertEqual(events[0]["upstream_provider"], "OpenAI")
+        self.assertEqual(events[0]["prompt_tokens"], 100)
+        self.assertEqual(events[0]["cached_tokens"], 40)
+        self.assertEqual(events[0]["reasoning_tokens"], 2)
+        self.assertEqual(events[0]["cost_micros"], 1)
+
+    def test_role_models_and_price_routing_are_explicit(self) -> None:
+        port = OpenRouterDecisionPort(
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openai/gpt-5-mini",),
+                planner_models=("openai/gpt-5-mini",),
+                router_models=("openai/gpt-5-nano",),
+                composer_models=("openai/gpt-5-mini",),
+                assessor_models=("openai/gpt-5-nano",),
+                responder_models=("openai/gpt-5-mini",),
+                require_pinned_models=True,
+            )
+        )
+        manifest = port.model_manifest()
+        self.assertEqual(
+            manifest["roles"]["router"]["models"],
+            ["openai/gpt-5-nano"],
+        )
+        self.assertEqual(
+            manifest["roles"]["composer"]["models"],
+            ["openai/gpt-5-mini"],
+        )
+        self.assertEqual(
+            manifest["roles"]["companion_responder"]["models"],
+            [
+                "openai/gpt-oss-20b:free",
+                "google/gemma-4-31b-it:free",
+                "inclusionai/ling-3.0-flash:free",
+            ],
+        )
+        self.assertEqual(
+            manifest["roles"]["companion_responder"]["billing_class"],
+            "free",
+        )
+        self.assertTrue(manifest["pinned"])
+        self.assertEqual(manifest["routing"]["sort"], "price")
+        self.assertEqual(
+            manifest["routing"]["preferred_max_latency"],
+            {"p90": 8},
+        )
+        self.assertTrue(manifest["routing"]["require_parameters"])
+        self.assertTrue(manifest["routing"]["allow_fallbacks"])
+        self.assertEqual(
+            manifest["routing"]["max_price"],
+            {"prompt": 0.3, "completion": 2.5},
+        )
+        self.assertEqual(
+            manifest["routing"]["timeouts"],
+            {
+                "fallback_deadline_seconds": 30,
+                "attempt_timeout_seconds": 15,
+                "composer_fallback_deadline_seconds": 45,
+                "composer_attempt_timeout_seconds": 30,
+                "min_fallback_timeout_seconds": 5,
+            },
+        )
+
+    def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
+        port = StubOpenRouter([tool_response("life_query_today_plan")])
+        limited_context = context()
+        limited_context["model_allowance"] = {
+            "remaining_calls": 1,
+            "remaining_prompt_tokens": 200_000,
+            "remaining_completion_tokens": 90,
+            "remaining_cost_micros": 50_000,
+        }
+        port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=limited_context,
+        )
+        # Prompt and cost ceilings leave enough room; the stricter 90-token
+        # completion budget wins.
+        self.assertEqual(port.requests[0]["max_tokens"], 90)
+
+    def test_cross_model_fallback_reserves_budget_for_every_attempt(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": "直接回答了用户"}}]},
+                tool_response("life_query_today_plan"),
+            ]
+        )
+        limited_context = context()
+        limited_context["model_allowance"] = {
+            "remaining_calls": 2,
+            "remaining_prompt_tokens": 200_000,
+            "remaining_completion_tokens": 200,
+            "remaining_cost_micros": 50_000,
+        }
+        decision = port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=limited_context,
+        )
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(len(port.requests), 2)
+        self.assertEqual(
+            [request["max_tokens"] for request in port.requests],
+            [100, 100],
+        )
+
+    def test_prompt_budget_blocks_dispatch_before_any_fallback(self) -> None:
+        port = StubOpenRouter([tool_response("life_query_today_plan")])
+        limited_context = context()
+        limited_context["model_allowance"] = {
+            "remaining_calls": 2,
+            "remaining_prompt_tokens": 1,
+            "remaining_completion_tokens": 200,
+            "remaining_cost_micros": 50_000,
+        }
+        with self.assertRaisesRegex(ModelBudgetExceeded, "输入 token"):
+            port.decide(
+                module="life",
+                message="我今天的计划是什么",
+                context=limited_context,
+            )
+        self.assertEqual(port.requests, [])
+
+    def test_production_pin_policy_rejects_dynamic_router(self) -> None:
+        with self.assertRaises(ValueError):
+            OpenRouterDecisionPort(
+                OpenRouterConfig(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key="test-key",
+                    models=("openrouter/free",),
+                    require_pinned_models=True,
+                )
+            )
+
+    def test_pinned_companion_responder_rejects_non_free_models(self) -> None:
+        with self.assertRaisesRegex(ValueError, "zero-price"):
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openai/gpt-5-mini",),
+                companion_responder_models=("openai/gpt-5-mini",),
+                require_pinned_models=True,
+            ).validate()
+
+    def test_companion_uses_free_responder_role_only(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": "我在这里。"}}]},
+                {"choices": [{"message": {"content": "工作回复。"}}]},
+            ]
+        )
+        self.assertEqual(
+            port.respond(
+                module="companion",
+                message="陪我聊聊",
+                context=context(),
+            ),
+            "我在这里。",
+        )
+        self.assertEqual(
+            port.requests[0]["model"],
+            "openai/gpt-oss-20b:free",
+        )
+        self.assertEqual(
+            port.respond(
+                module="work",
+                message="总结一下",
+                context=context(),
+            ),
+            "工作回复。",
+        )
+        self.assertEqual(port.requests[1]["model"], "openrouter/free")
+
+    def test_life_response_returns_database_observation_verbatim(self) -> None:
+        port = StubOpenRouter([])
+        trusted = "今日计划（2026-08-14）：\n- 2026-08-14 查看邮件（时间待安排）"
+        response = port.respond(
+            module="life",
+            message="查看今日计划",
+            context={
+                **context(),
+                "observations": [
+                    {
+                        "tool_name": "life_query_today_plan",
+                        "status": "completed",
+                        "response": trusted,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(response, trusted)
+        self.assertEqual(port.requests, [])
+
+    def test_response_revision_only_includes_three_latest_observations(self) -> None:
+        port = StubOpenRouter(
+            [{"choices": [{"message": {"content": "已去除重复内容。"}}]}]
+        )
+        observations = [{"sequence": sequence} for sequence in range(5)]
+
+        revised = port.revise_response(
+            module="work",
+            message="修复重复内容",
+            response="重复。重复。",
+            violations=[{"kind": "exact_duplicate"}],
+            context={"observations": observations},
+        )
+
+        self.assertEqual(revised, "已去除重复内容。")
+        revision_request = json.loads(port.requests[0]["messages"][1]["content"])
+        self.assertEqual(
+            revision_request["trusted_observations"],
+            observations[-3:],
+        )
+        self.assertEqual(port.requests[0]["temperature"], 0)
+
+    def test_config_rejects_non_finite_price_ceiling(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max prices"):
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openai/gpt-5-mini",),
+                max_prompt_price=float("nan"),
+            ).validate()
+
+    def test_config_rejects_invalid_provider_latency_preference(self) -> None:
+        with self.assertRaisesRegex(ValueError, "PREFERRED_MAX_LATENCY"):
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openai/gpt-5-mini",),
+                preferred_max_latency_p90=float("nan"),
+            ).validate()
+
+    def test_config_rejects_attempt_timeout_above_shared_deadline(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot exceed MODEL_TIMEOUT_SECONDS"):
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openai/gpt-5-mini",),
+                timeout_seconds=10,
+                attempt_timeout_seconds=11,
+            ).validate()
+
+    def test_three_model_timeouts_share_one_deadline(self) -> None:
+        port = StubOpenRouter(
+            [
+                OpenRouterError("primary timed out", status_code=408),
+                OpenRouterError("fallback timed out", status_code=408),
+                OpenRouterError("last fallback timed out", status_code=408),
+            ],
+            elapsed_seconds=[15, 10, 5],
+        )
+
+        with self.assertRaises(OpenRouterError):
+            port.respond(module="companion", message="你好", context=context())
+
+        self.assertEqual(port.request_timeouts, [15, 10, 5])
+        events = port.consume_observability()
+        self.assertEqual([item["timeout_ms"] for item in events], [15000, 10000, 5000])
+        self.assertTrue(all(item["retryable"] for item in events))
+
+    def test_fast_failure_preserves_full_timeout_for_next_model(self) -> None:
+        port = StubOpenRouter(
+            [
+                OpenRouterError(
+                    "provider unavailable",
+                    status_code=503,
+                    retry_after="7",
+                ),
+                tool_response("life_query_today_plan"),
+            ]
+        )
+
+        decision = port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=context(),
+        )
+
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(port.request_timeouts, [15, 15])
+        events = port.consume_observability()
+        self.assertEqual([item["status"] for item in events], ["error", "succeeded"])
+        self.assertEqual(events[0]["retry_after"], "7")
+
+    def test_fallback_deadline_exhaustion_is_retryable(self) -> None:
+        port = StubOpenRouter(
+            [OpenRouterError("transport exceeded timeout", status_code=408)],
+            elapsed_seconds=[31],
+        )
+
+        with self.assertRaisesRegex(OpenRouterError, "deadline exhausted") as raised:
+            port.decide(
+                module="life",
+                message="我今天的计划是什么",
+                context=context(),
+            )
+
+        self.assertEqual(raised.exception.status_code, 408)
+        self.assertTrue(raised.exception.retryable)
+        self.assertEqual(port.request_timeouts, [15])
+
+    def test_real_request_timeouts_are_bounded_by_shared_wall_clock(self) -> None:
+        port = OpenRouterDecisionPort(
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openrouter/free", "free/fallback"),
+                timeout_seconds=0.3,
+                attempt_timeout_seconds=0.12,
+                min_fallback_timeout_seconds=0.06,
+            )
+        )
+        observed_timeouts: list[float] = []
+
+        def slow_timeout(*_args: Any, timeout: float, **_kwargs: Any) -> None:
+            observed_timeouts.append(timeout)
+            time.sleep(timeout)
+            raise TimeoutError("controlled timeout")
+
+        started = time.monotonic()
+        with patch("urllib.request.urlopen", side_effect=slow_timeout):
+            with self.assertRaises(OpenRouterError):
+                port.respond(module="companion", message="你好", context=context())
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(len(observed_timeouts), 3)
+        self.assertAlmostEqual(observed_timeouts[0], 0.12, places=2)
+        self.assertLessEqual(sum(observed_timeouts), 0.31)
+        self.assertGreaterEqual(elapsed, 0.25)
+        self.assertLess(elapsed, 0.6)
+
+    def test_zero_provider_latency_preference_omits_request_hint(self) -> None:
+        port = StubOpenRouter([tool_response("life_query_today_plan")])
+        port._config = OpenRouterConfig(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="test-key",
+            models=("openrouter/free", "free/fallback"),
+            preferred_max_latency_p90=0,
+        )
+        port.decide(module="life", message="我今天的计划是什么", context=context())
+        self.assertNotIn("preferred_max_latency", port.requests[0]["provider"])
+
+    def test_completed_email_tool_is_removed_and_observed_draft_is_returned(self) -> None:
+        port = StubOpenRouter([tool_response("work_no_tool")])
+        decision = port.decide(
+            module="work",
+            message="帮我写一封课程咨询邮件",
+            context={
+                "tools": [
+                    {
+                        "name": "work_draft_email",
+                        "description": "生成邮件草稿",
+                        "parameters": {"type": "object"},
+                    },
+                    {
+                        "name": "work_no_tool",
+                        "description": "无需继续调用工具",
+                        "parameters": {"type": "object"},
+                    },
+                ],
+                "observations": [
+                    {
+                        "tool_name": "work_draft_email",
+                        "status": "succeeded",
+                        "response": "邮件草稿：\n\n您好，请问可以选 Project 课吗？",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            decision.response,
+            "邮件草稿：\n\n您好，请问可以选 Project 课吗？",
+        )
+        self.assertEqual(len(port.requests), 0)
+
+    def test_repeatable_attachment_tool_remains_for_next_attachment(self) -> None:
+        port = StubOpenRouter(
+            [tool_response("work_extract_attached_document", '{"attachment_index":2}')]
+        )
+        decision = port.decide(
+            module="work",
+            message="根据两个附件做一个PPT",
+            context={
+                "tools": [
+                    {
+                        "name": "work_extract_attached_document",
+                        "description": "每次独立提取一个附件",
+                        "parameters": {
+                            "type": "object",
+                            "required": ["attachment_index"],
+                            "properties": {
+                                "attachment_index": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 2,
+                                }
+                            },
+                        },
+                        "repeatable": True,
+                        "identity_fields": ["attachment_index"],
+                    },
+                    {
+                        "name": "work_no_tool",
+                        "description": "无需继续调用工具",
+                        "parameters": {"type": "object"},
+                    },
+                ],
+                "observations": [
+                    {
+                        "tool_name": "work_extract_attached_document",
+                        "arguments": {"attachment_index": 1},
+                        "status": "succeeded",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(decision.tool_name, "work_extract_attached_document")
+        self.assertEqual(decision.tool_arguments, {"attachment_index": 2})
+        offered = port.requests[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(
+            offered["properties"]["attachment_index"]["enum"],
+            [2],
+        )
+
+    def test_goal_assessment_marks_completed_email_draft_terminal(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    '{"status":"completed","reason":"完整邮件草稿已经生成"}'
+                                )
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        assessment = port.assess(
+            module="work",
+            message="帮我写一封课程咨询邮件",
+            context={
+                "agent_plan": {"success_criteria": "生成完整且礼貌的邮件草稿"},
+                "observations": [
+                    {
+                        "tool_name": "work_draft_email",
+                        "status": "succeeded",
+                        "response": "邮件草稿已生成",
+                        "data": {
+                            "output": {
+                                "subject": "课程咨询",
+                                "body": "您好……",
+                                "send_status": "draft_only",
+                                "quality_report": {"passed": True},
+                            }
+                        },
+                    }
+                ],
+            },
+        )
+        self.assertEqual(assessment.status, "completed")
+
+    def test_goal_assessment_blocks_email_without_quality_evidence(self) -> None:
+        port = StubOpenRouter([])
+        assessment = port.assess(
+            module="work",
+            message="帮我写一封英文课程咨询邮件",
+            context={
+                "observations": [
+                    {
+                        "tool_name": "work_draft_email",
+                        "status": "succeeded",
+                        "data": {
+                            "output": {
+                                "body": "您好，Could you help me?",
+                                "send_status": "draft_only",
+                            }
+                        },
+                    }
+                ]
+            },
+        )
+        self.assertEqual(assessment.status, "blocked")
+        self.assertEqual(port.requests, [])
+
+    def test_rejects_parallel_or_missing_tool_call(self) -> None:
+        invalid = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "life_no_tool",
+                                    "arguments": "{}",
+                                }
+                            },
+                            {
+                                "function": {
+                                    "name": "life_query_today_plan",
+                                    "arguments": "{}",
+                                }
+                            },
+                        ]
+                    }
+                }
+            ]
+        }
+        port = StubOpenRouter(
+            [
+                invalid,
+                invalid,
+            ]
+        )
+        with self.assertRaises(OpenRouterError):
+            port.decide(module="life", message="你好", context=context())
+
+    def test_rejects_malformed_tool_arguments(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response("life_query_today_plan", "{not-json"),
+                tool_response("life_query_today_plan", "{still-not-json"),
+            ]
+        )
+        with self.assertRaises(OpenRouterError):
+            port.decide(
+                module="life",
+                message="我今天的计划是什么",
+                context=context(),
+            )
+
+    def test_falls_back_when_first_model_ignores_required_tool_choice(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": "直接回答了用户"}}]},
+                tool_response("life_query_today_plan", "{}"),
+            ]
+        )
+        decision = port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=context(),
+        )
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback"],
+        )
+
+    def test_falls_back_when_first_model_rejects_tool_call_options(self) -> None:
+        port = StubOpenRouter(
+            [
+                OpenRouterError(
+                    "model does not support required tool choice",
+                    status_code=422,
+                ),
+                tool_response("life_query_today_plan", "{}"),
+            ]
+        )
+        decision = port.decide(
+            module="life",
+            message="我今天的计划是什么",
+            context=context(),
+        )
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

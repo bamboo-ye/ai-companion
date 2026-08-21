@@ -12,11 +12,11 @@ import (
 )
 
 func (s *Store) CreateConversation(ctx context.Context, item conversation.Conversation) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO conversations (id,user_id,character_id,title,next_sequence,created_at,updated_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?)`, item.ID, item.UserID, item.CharacterID, item.Title, item.NextSequence, item.CreatedAt, item.UpdatedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO conversations (id,user_id,character_id,title,status,next_sequence,created_at,updated_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?)`, item.ID, item.UserID, item.CharacterID, item.Title, item.Status, item.NextSequence, item.CreatedAt, item.UpdatedAt)
 	return err
 }
 func (s *Store) ListConversations(ctx context.Context, userID string) ([]conversation.Conversation, error) {
-	rows, err := s.db.QueryContext(ctx, conversationSelect+` WHERE user_id=UUID_TO_BIN(?) ORDER BY updated_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, conversationSelect+` WHERE user_id=UUID_TO_BIN(?) AND status='active' ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -32,11 +32,30 @@ func (s *Store) ListConversations(ctx context.Context, userID string) ([]convers
 	return items, rows.Err()
 }
 func (s *Store) GetConversation(ctx context.Context, userID, conversationID string) (conversation.Conversation, error) {
-	item, err := scanConversation(s.db.QueryRowContext(ctx, conversationSelect+` WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?)`, conversationID, userID))
+	item, err := scanConversation(s.db.QueryRowContext(ctx, conversationSelect+` WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, conversationID, userID))
 	if errors.Is(err, sql.ErrNoRows) {
 		err = conversation.ErrNotFound
 	}
 	return item, err
+}
+func (s *Store) DeleteConversation(ctx context.Context, userID, conversationID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE conversations SET status='deleted',updated_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, now, conversationID, userID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return conversation.ErrNotFound
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE generation_jobs SET status='cancelled',error_code='conversation_deleted',error_message='conversation was deleted',worker_id=NULL,lease_expires_at=NULL,completed_at=? WHERE conversation_id=UUID_TO_BIN(?) AND status IN ('accepted','running','cancel_requested')`, now, conversationID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) AcceptMessage(ctx context.Context, userID, conversationID string, message conversation.Message, job conversation.Job) (conversation.Message, conversation.Job, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -45,7 +64,7 @@ func (s *Store) AcceptMessage(ctx context.Context, userID, conversationID string
 	}
 	defer tx.Rollback()
 	var sequence uint64
-	if err = tx.QueryRowContext(ctx, `SELECT next_sequence FROM conversations WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) FOR UPDATE`, conversationID, userID).Scan(&sequence); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT next_sequence FROM conversations WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active' FOR UPDATE`, conversationID, userID).Scan(&sequence); errors.Is(err, sql.ErrNoRows) {
 		return message, job, conversation.ErrNotFound
 	} else if err != nil {
 		return message, job, err
@@ -69,14 +88,6 @@ func (s *Store) AcceptMessage(ctx context.Context, userID, conversationID string
 	}
 	chatPayload, _ := json.Marshal(map[string]string{"job_id": job.ID, "user_id": userID, "conversation_id": conversationID})
 	if _, err = tx.ExecContext(ctx, `INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at) VALUES (UUID_TO_BIN(?),'conversation',UUID_TO_BIN(?),'chat.command.v1',1,?,?)`, chatEventID, conversationID, chatPayload, message.CreatedAt); err != nil {
-		return message, job, err
-	}
-	memoryEventID, err := id.New()
-	if err != nil {
-		return message, job, err
-	}
-	memoryPayload, _ := json.Marshal(map[string]string{"message_id": message.ID, "user_id": userID, "conversation_id": conversationID})
-	if _, err = tx.ExecContext(ctx, `INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at) VALUES (UUID_TO_BIN(?),'user',UUID_TO_BIN(?),'memory.extract.v1',1,?,?)`, memoryEventID, userID, memoryPayload, message.CreatedAt); err != nil {
 		return message, job, err
 	}
 	return message, job, tx.Commit()
@@ -383,7 +394,7 @@ func (s *Store) RecoverInterrupted(ctx context.Context, now time.Time) error {
 	return tx.Commit()
 }
 
-const conversationSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),BIN_TO_UUID(character_id),title,next_sequence,last_message_at,created_at,updated_at FROM conversations`
+const conversationSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),BIN_TO_UUID(character_id),title,status,next_sequence,last_message_at,created_at,updated_at FROM conversations`
 const messageSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(conversation_id),BIN_TO_UUID(user_id),role,sequence_no,bubble_no,content,status,COALESCE(BIN_TO_UUID(reply_to_id),''),created_at,completed_at FROM messages`
 const jobSelect = `SELECT BIN_TO_UUID(j.id),BIN_TO_UUID(j.conversation_id),BIN_TO_UUID(j.user_message_id),j.status,j.attempt,COALESCE(j.model_provider,''),COALESCE(j.model_name,''),j.deadline_at,COALESCE(j.error_code,''),COALESCE(j.error_message,''),j.created_at,j.started_at,j.completed_at FROM generation_jobs j`
 const conversationSummarySelect = `SELECT BIN_TO_UUID(s.id),BIN_TO_UUID(s.conversation_id),BIN_TO_UUID(s.user_id),s.version,s.start_sequence,s.end_sequence,s.range_started_at,s.range_ended_at,s.content,s.token_count,s.summarizer_version,s.created_at FROM conversation_summaries s`
@@ -391,7 +402,7 @@ const conversationSummarySelect = `SELECT BIN_TO_UUID(s.id),BIN_TO_UUID(s.conver
 func scanConversation(row rowScanner) (conversation.Conversation, error) {
 	var item conversation.Conversation
 	var last sql.NullTime
-	err := row.Scan(&item.ID, &item.UserID, &item.CharacterID, &item.Title, &item.NextSequence, &last, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.UserID, &item.CharacterID, &item.Title, &item.Status, &item.NextSequence, &last, &item.CreatedAt, &item.UpdatedAt)
 	if last.Valid {
 		item.LastMessageAt = &last.Time
 	}

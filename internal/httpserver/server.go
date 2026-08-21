@@ -8,9 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/agent"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/buildinfo"
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/chattool"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
@@ -62,6 +64,14 @@ type Server struct {
 	presenceTTL         time.Duration
 	chatRateLimit       int
 	chatRateWindow      time.Duration
+	agentRuns           *agent.Service
+	agentGateway        *agent.ToolGateway
+	agentToolExecutor   conversation.ModelToolExecutor
+	agentGatewayToken   string
+	agentConfirmSecret  string
+	agentConfirmTTL     time.Duration
+	agentRunTimeout     time.Duration
+	agentChatModules    map[string]bool
 }
 
 func New(cfg config.Config, logger *slog.Logger) *Server {
@@ -118,7 +128,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	if err := skill.RegisterBuiltins(skillRegistry); err != nil {
 		panic(err)
 	}
-	if err := skill.RegisterOfficeSkills(skillRegistry, skill.PythonOfficeWorker{Executable: cfg.PythonExecutable, ModulePath: cfg.PythonWorkerPath, Timeout: 30 * time.Second}); err != nil {
+	if err := skill.RegisterOfficeSkills(skillRegistry, skill.PythonOfficeWorker{Executable: cfg.PythonExecutable, ModulePath: cfg.PythonWorkerPath, Timeout: 5 * time.Minute}); err != nil {
 		panic(err)
 	}
 	skillService := skill.NewService(skillStore, skillFiles, skillRegistry)
@@ -129,15 +139,18 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	}
 	reliabilityController := reliability.NewController(reliability.Config{})
 	conversationService := conversation.NewService(conversationStore, characterService, provider)
+	conversationService.SetTimeout(6 * time.Minute)
 	conversationService.SetPolicySource(reliabilityController)
 	conversationService.SetMemoryContext(memoryService)
 	conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
+	chatTools := chattool.New(ledgerService, plannerService, documentService, skillService, memoryService)
+	conversationService.SetToolExecutor(chatTools)
 	if durable, ok := conversationStore.(interface{ DurableChatDispatch() bool }); ok && cfg.KafkaEnabled && durable.DurableChatDispatch() {
 		conversationService.SetAsyncDispatch(true)
 	}
 	presenceTTL := cfg.PresenceTTL
 	if presenceTTL == 0 {
-		presenceTTL = 90 * time.Second
+		presenceTTL = 24 * time.Hour
 	}
 	rateLimit := cfg.ChatRateLimit
 	if rateLimit == 0 {
@@ -155,6 +168,14 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	if operatorStore, ok := identityStore.(opsauth.Store); ok {
 		operatorAuth = opsauth.NewService(operatorStore)
 	}
+	agentGatewayToken := cfg.AgentGatewayToken
+	if agentGatewayToken == "" {
+		agentGatewayToken = "development-agent-gateway-token"
+	}
+	agentConfirmSecret := cfg.AgentConfirmationSecret
+	if agentConfirmSecret == "" {
+		agentConfirmSecret = "development-agent-confirmation-secret"
+	}
 	server := &Server{
 		identity:      identity.NewService(identityStore, secret, accessTTL, refreshTTL),
 		identityAdmin: identityAdmin,
@@ -165,6 +186,13 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 		environment: cfg.Environment, webOrigin: cfg.WebOrigin, kafkaEnabled: cfg.KafkaEnabled, modelProvider: cfg.ModelProvider,
 		operatorToken: cfg.OperatorToken, operatorMFARequired: cfg.OperatorMFARequired, operatorAuth: operatorAuth,
 		realtime: gateway, presenceTTL: presenceTTL, chatRateLimit: rateLimit, chatRateWindow: rateWindow,
+		agentToolExecutor: chatTools, agentGatewayToken: agentGatewayToken,
+		agentConfirmSecret: agentConfirmSecret, agentConfirmTTL: cfg.AgentConfirmationTTL,
+		agentRunTimeout:  cfg.AgentRunTimeout,
+		agentChatModules: map[string]bool{},
+	}
+	for _, module := range cfg.AgentChatModules {
+		server.agentChatModules[module] = true
 	}
 	if operations, ok := skillStore.(eventbus.OperationsStore); ok {
 		server.operations = operations
@@ -174,6 +202,11 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.HandleFunc("GET /readyz", server.readiness)
 	mux.HandleFunc("GET /v1/meta", server.meta(cfg))
 	mux.HandleFunc("GET /metrics", server.prometheusMetrics)
+	mux.Handle("GET /internal/v1/agent/runs/{run_id}/tools", server.requireAgentService(http.HandlerFunc(server.listAgentTools)))
+	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tools/prepare", server.requireAgentService(http.HandlerFunc(server.prepareAgentTool)))
+	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tools/commit", server.requireAgentService(http.HandlerFunc(server.commitAgentTool)))
+	mux.Handle("GET /internal/v1/agent/runs/{run_id}/tasks/{task_id}", server.requireAgentService(http.HandlerFunc(server.observeAgentTask)))
+	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tasks/{task_id}/retry", server.requireAgentService(http.HandlerFunc(server.retryAgentTask)))
 	mux.HandleFunc("POST /v1/auth/register", server.register)
 	mux.HandleFunc("POST /v1/auth/login", server.login)
 	mux.HandleFunc("POST /v1/auth/refresh", server.refresh)
@@ -190,9 +223,14 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("GET /v1/characters/{character_id}/persona-versions", server.requireAuth(http.HandlerFunc(server.listPersonaVersions)))
 	mux.Handle("GET /v1/conversations", server.requireAuth(http.HandlerFunc(server.listConversations)))
 	mux.Handle("POST /v1/conversations", server.requireAuth(http.HandlerFunc(server.createConversation)))
+	mux.Handle("DELETE /v1/conversations/{conversation_id}", server.requireAuth(http.HandlerFunc(server.deleteConversation)))
 	mux.Handle("GET /v1/conversations/{conversation_id}/messages", server.requireAuth(http.HandlerFunc(server.listMessages)))
 	mux.Handle("POST /v1/conversations/{conversation_id}/messages", server.requireAuth(http.HandlerFunc(server.sendMessage)))
 	mux.Handle("GET /v1/generation-jobs/{job_id}", server.requireAuth(http.HandlerFunc(server.getGenerationJob)))
+	mux.Handle("GET /v1/agent-runs/{run_id}", server.requireAuth(http.HandlerFunc(server.getAgentRun)))
+	mux.Handle("POST /v1/agent-runs/{run_id}/resolve", server.requireAuth(http.HandlerFunc(server.resolveAgentRun)))
+	mux.Handle("POST /v1/agent-runs/{run_id}/retry", server.requireAuth(http.HandlerFunc(server.retryAgentRun)))
+	mux.Handle("POST /v1/agent-runs/{run_id}/cancel", server.requireAuth(http.HandlerFunc(server.cancelAgentRun)))
 	mux.Handle("GET /v1/generation-jobs/{job_id}/events", server.requireAuth(http.HandlerFunc(server.streamGenerationEvents)))
 	mux.Handle("POST /v1/generation-jobs/{job_id}/cancel", server.requireAuth(http.HandlerFunc(server.cancelGeneration)))
 	mux.Handle("POST /v1/generation-jobs/{job_id}/retry", server.requireAuth(http.HandlerFunc(server.retryGeneration)))
@@ -220,10 +258,15 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("GET /v1/ledger/exports/{export_id}/file", server.requireAuth(http.HandlerFunc(server.downloadLedgerExport)))
 	mux.Handle("GET /v1/plans", server.requireAuth(http.HandlerFunc(server.listPlans)))
 	mux.Handle("POST /v1/plans", server.requireAuth(http.HandlerFunc(server.createPlan)))
+	mux.Handle("GET /v1/plans/today", server.requireAuth(http.HandlerFunc(server.getTodayPlan)))
+	mux.Handle("POST /v1/plans/today/items", server.requireAuth(http.HandlerFunc(server.addTodayPlanItem)))
+	mux.Handle("POST /v1/plans/today/items/{item_id}/complete", server.requireAuth(http.HandlerFunc(server.completeTodayPlanItem)))
+	mux.Handle("POST /v1/plans/today/items/{item_id}/schedule", server.requireAuth(http.HandlerFunc(server.scheduleTodayPlanItem)))
 	mux.Handle("POST /v1/reminders/candidates", server.requireAuth(http.HandlerFunc(server.createReminderCandidate)))
 	mux.Handle("POST /v1/reminders/{reminder_id}/confirm", server.requireAuth(http.HandlerFunc(server.confirmReminder)))
 	mux.Handle("GET /v1/reminders", server.requireAuth(http.HandlerFunc(server.listReminders)))
 	mux.Handle("POST /v1/reminders/{reminder_id}/complete", server.requireAuth(http.HandlerFunc(server.completeReminder)))
+	mux.Handle("POST /v1/reminders/{reminder_id}/reschedule", server.requireAuth(http.HandlerFunc(server.rescheduleReminder)))
 	mux.Handle("POST /v1/reminders/{reminder_id}/system-sync", server.requireAuth(http.HandlerFunc(server.reportReminderSync)))
 	mux.Handle("GET /v1/skills", server.requireAuth(http.HandlerFunc(server.listSkills)))
 	mux.Handle("PUT /v1/skills/{skill_name}/settings", server.requireAuth(http.HandlerFunc(server.updateSkillSettings)))
@@ -325,6 +368,15 @@ func (s *Server) SetSafetyStore(store safety.Store) {
 
 func (s *Server) SetIdentityAdminStore(store identity.AdminStore) {
 	s.identityAdmin = identity.NewAdminService(store)
+}
+
+func (s *Server) SetAgentStore(store agent.Store) {
+	s.agentRuns = agent.NewService(store)
+	s.agentRuns.SetRunTimeout(s.agentRunTimeout)
+	s.agentGateway = agent.NewToolGateway(
+		s.agentRuns, s.agentToolExecutor, s.ledger, s.planner, s.skills,
+		s.agentConfirmSecret, s.agentConfirmTTL,
+	)
 }
 
 func (s *Server) ObserveReliability(sample reliability.Sample, now time.Time) reliability.Snapshot {

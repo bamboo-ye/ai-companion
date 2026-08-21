@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-expansion-10-execution.v1.schema.json",
+  "title": "Direct traffic production 5%-to-10% execution v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "namespace_sha256", "rollout_request", "rollout_attestation", "adapter_certification", "adapter_certification_sha256", "shadow_attestation", "shadow_attestation_sha256", "shadow_gate_report_sha256", "expansion_gate_attestation", "expansion_gate_attestation_sha256", "recovery_receipt", "recovery_receipt_sha256", "expected_state", "rollout_report_sha256", "request_sha256"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-expansion-10-execution-v1"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "rollout_request": {
+      "type": "object",
+      "required": ["decision", "expected_traffic_percent", "target_traffic_percent", "expected_revision"],
+      "properties": {
+        "decision": {"const": "expand"},
+        "expected_traffic_percent": {"const": 5},
+        "target_traffic_percent": {"const": 10},
+        "expected_revision": {"const": 3}
+      }
+    },
+    "rollout_attestation": {"$ref": "direct-rollout-attestation.v1.schema.json"},
+    "adapter_certification": {"$ref": "direct-traffic-adapter-certification.v1.schema.json"},
+    "adapter_certification_sha256": {"$ref": "#/$defs/digest"},
+    "shadow_attestation": {"$ref": "direct-traffic-shadow-attestation.v1.schema.json"},
+    "shadow_attestation_sha256": {"$ref": "#/$defs/digest"},
+    "shadow_gate_report_sha256": {"$ref": "#/$defs/digest"},
+    "expansion_gate_attestation": {"$ref": "direct-traffic-production-expansion-10-gate-attestation.v1.schema.json"},
+    "expansion_gate_attestation_sha256": {"$ref": "#/$defs/digest"},
+    "recovery_receipt": {"$ref": "direct-traffic-production-recovery-receipt.v1.schema.json"},
+    "recovery_receipt_sha256": {"$ref": "#/$defs/digest"},
+    "expected_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "operations", "history_chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"const": 5},
+        "revision": {"const": 3},
+        "operations": {"const": 3},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "rollout_report_sha256": {"$ref": "#/$defs/digest"},
+    "request_sha256": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

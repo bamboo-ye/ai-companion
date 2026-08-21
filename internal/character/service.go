@@ -18,6 +18,7 @@ var (
 type Character struct {
 	ID             string    `json:"id"`
 	UserID         string    `json:"-"`
+	Module         string    `json:"module"`
 	Name           string    `json:"name"`
 	AvatarURL      string    `json:"avatar_url,omitempty"`
 	Relationship   string    `json:"relationship"`
@@ -44,6 +45,7 @@ type PersonaVersion struct {
 }
 
 type Input struct {
+	Module       string   `json:"module"`
 	Name         string   `json:"name"`
 	AvatarURL    string   `json:"avatar_url"`
 	Relationship string   `json:"relationship"`
@@ -74,6 +76,7 @@ type Service struct {
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
 
 func (s *Service) Create(ctx context.Context, userID string, input Input) (Character, PersonaVersion, error) {
+	input = applyCreateDefaults(input)
 	if err := validate(input); err != nil {
 		return Character{}, PersonaVersion{}, err
 	}
@@ -90,6 +93,36 @@ func (s *Service) Create(ctx context.Context, userID string, input Input) (Chara
 	return character, persona, nil
 }
 
+type createDefaults struct {
+	Name         string
+	Relationship string
+	Personality  string
+	SpeechStyle  string
+}
+
+func applyCreateDefaults(input Input) Input {
+	input.Module = defaultString(input.Module, "companion")
+	defaults := defaultsForModule(input.Module)
+	input.Name = defaultString(input.Name, defaults.Name)
+	input.Relationship = defaultString(input.Relationship, defaults.Relationship)
+	input.Personality = defaultString(input.Personality, defaults.Personality)
+	input.SpeechStyle = defaultString(input.SpeechStyle, defaults.SpeechStyle)
+	input.Initiative = defaultString(input.Initiative, "balanced")
+	input.ReplyLength = defaultString(input.ReplyLength, "short")
+	return input
+}
+
+func defaultsForModule(module string) createDefaults {
+	switch module {
+	case "life":
+		return createDefaults{Name: "小满", Relationship: "生活管家", Personality: "细心、可靠，善于把日常安排得井井有条", SpeechStyle: "自然简洁，给出清晰且容易执行的建议"}
+	case "work":
+		return createDefaults{Name: "阿策", Relationship: "工作搭档", Personality: "清晰、高效，重视目标与行动", SpeechStyle: "先给结论，再给下一步建议"}
+	default:
+		return createDefaults{Name: "小棉", Relationship: "温柔朋友", Personality: "温柔、耐心，善于倾听且不说教", SpeechStyle: "使用自然短句，先理解感受再回应"}
+	}
+}
+
 func (s *Service) List(ctx context.Context, userID string) ([]Character, error) {
 	return s.store.List(ctx, userID)
 }
@@ -99,11 +132,14 @@ func (s *Service) Get(ctx context.Context, userID, characterID string) (Characte
 }
 
 func (s *Service) Update(ctx context.Context, userID, characterID string, input Input) (Character, PersonaVersion, error) {
-	if err := validate(input); err != nil {
-		return Character{}, PersonaVersion{}, err
-	}
 	current, err := s.store.Get(ctx, userID, characterID)
 	if err != nil {
+		return Character{}, PersonaVersion{}, err
+	}
+	if strings.TrimSpace(input.Module) == "" {
+		input.Module = current.Module
+	}
+	if err := validate(input); err != nil {
 		return Character{}, PersonaVersion{}, err
 	}
 	updated := fromInput(current.ID, current.UserID, current.PersonaVersion+1, current.CreatedAt, s.now().UTC(), input)
@@ -129,6 +165,9 @@ func validate(input Input) error {
 	if len([]rune(input.Personality)) > 1000 || len([]rune(input.SpeechStyle)) > 500 || len([]rune(input.RawPrompt)) > 4000 {
 		return fmt.Errorf("%w: persona text is too long", ErrValidation)
 	}
+	if !oneOf(defaultString(input.Module, "companion"), "companion", "life", "work") {
+		return fmt.Errorf("%w: invalid module", ErrValidation)
+	}
 	if !oneOf(defaultString(input.Initiative, "balanced"), "low", "balanced", "high") {
 		return fmt.Errorf("%w: invalid initiative", ErrValidation)
 	}
@@ -142,12 +181,12 @@ func validate(input Input) error {
 }
 
 func fromInput(characterID, userID string, version int, createdAt, updatedAt time.Time, input Input) Character {
-	return Character{ID: characterID, UserID: userID, Name: strings.TrimSpace(input.Name), AvatarURL: strings.TrimSpace(input.AvatarURL), Relationship: defaultString(input.Relationship, "AI 伙伴"), Personality: strings.TrimSpace(input.Personality), SpeechStyle: strings.TrimSpace(input.SpeechStyle), Hobbies: cleanList(input.Hobbies), Boundaries: cleanList(input.Boundaries), Initiative: defaultString(input.Initiative, "balanced"), ReplyLength: defaultString(input.ReplyLength, "short"), StickerStyle: strings.TrimSpace(input.StickerStyle), RawPrompt: strings.TrimSpace(input.RawPrompt), PersonaVersion: version, Status: "active", CreatedAt: createdAt, UpdatedAt: updatedAt}
+	return Character{ID: characterID, UserID: userID, Module: defaultString(input.Module, "companion"), Name: strings.TrimSpace(input.Name), AvatarURL: strings.TrimSpace(input.AvatarURL), Relationship: defaultString(input.Relationship, "AI 伙伴"), Personality: strings.TrimSpace(input.Personality), SpeechStyle: strings.TrimSpace(input.SpeechStyle), Hobbies: cleanList(input.Hobbies), Boundaries: cleanList(input.Boundaries), Initiative: defaultString(input.Initiative, "balanced"), ReplyLength: defaultString(input.ReplyLength, "short"), StickerStyle: strings.TrimSpace(input.StickerStyle), RawPrompt: strings.TrimSpace(input.RawPrompt), PersonaVersion: version, Status: "active", CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
 func compile(character Character, now time.Time) PersonaVersion {
 	compiled := map[string]any{
-		"identity":           map[string]any{"name": character.Name, "relationship": character.Relationship},
+		"identity":           map[string]any{"name": character.Name, "relationship": character.Relationship, "module": character.Module},
 		"voice":              map[string]any{"personality": character.Personality, "speech_style": character.SpeechStyle, "reply_length": character.ReplyLength, "initiative": character.Initiative},
 		"interests":          character.Hobbies,
 		"user_boundaries":    character.Boundaries,

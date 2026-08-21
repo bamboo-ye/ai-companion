@@ -80,7 +80,7 @@ Implemented:
 Implemented:
 
 - Chat generation is accepted transactionally with `chat.command.v1`, claimed by exact job ID, protected by a durable lease/reconciler boundary, and recoverable after Worker loss. Queued cancellation terminates immediately; running cancellation cannot be overwritten by a late completion.
-- Automatic memory extraction uses `memory.extract.v1`; the event contains identifiers only and the Worker reloads the authorized message from MySQL instead of copying private chat text into Kafka.
+- Superseded on 2026-07-18: automatic pattern-based memory extraction no longer emits `memory.extract.v1`. Explicit long-term memory is selected by native model tool calling inside `chat.command.v1`, validated server-side, and written with source identifiers; the legacy topic is drained for compatibility only.
 - Ledger XLSX export is now a `202 Accepted` job API with idempotency key, polling, durable artifact storage, `ledger.export.v1`, lease recovery, and a separate download endpoint.
 - Due in-app notification deliveries are transactionally scheduled to `notification.deliver.v1` and delivered idempotently by a dedicated consumer group. System-reminder synchronization remains a native client responsibility.
 - Document deletion records a cleanup job and `document.cleanup.v1` before asynchronously removing Qdrant points and the stored blob; retry state survives Worker restarts.
@@ -117,7 +117,7 @@ Implemented:
 
 - Chat generation now reads the live reliability policy instead of only exposing it. L3 `accept_only` persists the user message and accepted generation job but does not start model execution.
 - Worker chat consumers also honor L3 `accept_only`: Kafka commands can be acknowledged while the durable job remains accepted for later reconciler takeover after recovery.
-- Automatic memory extraction is skipped when policy disables it, both for inline chat and Worker-side `memory.extract.v1` processing.
+- Model-selected explicit memory writes honor the live policy inside chat processing. The Worker acknowledges legacy `memory.extract.v1` events without creating new memory so historical queues can drain safely.
 - Chat context construction skips long-term recall when policy disables full RAG/context enrichment and emits a traceable `rag_skipped` generation event.
 - Document Q&A applies the same full-RAG policy and returns a degraded, evidence-insufficient response without hitting the vector index during L1-L3 protection.
 - Model providers are wrapped with a configurable dependency circuit breaker. When the model circuit is open, claimed jobs are deferred back to `accepted` with a later `available_at` instead of being marked failed.

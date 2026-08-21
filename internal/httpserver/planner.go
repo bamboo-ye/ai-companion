@@ -33,6 +33,86 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
+func (s *Server) getTodayPlan(w http.ResponseWriter, r *http.Request) {
+	auth := currentAuth(r)
+	timezone := r.URL.Query().Get("timezone")
+	if timezone == "" {
+		timezone = auth.User.Timezone
+	}
+	localDate := r.URL.Query().Get("date")
+	if localDate == "" {
+		location, err := time.LoadLocation(timezone)
+		if err != nil {
+			writePlannerError(w, planner.ErrValidation)
+			return
+		}
+		localDate = time.Now().In(location).Format("2006-01-02")
+	}
+	item, err := s.planner.Today(r.Context(), auth.User.ID, localDate, timezone)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+func (s *Server) addTodayPlanItem(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title     string `json:"title"`
+		LocalDate string `json:"local_date"`
+		Timezone  string `json:"timezone"`
+		Source    string `json:"source"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	auth := currentAuth(r)
+	if input.Timezone == "" {
+		input.Timezone = auth.User.Timezone
+	}
+	if input.LocalDate == "" {
+		location, err := time.LoadLocation(input.Timezone)
+		if err != nil {
+			writePlannerError(w, planner.ErrValidation)
+			return
+		}
+		input.LocalDate = time.Now().In(location).Format("2006-01-02")
+	}
+	if input.Source == "" {
+		input.Source = "web"
+	}
+	item, err := s.planner.AddTodayItem(r.Context(), auth.User.ID, input.LocalDate, input.Timezone, input.Title, input.Source)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, item)
+}
+func (s *Server) completeTodayPlanItem(w http.ResponseWriter, r *http.Request) {
+	if err := s.planner.CompletePlanItem(r.Context(), currentAuth(r).User.ID, r.PathValue("item_id")); err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) scheduleTodayPlanItem(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		StartsAt          time.Time  `json:"starts_at"`
+		ExpectedUpdatedAt *time.Time `json:"expected_updated_at"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.StartsAt.IsZero() {
+		writePlannerError(w, planner.ErrValidation)
+		return
+	}
+	item, err := s.planner.SchedulePlanItem(r.Context(), currentAuth(r).User.ID, r.PathValue("item_id"), input.StartsAt, input.ExpectedUpdatedAt)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
 func (s *Server) createReminderCandidate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Text     string `json:"text"`
@@ -97,6 +177,25 @@ func (s *Server) completeReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+func (s *Server) rescheduleReminder(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		LocalDue          string     `json:"local_due"`
+		Timezone          string     `json:"timezone"`
+		ExpectedUpdatedAt *time.Time `json:"expected_updated_at"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Timezone == "" {
+		input.Timezone = currentAuth(r).User.Timezone
+	}
+	item, err := s.planner.RescheduleReminder(r.Context(), currentAuth(r).User.ID, r.PathValue("reminder_id"), input.LocalDue, input.Timezone, input.ExpectedUpdatedAt)
+	if err != nil {
+		writePlannerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
 func (s *Server) reportReminderSync(w http.ResponseWriter, r *http.Request) {
 	var input planner.SyncResult
 	if !decodeJSON(w, r, &input) {
@@ -115,11 +214,17 @@ func writePlannerError(w http.ResponseWriter, err error) {
 	case errors.Is(err, planner.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, apiError{Code: "not_found", Message: "计划或提醒不存在"})
 	case errors.Is(err, planner.ErrConfirmation):
-		writeJSON(w, http.StatusConflict, apiError{Code: "clarification_required", Message: "请先确认提醒的绝对日期和时间"})
+		writeJSON(w, http.StatusConflict, apiError{Code: "clarification_required", Message: "请先确认提醒日期；具体时间可以不填写"})
 	case errors.Is(err, planner.ErrIdempotencyKey):
 		writeJSON(w, http.StatusBadRequest, apiError{Code: "idempotency_key_required", Message: "确认提醒必须提供 Idempotency-Key"})
 	case errors.Is(err, planner.ErrIdempotencyReuse):
 		writeJSON(w, http.StatusConflict, apiError{Code: "idempotency_key_reused", Message: "该 Idempotency-Key 已用于其他提醒"})
+	case errors.Is(err, planner.ErrStaleUpdate):
+		writeJSON(w, http.StatusConflict, apiError{Code: "stale_update", Message: "事项已发生变化，请重新发送调整指令后确认"})
+	case errors.Is(err, planner.ErrDayPeriodRequired):
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "day_period_required", Message: "无法唯一判断时间，请说明上午还是下午"})
+	case errors.Is(err, planner.ErrPastSchedule):
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "past_schedule", Message: "该时间已经过去，请选择未来时间"})
 	case errors.Is(err, planner.ErrValidation):
 		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "validation_error", Message: err.Error()})
 	default:

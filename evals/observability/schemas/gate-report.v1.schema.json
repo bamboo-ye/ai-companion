@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-release-gate-report.v1.schema.json",
+  "title": "Observability release gate report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "decision",
+    "source",
+    "canary",
+    "phases",
+    "violations"
+  ],
+  "properties": {
+    "schema_version": {"const": "observability-release-gate-report-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "decision": {"enum": ["promote", "rollback"]},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canary_spec_sha256", "command_sha256"],
+      "properties": {
+        "canary_spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "command_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "before_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "baseline_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "canary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "exit_code", "duration_ms"],
+      "properties": {
+        "name": {"type": "string"},
+        "status": {"enum": ["not_run", "passed", "failed", "timed_out"]},
+        "exit_code": {"type": ["integer", "null"]},
+        "duration_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "before_snapshot",
+        "canary",
+        "stabilization",
+        "after_snapshot",
+        "evaluation"
+      ],
+      "properties": {
+        "before_snapshot": {"enum": ["pending", "passed", "failed"]},
+        "canary": {"enum": ["pending", "passed", "failed", "timed_out"]},
+        "stabilization": {"enum": ["pending", "passed", "failed"]},
+        "after_snapshot": {"enum": ["pending", "passed", "failed"]},
+        "evaluation": {"enum": ["pending", "passed", "failed"]}
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "path", "expected", "actual"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "severity": {"const": "hard"},
+          "path": {"type": "string", "pattern": "^/"},
+          "expected": {"type": "string"},
+          "actual": {}
+        }
+      }
+    }
+  }
+}

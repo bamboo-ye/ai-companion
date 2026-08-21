@@ -139,6 +139,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .chatAction { margin-top: 10px; border: 0; border-radius: 999px; padding: 7px 12px; color: white; background: #e9638a; cursor: pointer; font-weight: 750; }
 .chatPanel { margin-top: 24px; overflow: hidden; border: 1px solid rgba(239,112,149,.18); border-radius: 24px; background: #fffafb; }
 .chatPanel > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid rgba(119,95,105,.12); background: white; }
+.chatIdentity { display: flex; align-items: center; gap: 12px; }
 .chatPanel header h3, .chatPanel header small { margin: 0; }
 .chatPanel header small { color: var(--muted); }
 .messageList { min-height: 360px; max-height: 540px; overflow-y: auto; padding: 22px; }
@@ -147,13 +148,21 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .messageBubble.assistant { border-bottom-left-radius: 6px; }
 .messageBubble small { color: var(--muted); font-size: .72rem; }
 .messageBubble p { margin: 5px 0 0; line-height: 1.65; white-space: pre-wrap; }
-.typingState { color: #a05c70; font-size: .9rem; }
+.messageFiles { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.messageFiles span, .messageFiles button { border: 0; border-radius: 10px; padding: 7px 10px; color: #52678f; background: #edf2ff; font-size: .8rem; }
+.messageFiles button { cursor: pointer; font-weight: 750; }
 .composer { padding: 16px; border-top: 1px solid rgba(119,95,105,.12); background: white; }
+.pendingFiles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.pendingFiles > span { display: inline-flex; align-items: center; gap: 7px; border-radius: 10px; padding: 7px 9px; color: #52678f; background: #edf2ff; font-size: .8rem; }
+.pendingFiles button { padding: 0; color: #7b6d8d; background: transparent !important; font-size: 1rem; }
 .composer textarea { width: 100%; min-height: 76px; resize: vertical; border: 1px solid rgba(119,95,105,.2); border-radius: 15px; padding: 12px; }
 .composer > div { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.composer > .pendingFiles { justify-content: flex-start; margin: 0 0 10px; }
 .composer button { border: 0; border-radius: 999px; padding: 9px 16px; color: white; background: #e9638a; cursor: pointer; }
 .composer button[type="button"] { color: #9a596b; background: #ffe5ec; }
 .composer button:disabled { opacity: .5; cursor: not-allowed; }
+.filePicker { display: inline-flex; align-items: center; border-radius: 999px; padding: 9px 14px; color: #52678f; background: #edf2ff; cursor: pointer; font-weight: 750; }
+.filePicker input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .memoryPanel { margin-top: 24px; padding: 22px; border-radius: 24px; background: #fffafb; border: 1px solid rgba(239,112,149,.18); }
 .memoryPanel > header { display: flex; align-items: center; justify-content: space-between; }
 .memoryPanel header h3, .memoryPanel header small { margin: 0; }
@@ -198,10 +207,19 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .emptyState, .formMessage { color: var(--muted); }
 .formMessage { margin: 18px 0 0; padding: 12px 14px; border-radius: 14px; background: #fff4d5; }
 .lifePanel { margin-top: 24px; padding: 22px; border: 1px solid rgba(232,158,51,.24); border-radius: 24px; background: #fffdf7; }
+.lifePanel.embedded { margin: 0 0 24px; }
 .lifePanel > header, .sectionTitle { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .lifePanel h3, .lifePanel h4, .lifePanel header small, .sectionTitle small { margin: 0; }
 .lifePanel header small, .sectionTitle small { color: var(--muted); }
 .lifeNotice { padding: 10px 13px; border-radius: 12px; color: #7a5b22; background: #fff0c8; }
+.lifeModuleNav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.lifeModuleNav > button { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 10px; padding: 13px; border: 1px solid rgba(157,111,36,.13); border-radius: 17px; color: #755323; background: rgba(255,255,255,.78); cursor: pointer; text-align: left; }
+.lifeModuleNav > button > span { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 14px; color: #986515; background: #ffedbd; font-weight: 900; font-size: 1.08rem; }
+.lifeModuleNav > button > div { display: grid; gap: 3px; min-width: 0; }
+.lifeModuleNav > button strong, .lifeModuleNav > button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lifeModuleNav > button small { color: var(--muted); }
+.lifeModuleNav > button.active { border-color: #dc9d32; background: #fff5d9; box-shadow: 0 8px 22px rgba(168,112,25,.11); }
+.lifeModuleContent { margin-top: 16px; }
 .lifeGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
 .lifeSection { padding: 18px; border-radius: 20px; background: white; box-shadow: 0 7px 24px rgba(120,88,35,.06); }
 .lifeSection h4 { margin-bottom: 14px; color: #9a681d; font-size: 1.1rem; }
@@ -219,6 +237,13 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .compactList span { display: grid; gap: 3px; }
 .compactList b { white-space: nowrap; color: #b34c66; }
 .compactList b.income { color: #378160; }
+.todayPlanList > div.completed { opacity: .62; }
+.todayPlanList > div.completed strong { text-decoration: line-through; }
+.todayPlanList > div.overdue { margin: 0 -10px; padding: 10px; border-radius: 12px; background: rgba(255, 229, 221, .62); }
+.todayPlanList > div.overdue small { color: #b24f43; }
+.todayPlanList b { padding: 4px 8px; border-radius: 999px; color: #8a631f; background: #fff3d2; font-size: .76rem; }
+.completedReminderList { margin-top: 14px; color: var(--muted); }
+.completedReminderList summary { cursor: pointer; font-size: .88rem; }
 .ledgerSection { grid-column: 1 / -1; }
 .summaryStrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
 .summaryStrip span { display: grid; gap: 3px; padding: 10px; border-radius: 12px; color: var(--muted); background: #fff8e8; font-size: .78rem; }
@@ -272,6 +297,11 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .stepLine span.failed { color: #a94360; background: #ffe5ec; }
 .runActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .runActions button:nth-child(2) { color: #855c68; background: #ffe5ec; }
+.taskHistoryPanel .runBoard { padding: 0; background: transparent; }
+.taskFilters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 18px; }
+.taskFilters button { border: 0; border-radius: 999px; padding: 8px 12px; color: #52678f; background: white; cursor: pointer; }
+.taskFilters button.active { color: white; background: #577bd4; }
+.taskFilters span { margin-left: auto; color: var(--muted); font-size: .82rem; }
 
 @media (max-width: 760px) {
   .shell { padding: 36px 0; }
@@ -295,3 +325,276 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
 }
+
+/* Authenticated application shell */
+.authShell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 188, 207, .55), transparent 30rem),
+    radial-gradient(circle at 86% 88%, rgba(176, 204, 255, .52), transparent 32rem),
+    #fffaf5;
+}
+
+.authCard {
+  width: min(460px, 100%);
+  padding: 34px;
+  border: 1px solid rgba(119, 95, 105, .12);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 28px 90px rgba(92, 68, 73, .14);
+  backdrop-filter: blur(20px);
+}
+
+.authBrand, .sidebarBrand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandLogo {
+  display: block;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 15px;
+  box-shadow: 0 10px 28px rgba(210, 80, 120, .22);
+  object-fit: cover;
+}
+
+.authBrand div, .sidebarBrand div { display: grid; gap: 2px; }
+.authBrand strong, .sidebarBrand strong { font-size: 1.1rem; }
+.authBrand small, .sidebarBrand small { color: var(--muted); }
+.authIntro { margin: 38px 0 24px; }
+.authIntro h1 { margin: 0; font-size: 2.15rem; }
+.authIntro > p:last-child { margin: 10px 0 0; color: var(--muted); line-height: 1.65; }
+
+.authForm { display: grid; gap: 16px; }
+.authForm label, .characterForm label { display: grid; gap: 7px; color: #6d5955; font-weight: 750; font-size: .9rem; }
+.authForm input, .characterForm input, .characterForm textarea {
+  width: 100%;
+  border: 1px solid rgba(119, 95, 105, .2);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: var(--ink);
+  background: #fff;
+  outline: none;
+}
+.authForm input:focus, .characterForm input:focus, .characterForm textarea:focus { border-color: #e9638a; box-shadow: 0 0 0 3px rgba(233, 99, 138, .12); }
+.authForm > button, .characterForm > button, .dashboardEmpty button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 18px;
+  color: white;
+  background: linear-gradient(135deg, #e9638a, #776fc8);
+  cursor: pointer;
+  font-weight: 800;
+}
+.authForm > button:disabled, .characterForm > button:disabled { opacity: .58; cursor: wait; }
+.authMessage { margin: 16px 0 0; padding: 11px 13px; border-radius: 12px; color: #795d26; background: #fff3cc; font-size: .9rem; }
+.authSwitch { margin: 22px 0 0; text-align: center; color: var(--muted); }
+.authSwitch button { border: 0; padding: 4px 7px; color: #d6537a; background: transparent; cursor: pointer; font-weight: 800; }
+.sessionLoader { color: #856c68; font-weight: 750; }
+
+.appFrame {
+  --module-accent: #e9638a;
+  --module-soft: #fff0f4;
+  display: grid;
+  grid-template-columns: 268px minmax(0, 1fr);
+  min-height: 100vh;
+  background-color: #fbfaf9;
+  background-image: url("/images/companion-background.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;
+}
+.appFrame.module-life {
+  --module-accent: #d89026;
+  --module-soft: #fff5db;
+  background-image: url("/images/life-background.png");
+  background-position: center;
+  background-size: cover;
+}
+.appFrame.module-work {
+  --module-accent: #577bd4;
+  --module-soft: #edf2ff;
+  background-image: url("/images/work-background.png");
+  background-position: center;
+  background-size: cover;
+}
+
+.appSidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 20px;
+  border-right: 1px solid rgba(119, 95, 105, .11);
+  background: rgba(255, 255, 255, .78);
+  backdrop-filter: blur(16px);
+}
+.sidebarBrand { padding: 0 10px 26px; }
+.appSidebar nav { display: grid; gap: 8px; margin-top: 20px; }
+.appSidebar nav > button {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  border: 0;
+  border-radius: 16px;
+  padding: 11px 12px;
+  color: #6f5d59;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.appSidebar nav > button > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: var(--muted); background-color: #f5f1f1; font-weight: 900; }
+.appSidebar nav > button > div { display: grid; gap: 3px; }
+.appSidebar nav > button small { color: var(--muted); font-size: .72rem; }
+.appSidebar nav > button.active { color: var(--module-accent); background: var(--module-soft); }
+.appSidebar nav > button.active > span:not(.moduleNavLogo) { color: white; background: var(--module-accent); }
+.moduleNavLogo {
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+.moduleNavLogo-companion { background-image: url("/images/module-companion.png"); }
+.moduleNavLogo-life { background-image: url("/images/module-life.png"); }
+.moduleNavLogo-work { background-image: url("/images/module-work.png"); }
+.appSidebar nav > button > .moduleNavLogo {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  box-shadow: 0 5px 14px rgba(91, 70, 91, .14);
+}
+.appSidebar nav > button.active > .moduleNavLogo {
+  background-color: transparent;
+}
+.sidebarFooter { margin-top: auto; padding: 20px 10px 0; }
+.sidebarFooter button { width: 100%; border: 1px solid rgba(119, 95, 105, .15); border-radius: 12px; padding: 10px; color: var(--muted); background: transparent; cursor: pointer; }
+
+.appWorkspace { position: relative; width: min(1160px, 100%); min-width: 0; margin: 0 auto; padding: 44px clamp(24px, 5vw, 70px) 70px; }
+.module-companion .appWorkspace, .module-life .appWorkspace, .module-work .appWorkspace { background: rgba(255, 255, 255, .34); backdrop-filter: blur(1.5px); }
+.workspaceHeader { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.workspaceHeader h1 { margin: 0; color: #4e3c39; font-size: clamp(2rem, 4vw, 3.15rem); }
+.workspaceHeader > div > p:last-child { margin: 10px 0 0; color: var(--muted); }
+.workspaceHeader .eyebrow { color: var(--module-accent); }
+.primaryAction, .secondaryAction {
+  border: 0;
+  border-radius: 14px;
+  padding: 11px 16px;
+  cursor: pointer;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.primaryAction { color: white; background: var(--module-accent); box-shadow: 0 10px 28px color-mix(in srgb, var(--module-accent) 25%, transparent); }
+.secondaryAction { color: var(--module-accent); background: var(--module-soft); }
+
+.moduleTools { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.moduleTools > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 230px;
+  border: 1px solid rgba(119, 95, 105, .11);
+  border-radius: 16px;
+  padding: 11px 14px;
+  color: #5f4d49;
+  background: white;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 8px 28px rgba(92, 68, 73, .05);
+}
+.moduleTools > button > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; color: var(--module-accent); background: var(--module-soft); font-weight: 900; }
+.moduleTools > button > div { display: grid; gap: 2px; }
+.moduleTools small { color: var(--muted); }
+
+.createCharacterCard, .conversationSection {
+  border: 1px solid rgba(119, 95, 105, .11);
+  border-radius: 22px;
+  padding: 22px;
+  background: white;
+  box-shadow: 0 12px 40px rgba(92, 68, 73, .06);
+}
+.createCharacterCard { margin-bottom: 20px; border-color: color-mix(in srgb, var(--module-accent) 28%, transparent); }
+.sectionHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.sectionHeading h2 { margin: 2px 0 0; font-size: 1.35rem; }
+.sectionHeading small { color: var(--muted); }
+.characterForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.characterForm textarea { min-height: 88px; resize: vertical; }
+.characterForm > button { grid-column: 1 / -1; justify-self: end; min-width: 140px; background: var(--module-accent); }
+
+.dashboardEmpty { display: grid; justify-items: center; padding: 60px 20px 38px; text-align: center; }
+.dashboardEmpty > span { display: grid; place-items: center; width: 62px; height: 62px; border-radius: 20px; color: var(--module-accent); background: var(--module-soft); font-size: 1.8rem; }
+.dashboardEmpty h3 { margin: 18px 0 6px; }
+.dashboardEmpty p { margin: 0 0 18px; color: var(--muted); }
+.dashboardEmpty button { background: var(--module-accent); }
+
+.roleConversationList { display: grid; gap: 10px; margin-top: 18px; }
+.roleConversationList article {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(119, 95, 105, .09);
+  border-radius: 17px;
+  background: #fffdfc;
+}
+.roleAvatar { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; color: var(--module-accent); background-color: var(--module-soft); font-weight: 900; font-size: 1.1rem; }
+.roleAvatar.moduleNavLogo { background-color: transparent; box-shadow: 0 6px 18px rgba(91, 70, 91, .15); }
+.roleConversationCopy { min-width: 0; }
+.roleConversationCopy > div { display: flex; align-items: center; gap: 8px; }
+.roleConversationCopy > div span { padding: 3px 7px; border-radius: 999px; color: var(--muted); background: #f3eeee; font-size: .72rem; }
+.roleConversationCopy p { overflow: hidden; margin: 6px 0 0; color: var(--muted); font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
+.conversationMeta { display: grid; justify-items: end; gap: 7px; }
+.conversationMeta small { color: var(--muted); }
+.conversationActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.conversationMeta button { border: 0; border-radius: 999px; padding: 7px 12px; color: var(--module-accent); background: var(--module-soft); cursor: pointer; font-weight: 750; }
+.conversationMeta button.dangerAction { color: #a54b64; background: #fff0f4; }
+.conversationMeta button:disabled { opacity: .5; cursor: wait; }
+
+.appWorkspace > .chatPanel, .appWorkspace > .memoryPanel, .appWorkspace > .lifePanel, .appWorkspace > .workPanel, .appWorkspace > .documentPanel { margin-top: 0; }
+
+@media (max-width: 900px) {
+  .appFrame { display: block; }
+  .appSidebar { position: static; height: auto; padding: 16px; border-right: 0; border-bottom: 1px solid rgba(119, 95, 105, .11); }
+  .sidebarBrand { padding: 0 4px 14px; }
+  .appSidebar nav { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 0; }
+  .appSidebar nav > button { grid-template-columns: 34px 1fr; padding: 8px; }
+  .appSidebar nav > button > span { width: 32px; height: 32px; }
+  .appSidebar nav > button small { display: none; }
+  .sidebarFooter { position: absolute; top: 16px; right: 16px; margin: 0; padding: 0; }
+  .sidebarFooter button { width: auto; padding: 7px 10px; }
+  .appWorkspace { padding: 30px 20px 56px; }
+}
+
+@media (max-width: 600px) {
+  .authCard { padding: 26px 22px; border-radius: 24px; }
+  .authIntro { margin-top: 30px; }
+  .authIntro h1 { font-size: 1.8rem; }
+  .appSidebar { padding-top: 14px; }
+  .sidebarBrand small { display: none; }
+  .sidebarFooter { top: 20px; }
+  .appSidebar nav > button { display: flex; justify-content: center; }
+  .appSidebar nav > button > div { display: none; }
+  .workspaceHeader { align-items: flex-start; flex-direction: column; }
+  .workspaceHeader .primaryAction { width: 100%; }
+  .moduleTools { display: grid; }
+  .moduleTools > button { min-width: 0; width: 100%; }
+  .lifeModuleNav { grid-template-columns: 1fr; }
+  .characterForm { grid-template-columns: 1fr; }
+  .characterForm > button { grid-column: auto; width: 100%; }
+  .roleConversationList article { grid-template-columns: 44px minmax(0, 1fr); }
+  .roleAvatar { width: 42px; height: 42px; border-radius: 14px; }
+  .conversationMeta { grid-column: 2; width: 100%; }
+  .conversationActions { justify-content: flex-start; }
+  .sectionHeading .secondaryAction { display: none; }
+}
+.typingState { color: #a05c70; font-size: .9rem; }

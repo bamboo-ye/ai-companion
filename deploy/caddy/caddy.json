@@ -1,0 +1,124 @@
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "gateway": {
+          "listen": [":443"],
+          "strict_sni_host": true,
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": ["or.windcry1.com"]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Permissions-Policy": ["camera=(), microphone=(), geolocation=()"],
+                              "Referrer-Policy": ["strict-origin-when-cross-origin"],
+                              "X-Content-Type-Options": ["nosniff"],
+                              "X-Frame-Options": ["DENY"]
+                            }
+                          }
+                        },
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": ["zstd", "gzip"]
+                        }
+                      ]
+                    },
+                    {
+                      "group": "upstream",
+                      "match": [
+                        {
+                          "path": ["/v1/*", "/healthz", "/readyz"]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "subroute",
+                          "routes": [
+                            {
+                              "handle": [
+                                {
+                                  "handler": "headers",
+                                  "response": {
+                                    "set": {
+                                      "Cache-Control": ["no-store"]
+                                    }
+                                  }
+                                },
+                                {
+                                  "handler": "reverse_proxy",
+                                  "upstreams": [
+                                    {
+                                      "dial": "api:8080"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "group": "upstream",
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "web:3000"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "tls_connection_policies": [
+            {
+              "match": {
+                "sni": ["or.windcry1.com"]
+              },
+              "certificate_selection": {
+                "any_tag": ["origin-cert"]
+              }
+            },
+            {
+              "drop": true
+            }
+          ]
+        }
+      }
+    },
+    "tls": {
+      "certificates": {
+        "load_files": [
+          {
+            "certificate": "/etc/caddy/tls/fullchain.pem",
+            "key": "/etc/caddy/tls/privkey.pem",
+            "tags": ["origin-cert"]
+          }
+        ]
+      }
+    }
+  }
+}

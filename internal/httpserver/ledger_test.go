@@ -43,8 +43,8 @@ func TestLedgerCandidateConfirmationAndSummaryAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	chat := performJSON(t, server, http.MethodPost, "/v1/conversations/"+conversation.ID+"/messages", tokens.AccessToken, map[string]string{"content": "昨晚打车 36 元"})
-	if chat.Code != http.StatusAccepted || !strings.Contains(chat.Body.String(), `"ledger_candidate"`) || strings.Contains(chat.Body.String(), `"ledger_entry"`) {
-		t.Fatalf("chat candidate = %d %s", chat.Code, chat.Body.String())
+	if chat.Code != http.StatusAccepted || strings.Contains(chat.Body.String(), `"ledger_candidate"`) || strings.Contains(chat.Body.String(), `"ledger_entry"`) {
+		t.Fatalf("chat must defer ledger intent to the model worker = %d %s", chat.Code, chat.Body.String())
 	}
 	candidateResponse := performJSON(t, server, http.MethodPost, "/v1/ledger/candidates", tokens.AccessToken, map[string]string{"text": "昨晚打车 36 元"})
 	if candidateResponse.Code != http.StatusCreated || !strings.Contains(candidateResponse.Body.String(), `"amount_minor":3600`) || !strings.Contains(candidateResponse.Body.String(), `"category":"transport"`) {
@@ -64,6 +64,14 @@ func TestLedgerCandidateConfirmationAndSummaryAPI(t *testing.T) {
 	if confirmed.Code != http.StatusCreated {
 		t.Fatalf("confirm = %d %s", confirmed.Code, confirmed.Body.String())
 	}
+	var confirmedEnvelope struct {
+		Entry ledger.Entry `json:"entry"`
+	}
+	if err := json.Unmarshal(confirmed.Body.Bytes(), &confirmedEnvelope); err != nil || confirmedEnvelope.Entry.OccurredAt.IsZero() {
+		t.Fatalf("confirmed entry = %s err=%v", confirmed.Body.String(), err)
+	}
+	location, _ := time.LoadLocation("Asia/Shanghai")
+	entryMonth := confirmedEnvelope.Entry.OccurredAt.In(location).Format("2006-01")
 	duplicate := performLedgerConfirm(t, server, tokens.AccessToken, candidate.ID, "confirm-taxi")
 	if duplicate.Code != http.StatusOK || !strings.Contains(duplicate.Body.String(), `"deduplicated":true`) {
 		t.Fatalf("duplicate = %d %s", duplicate.Code, duplicate.Body.String())
@@ -72,12 +80,12 @@ func TestLedgerCandidateConfirmationAndSummaryAPI(t *testing.T) {
 	if items.Code != http.StatusOK || strings.Count(items.Body.String(), `"amount_minor":3600`) != 1 {
 		t.Fatalf("entries = %d %s", items.Code, items.Body.String())
 	}
-	summary := performJSON(t, server, http.MethodGet, "/v1/ledger/summary?month=2026-07&timezone=Asia%2FShanghai&currency=CNY", tokens.AccessToken, nil)
+	summary := performJSON(t, server, http.MethodGet, "/v1/ledger/summary?month="+entryMonth+"&timezone=Asia%2FShanghai&currency=CNY", tokens.AccessToken, nil)
 	if summary.Code != http.StatusOK || !strings.Contains(summary.Body.String(), `"expense_minor":3600`) || !strings.Contains(summary.Body.String(), `"entry_count":1`) {
 		t.Fatalf("summary = %d %s", summary.Code, summary.Body.String())
 	}
 	server.SetLedgerExporter(httpLedgerExporter{})
-	export := performLedgerExport(t, server, tokens.AccessToken, "export-2026-07")
+	export := performLedgerExportMonth(t, server, tokens.AccessToken, "export-"+entryMonth, entryMonth)
 	if export.Code != http.StatusAccepted {
 		t.Fatalf("export = %d %s", export.Code, export.Body.String())
 	}
@@ -178,7 +186,12 @@ func TestWorkspaceLedgerExportShareRequiresMembershipAndOwnership(t *testing.T) 
 
 func performLedgerExport(t *testing.T, server *Server, token, key string) *httptest.ResponseRecorder {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]string{"month": "2026-07", "timezone": "Asia/Shanghai", "currency": "CNY"})
+	return performLedgerExportMonth(t, server, token, key, "2026-07")
+}
+
+func performLedgerExportMonth(t *testing.T, server *Server, token, key, month string) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]string{"month": month, "timezone": "Asia/Shanghai", "currency": "CNY"})
 	request := httptest.NewRequest(http.MethodPost, "/v1/ledger/exports", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+token)

@@ -22,6 +22,46 @@ type Sample struct {
 	OldestJobAge   time.Duration
 	ModelErrorRate float64
 	P95Latency     time.Duration
+	AgentRuns      AgentRunMetrics
+	AgentRetries   AgentRetryMetrics
+	ModelUsage     ModelUsageMetrics
+	Repairs        RepairMetrics
+}
+
+type AgentRunMetrics struct {
+	Accepted        int   `json:"accepted"`
+	Queued          int   `json:"queued"`
+	Running         int   `json:"running"`
+	WaitingApproval int   `json:"waiting_approval"`
+	CancelRequested int   `json:"cancel_requested"`
+	CompletedRecent int   `json:"completed_recent"`
+	FailedRecent    int   `json:"failed_recent"`
+	CancelledRecent int   `json:"cancelled_recent"`
+	TimedOutRecent  int   `json:"timed_out_recent"`
+	P95DurationMS   int64 `json:"p95_duration_ms"`
+}
+
+type AgentRetryMetrics struct {
+	ScheduledRecent         int     `json:"scheduled_recent"`
+	RecoveredRecent         int     `json:"recovered_recent"`
+	ExhaustedRecent         int     `json:"exhausted_recent"`
+	DeadlineExhaustedRecent int     `json:"deadline_exhausted_recent"`
+	RecoveryRatio           float64 `json:"recovery_ratio"`
+}
+
+type ModelUsageMetrics struct {
+	Calls            int64 `json:"calls"`
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	CostMicros       int64 `json:"cost_micros"`
+}
+
+type RepairMetrics struct {
+	Attempts        int64 `json:"attempts"`
+	Succeeded       int64 `json:"succeeded"`
+	Blocked         int64 `json:"blocked"`
+	ModelCalls      int64 `json:"model_calls"`
+	ModelCostMicros int64 `json:"model_cost_micros"`
 }
 
 type Policy struct {
@@ -33,17 +73,21 @@ type Policy struct {
 }
 
 type Snapshot struct {
-	Level            string    `json:"level"`
-	Reason           string    `json:"reason"`
-	ObservedAt       time.Time `json:"observed_at"`
-	ChangedAt        time.Time `json:"changed_at"`
-	CandidateLevel   string    `json:"candidate_level"`
-	CandidateSamples int       `json:"candidate_samples"`
-	QueueLag         int       `json:"queue_lag"`
-	OldestJobAgeMS   int64     `json:"oldest_job_age_ms"`
-	ModelErrorRate   float64   `json:"model_error_rate"`
-	P95LatencyMS     int64     `json:"p95_latency_ms"`
-	Policy           Policy    `json:"policy"`
+	Level            string            `json:"level"`
+	Reason           string            `json:"reason"`
+	ObservedAt       time.Time         `json:"observed_at"`
+	ChangedAt        time.Time         `json:"changed_at"`
+	CandidateLevel   string            `json:"candidate_level"`
+	CandidateSamples int               `json:"candidate_samples"`
+	QueueLag         int               `json:"queue_lag"`
+	OldestJobAgeMS   int64             `json:"oldest_job_age_ms"`
+	ModelErrorRate   float64           `json:"model_error_rate"`
+	P95LatencyMS     int64             `json:"p95_latency_ms"`
+	AgentRuns        AgentRunMetrics   `json:"agent_runs"`
+	AgentRetries     AgentRetryMetrics `json:"agent_retries_recent"`
+	ModelUsage       ModelUsageMetrics `json:"model_usage_recent"`
+	Repairs          RepairMetrics     `json:"repairs_recent"`
+	Policy           Policy            `json:"policy"`
 }
 
 type Config struct {
@@ -128,7 +172,11 @@ func (c *Controller) snapshotLocked() Snapshot {
 		Level: c.level.String(), Reason: c.reason, ObservedAt: c.observedAt, ChangedAt: c.changedAt,
 		CandidateLevel: c.candidate.String(), CandidateSamples: c.candidateCount,
 		QueueLag: c.last.QueueLag, OldestJobAgeMS: c.last.OldestJobAge.Milliseconds(), ModelErrorRate: c.last.ModelErrorRate, P95LatencyMS: c.last.P95Latency.Milliseconds(),
-		Policy: policyFor(c.level),
+		AgentRuns:    c.last.AgentRuns,
+		AgentRetries: c.last.AgentRetries,
+		ModelUsage:   c.last.ModelUsage,
+		Repairs:      c.last.Repairs,
+		Policy:       policyFor(c.level),
 	}
 }
 

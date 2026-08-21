@@ -1,0 +1,120 @@
+# OpenRouter model and Graph policy
+
+Updated: 2026-08-10
+
+## Production selection
+
+The project uses OpenRouter only. It does not target users in mainland China. Text workflows prefer the concrete `deepseek/deepseek-v4-flash-0731` revision; the existing GPT models remain explicit quality fallbacks and retain file/multimodal responsibility. Companion-only final replies use a concrete zero-price model pool. No dynamic `openrouter/free`, `auto`, or `latest` route is used.
+
+| Graph purpose | Primary / fallback OpenRouter model | Primary list price (input/output per 1M) | Output cap | Why |
+| --- | --- | ---: | ---: | --- |
+| plan | [`deepseek/deepseek-v4-flash-0731`](https://openrouter.ai/deepseek/deepseek-v4-flash-0731) / `openai/gpt-5-mini` | $0.14 / $0.28 | 512 | Agent/reasoning primary at much lower response cost; GPT remains failure fallback |
+| route/tool selection | `deepseek/deepseek-v4-flash-0731` / `openai/gpt-5-nano` | $0.14 / $0.28 | 256 | DeepSeek is preferred for tool accuracy; the previous Nano remains the bounded fallback |
+| complex argument composition | `deepseek/deepseek-v4-flash-0731` / `openai/gpt-5-mini` | $0.14 / $0.28 | 4096 | Produces grounded email, Markdown and PPT content only after the tool is selected |
+| progress assessment | `deepseek/deepseek-v4-flash-0731` / `openai/gpt-5-nano` | $0.14 / $0.28 | 160 | Small structured assessment over trusted observations, with the existing light fallback |
+| companion final response | `openai/gpt-oss-20b:free` / `google/gemma-4-31b-it:free` / `inclusionai/ling-3.0-flash:free` | $0 / $0 | 1024 | A fixed free pool isolates casual companion response cost; failures never fall back to a paid responder |
+| life/work final response | `deepseek/deepseek-v4-flash-0731` / `openai/gpt-5-mini` | $0.14 / $0.28 | 1024 | DeepSeek remains the grounded business-response path while the previous quality model stays available |
+| failure repair planning | `deepseek/deepseek-v4-flash-0731` only | $0.14 / $0.28 | 256 | Used only after no deterministic repair matches; strict JSON Schema and a dedicated micro-budget prevent open-ended reflection |
+| PDF translation Skill | [`openai/gpt-5-mini`](https://openrouter.ai/openai/gpt-5-mini) | $0.25 / $2.00 | 8000 | Translation quality matters; the Skill has a separate `$0.06` worst-case dispatch ceiling and persists returned usage |
+
+OpenRouter's official model directory reports a 1,048,576-token context window and support for tools, `tool_choice`, `response_format`, and reasoning controls for this DeepSeek revision. Its modality is strictly `text -> text`. The current upload path supports text PDFs and UTF-8 text, extracts them deterministically, and sends only text to Graph models. PDF translation stays on GPT-5 Mini. If raw image/file multimodal prompting is added later, it must use the retained GPT multimodal profile rather than DeepSeek.
+
+This profile is the implementation baseline; this change did not spend the project's OpenRouter account on a live A/B run, so canary evidence remains required before broad production traffic.
+
+The role set and prompt contract are locked by `MODEL_CONFIG_VERSION=2026-08-bounded-fallback-v1` plus a canonical manifest fingerprint over concrete role models, fallback order, output caps, reasoning settings, provider constraints and timeout policy. The repairer deliberately has no cross-model fallback by default. A checkpoint cannot silently continue after any of those fields changes, even if an operator forgets to increment the human-readable version. Production also sets `MODEL_REQUIRE_PINNED=true`. It rejects `openrouter/free`, `openrouter/auto`, `~...-latest`, and routing suffixes such as `:free` or `:floor` for normal roles. The only exception is the `companion_responder` role, where each explicitly named `author/model:free` variant is treated as a pinned model family plus a zero-price endpoint class; a paid model in that role fails configuration validation.
+
+### Alternatives considered
+
+| Candidate | OpenRouter list price (input/output per 1M) | Decision |
+| --- | ---: | --- |
+| [`openai/gpt-5-mini`](https://openrouter.ai/openai/gpt-5-mini) | $0.25 / $2.00 | Retained for file/multimodal work and as the quality fallback for planning, composition and responses. |
+| [`openai/gpt-5-nano`](https://openrouter.ai/openai/gpt-5-nano) | $0.05 / $0.40 | Retained as the low-cost fallback for routing and assessment. |
+| [`google/gemini-2.5-flash-lite`](https://openrouter.ai/google/gemini-2.5-flash-lite) | $0.10 / $0.40 | Not preferred over GPT-5 Nano for routing: output price is equal, input price is higher, and current endpoint metrics show material tool/structured-output variance. |
+| [`google/gemini-2.5-flash`](https://openrouter.ai/google/gemini-2.5-flash) | $0.30 / $2.50 | Capable, but slightly more expensive than GPT-5 Mini without a project-specific quality win yet. |
+| [`anthropic/claude-haiku-4.5`](https://openrouter.ai/anthropic/claude-haiku-4.5) | $1.00 / $5.00 | Strong tool model, but its premium is unnecessary for the default workload. |
+| [`deepseek/deepseek-v3.2`](https://openrouter.ai/deepseek/deepseek-v3.2) | about $0.27 / $0.40 | Superseded in the preferred text lane by V4 Flash 0731. |
+| [`openai/gpt-oss-20b:free`](https://openrouter.ai/openai/gpt-oss-20b:free) | $0 / $0 | Companion responder primary; the project already exercised this family in an earlier OpenRouter canary, and response generation does not require its unreliable tool-call behavior. |
+| [`google/gemma-4-31b-it:free`](https://openrouter.ai/google/gemma-4-31b-it:free) | $0 / $0 | First free fallback for conversational quality and multilingual coverage. |
+| [`inclusionai/ling-3.0-flash:free`](https://openrouter.ai/inclusionai/ling-3.0-flash:free) | $0 / $0 | Second free fallback for Chinese text availability. |
+
+## OpenRouter routing policy
+
+Every request sends these [provider constraints](https://openrouter.ai/docs/guides/routing/provider-selection):
+
+- `sort: "price"`: choose the cheapest endpoint for the already selected model.
+- `preferred_max_latency: {"p90": 8}`: within that price-first route, deprioritize
+  endpoints whose rolling five-minute P90 latency exceeds eight seconds. This is
+  a preference, not an exclusion, so a slow endpoint remains available when it is
+  the only compatible fallback. Set `MODEL_PREFERRED_MAX_LATENCY_P90_SECONDS=0`
+  to disable the preference.
+- `allow_fallbacks: true`: fail over between compatible providers of that model.
+- `require_parameters: true`: tool and structured requests are not sent to endpoints that ignore required parameters.
+- `data_collection: "deny"`: exclude endpoints OpenRouter marks as collecting prompts.
+- `zdr`: optional stricter filtering through `MODEL_ZDR_REQUIRED`.
+- `max_price`: ceiling of `$0.30/M` prompt and `$2.50/M` completion tokens. It admits the reviewed GPT fallbacks while excluding premium endpoints outside this profile.
+
+Production configuration accepts only `MODEL_PROVIDER=openrouter` and the canonical `https://openrouter.ai/api/v1` endpoint (besides local `development` mode), preventing the generic OpenAI-compatible path from bypassing this policy.
+
+Fallback order is explicit and sequential. DeepSeek is attempted first for normal text roles; the prior GPT role model is attempted only after a provider error or invalid contract response. Companion final responses instead try the three concrete free variants in manifest order and never cross into a paid responder. Every failed attempt consumes the same Graph call/token budget and records its actual returned cost. OpenRouter endpoint failover within each concrete model remains enabled.
+
+Normal roles share one 30-second fallback deadline and each HTTP attempt is capped at 15 seconds. The allocator dynamically preserves up to five seconds for every remaining candidate, so three consecutive timeouts are bounded approximately as 15, 10 and 5 seconds instead of three independent 30-second waits. Fast provider/model errors immediately advance without consuming that reserved wall time. Complex argument composition uses a separate 45-second deadline with a 30-second attempt cap to retain enough time for long structured output. Authentication failures still stop immediately. Every model failure with an auditable call event is checkpointed and safely settled after the bounded candidate fallback is exhausted; the Worker does not replay that terminal Graph node because doing so could duplicate a billed request. Retryable provider errors that escape before an auditable Graph settlement remain eligible for the run-level policy described below. Each model event records the actual attempt timeout and any bounded `Retry-After` advisory, and the release gate caps direct-path attempt timeout P95 at 15 seconds.
+
+## Graph budgets
+
+Trusted environment configuration, never request context or a model-generated plan, sets the ceilings:
+
+- 10 tool actions;
+- 12 actual model HTTP attempts, including failed fallbacks;
+- 200,000 prompt tokens and 16,000 completion tokens;
+- 50,000 micro-USD (`$0.05`) charged cost;
+- 120 durable external-tool resumes at a five-second requested interval.
+- two repair attempts, at most one repair-model call, and a 1,000 micro-USD repair sub-budget;
+- three total Worker execution attempts for retryable runtime/provider failures that escape before an auditable Graph settlement.
+
+OpenRouter's returned [`usage` object](https://openrouter.ai/docs/cookbook/administration/usage-accounting) is the source of prompt, completion, cached and reasoning tokens plus charged cost. Before dispatch, every permitted cross-model fallback attempt reserves one call, a conservative UTF-8-based prompt-token upper bound, an equal share of the remaining completion tokens and cost at the configured maximum prices. Each event records the requested model, concrete returned model, upstream provider, latency and status, including failed attempts. A missing usage field remains visible as zero rather than being fabricated. Provider tokenization and billing remain external systems, so OpenRouter account/key spending limits are still required as the final hard protection.
+
+The reservation is a local dispatch admission check, not a distributed billing transaction. OpenRouter does not provide a project request-id guarantee that makes chat completion billing idempotent: if the worker dies after the provider accepts or charges a request but before LangGraph checkpoints the node result, recovery may repeat that call. The Graph ledger therefore provides auditable at-least-once accounting and a soft per-run ceiling, not an absolute exactly-once spend guarantee. Configure an OpenRouter workspace/key hard limit below the operator's real loss limit, alert on the unified cost gauges, and treat the provider statement as billing authority.
+
+Budget exhaustion is a normal terminal Graph outcome, not a retryable worker exception. This prevents an exhausted run from being repeatedly requeued.
+
+Run-level retries use `AGENT_WORKER_RETRY_DELAY` as the exponential-backoff base, `AGENT_WORKER_RETRY_MAX_DELAY` as the hard delay ceiling and `AGENT_WORKER_RETRY_JITTER_PERCENT` as deterministic per-run/per-attempt additive jitter. HTTP 429 and 503 honor a valid `Retry-After` delta or HTTP date before applying the same ceiling and jitter. Authentication, other permanent 4xx responses and runtime/Graph contract mismatches fail immediately. A retry is never scheduled at or beyond the immutable Agent Run deadline; attempt exhaustion fails with `execution_retry_budget_exhausted`, while insufficient remaining deadline settles as `execution_retry_deadline_exhausted`. Each scheduled retry emits both a durable Run Event marked `retry_kind=execution` and an `Agent execution retry scheduled` log with attempt, maximum attempts, chosen and advised delays, policy bounds, provider status, stable error code and remaining deadline, without prompts or response content. PostgreSQL-derived metrics expose scheduled, recovered, exhausted and deadline-exhausted outcomes plus the settled recovery ratio. The versioned `retry.v1` release gate reconstructs failed execution, retry and terminal completion sequences and rejects duplicate, over-budget, out-of-policy, deadline-crossing or unrecovered retries; the Compose persistence gate separately verifies revision fencing, `available_at`, terminal aggregation and exactly-once assistant delivery.
+
+The 12-call ceiling covers the intended worst normal path of planning, three independent attachment extractions, assessment after each extraction, then one composed PPT action (about 10 calls when every primary succeeds). Fallback attempts count separately, so repeated provider failures can end the run earlier rather than silently raising the budget.
+
+The PDF translation tool is an independently persisted Skill Run, so its model usage is not misattributed to a Graph node. It uses the same fixed Mini model and OpenRouter privacy/routing policy, reserves cost before dispatch at `$0.30/M` prompt and `$2.50/M` completion ceilings, persists returned usage in the Skill output, and rejects reported cost above `60,000` micro-USD. Production configuration requires `companion,life,work` in `AGENT_CHAT_MODULES`; the legacy direct-chat model path remains available only for development and staged canaries. An OpenRouter workspace/key budget is still the final hard spending limit.
+
+## Node and recovery contract
+
+Graph version `3.6.0` persists a contract for every node. The first module node now combines project-tool routing and a direct conversational answer in one model request. A no-tool answer is therefore `supervisor → module → response_quality_gate → finalize`; a single trusted tool skips both `plan` and `assess_progress`; repeatable or intermediate attachment work keeps the full planner and progress-assessor path. Conservative deterministic hints forbid a direct answer for obvious project-data requests such as a real plan, reminder, ledger, attachment or generated-file operation. The generic `response_quality_gate` removes exact repeated sentences or paragraphs without a model call, sends remaining near-duplicate content through at most one temperature-zero constrained rewrite, revalidates the complete response, and fails closed after a second failure. The deterministic `email_quality_gate` remains between argument composition and tool preparation and enforces `email-draft-policy-2.1.0`. `preflight_normalize` applies versioned, semantics-preserving repair operators before tool dispatch. A failed Skill returns `tool-failure-v1`; `classify_tool_failure` routes it to same-input transport retry, deterministic repair, the bounded repairer, side-effect reconciliation, or terminal handling. Planning cannot execute tools or raise budgets; routing cannot commit; only `prepare_tool` allocates an action; only `commit_tool` performs a user-approved write.
+
+Async Skill waits use a two-level recovery contract. Success, failure and cancellation write a terminal outbox event in the same transaction as the Skill state; the Agent Worker advances matching `waiting_tool` runs immediately and appends a durable resume event. Kafka duplicates are coalesced by run ID, with at most one trailing replay retained when a newer hint arrives during execution. The interrupt still requests an initial 500ms poll with a 5s maximum: the Go Worker checks PostgreSQL first and exponentially reschedules a pending task without launching Python, so missed events and completion/suspension races remain recoverable. Only a terminal Skill state resumes LangGraph. A resumed checkpoint also reuses its original trusted tool catalog instead of fetching the catalog again. `make eval-agent-runtime` emits the concurrency, backpressure and resume-contract test stream to `artifacts/agent-eval/runtime.jsonl`.
+
+The Agent Worker normally runs a bounded persistent Python pool sized to `AGENT_WORKER_CONCURRENCY`. A healthy process handles requests sequentially and reuses its decision port, compiled graph and PostgreSQL checkpointer connection. Warm idle processes are preferred before unused capacity is started, so sequential traffic reuses the first process instead of paying one cold start per configured slot. Before the worker reports ready, `AGENT_PYTHON_POOL_WARM_SIZE` processes (default `1`) must emit a versioned readiness envelope after imports, Graph compilation and checkpointer initialization. Go rejects a protocol, graph-name or graph-version mismatch. Warmup failure is logged and falls back to lazy start; set the warm size to `0` to disable only startup warmup. Request errors are isolated by the JSONL response envelope. A timeout, crash, EOF, malformed response or unusable psycopg connection destroys only that process and the next request starts a replacement. Per-request structured logs expose pool wait, execution mode, total duration, cold start, recycle, success and stable error code; dispatcher logs separately expose queue wait and execution time. Pool warmup and shutdown logs retain readiness duration plus aggregate request, error, process-start and process-discard totals. Set `AGENT_PYTHON_POOL_ENABLED=false` to use the one-process-per-execution fallback during rollback.
+
+The initial repair catalog contains `remove_optional_filename` and `filename.safe_basename`. Display titles remain unchanged; only basename fields are normalized. The normalizer uses NFKC, removes path separators and reserved characters, handles reserved device names, controls UTF-8 byte length, owns the file extension, and never treats escaping as permission to create a directory. Known repairs use no model call. The repairer receives only a redacted error envelope, relevant fields, allowed JSON pointers and the versioned operator catalog; its strict output cannot change a tool name, approval risk, budget, identity, or unlisted business field.
+
+Supervisor also stores a canonical SHA-256 fingerprint of the exact tool catalog in state, interrupts and public governance output. Every resume verifies both the persisted catalog and the freshly supplied Go catalog against that fingerprint. Changing a tool name, description, schema or composition marker requires a new Agent Run; the runtime will not silently resume a checkpoint with a different capability contract.
+
+Checkpoints from `3.5.0` and earlier are intentionally incompatible with the `3.6.0` adaptive tool-resume contract. Before deploying `3.6.0`, stop old-version intake and drain or explicitly terminate queued/running/waiting runs; users with an unfinished old run must start a new run. API and Agent Worker must roll out with the same graph version. The runtime never attempts an in-place checkpoint rewrite.
+
+The deterministic release gate is `make eval-agent`. It executes versioned contract and replay cases against the real Graph with an in-memory checkpointer and isolated scripted model/tool ports, then evaluates structured performance logs. Cases assert execution mode, forbidden and required nodes, exact tool order, approval status, result-quality policy and model/step budgets. Performance baseline `performance.v2` independently requires a successful bounded startup warmup, direct-answer samples and terminal-tool wake samples; it limits queue wait, pool wait, overall and direct-path P95 latency, tool-event-to-dispatch wake P95, direct model P95, direct local-runtime-overhead P95, failures, cold starts and process recycling. Reports are written under the ignored `artifacts/agent-eval/` directory in JSON and JUnit formats. The reviewed baselines are never updated by the runners; pass a mixed real canary log beginning at Worker startup with `AGENT_PERFORMANCE_LOG=/path/to/agent-worker.jsonl make eval-agent-performance`.
+
+Approval and external task waits use typed LangGraph interrupts bound to the concrete interrupt ID. An async tool is observed once per resume and otherwise remains in PostgreSQL as `waiting_tool`; the Python process no longer busy-polls. A retry first inspects the checkpoint:
+
+1. no checkpoint — start the Graph;
+2. pending interrupt without a resolution — return the same interrupt ID;
+3. typed matching resolution — resume that interrupt;
+4. incomplete checkpoint without an interrupt — continue with `invoke(None)`;
+5. terminal checkpoint — reuse the stored result without calling a model or tool again.
+
+Side effects remain at-least-once and must use the stable action idempotency keys. Gateway revision, lease and deadline validation is the pre-dispatch authorization linearization point: cancellation prevents work that has not yet passed this fence, but cannot revoke an already-authorized in-flight request even if its domain write has not committed yet. Stable idempotency keys make replay safe. Strict atomic revocation would require carrying the fence into every domain database transaction and remains production hardening. A graph or model configuration mismatch fails closed before another model node is called.
+
+## Observability and change process
+
+Agent Run output contains the graph identity, node contracts, aggregate budget limits/usage, repair attempts, validation and final retry result, fingerprints, a redacted model-call ledger, node timing/status trace and recovery counters. Repair observations include strategy, operator/catalog version, changed paths, before/after argument hashes, requested/returned model, cost and loop-block reason without storing raw sensitive values. Prompts, model responses, generation IDs and private tool inputs are not copied into this public summary. Full checkpoint state remains in PostgreSQL; production checkpoint garbage collection is not automatic yet and must be scheduled under the deployment's approved retention window before launch.
+
+PostgreSQL view `app.model_usage_observations` is the unified reporting surface for legacy chat usage, each persisted `agent.runs.output.model.calls` entry, and every model-backed `app.skill_run_steps.output_json.model_usage` execution attempt. Skill steps, rather than only the latest Skill Run output, are authoritative so a failed paid attempt remains accounted for after a retry. The view exposes source/execution/call identity, user, call status, requested and returned model, model-configuration version, role/node, token counts, cost and latency without copying prompts or outputs. `ReliabilitySample` aggregates this view over the last five minutes and publishes unlabeled Prometheus gauges for calls, prompt tokens, completion tokens and micro-USD cost; keeping model, role and user out of metric labels prevents unbounded cardinality. Those dimensions remain queryable in PostgreSQL for controlled reports.
+
+For Graph rows, `observed_at` is the time the containing Agent Run output was persisted, because the public result contract does not claim a per-call wall-clock timestamp. Skill observations use the durable execute step's completion time. The rolling gauges therefore describe newly persisted accounting data, not a fabricated Graph dispatch-time series. OpenRouter account statements remain the external billing authority.
+
+Change a model only after running the project evaluation set for tool selection, structured arguments, multi-step file tasks, conversational quality and failure recovery. Increment `MODEL_CONFIG_VERSION`, canary the new profile, then roll back by restoring the prior concrete slugs and version. Do not use an automatic “latest” alias for production reproducibility.

@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS app.user_skill_settings;
+DROP TABLE IF EXISTS app.workspace_generated_file_shares;
+DROP TABLE IF EXISTS app.generated_files;
+DROP TABLE IF EXISTS app.tool_executions;
+DROP TABLE IF EXISTS app.skill_run_steps;
+DROP TABLE IF EXISTS app.skill_run_action_keys;
+DROP TABLE IF EXISTS app.skill_runs;
+DROP TABLE IF EXISTS app.workspace_document_shares;
+DROP TABLE IF EXISTS app.document_cleanup_jobs;
+DROP TABLE IF EXISTS app.document_chunks;
+DROP TABLE IF EXISTS app.document_pages;
+DROP TABLE IF EXISTS app.document_ingest_jobs;
+DROP TABLE IF EXISTS app.documents;
+DROP TABLE IF EXISTS app.files;

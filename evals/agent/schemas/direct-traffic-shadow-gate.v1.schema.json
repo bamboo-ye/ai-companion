@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-shadow-gate.v1.schema.json",
+  "title": "Direct traffic multi-window shadow Gate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_id", "generated_at", "decision", "source", "policy", "windows", "violations"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-shadow-gate-v1"},
+    "gate_id": {"type": "string", "pattern": "^direct-traffic-shadow-gate-[0-9a-f]{32}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "decision": {"enum": ["pass", "hold"]},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observer_instance_sha256", "provider_instance_sha256", "environment_sha256", "history_events", "history_chain_sha256"],
+      "properties": {
+        "observer_instance_sha256": {"$ref": "#/$defs/digest"},
+        "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+        "environment_sha256": {"$ref": "#/$defs/digest"},
+        "history_events": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "policy": {"$ref": "#/$defs/policy"},
+    "windows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast", "stable"],
+      "properties": {
+        "fast": {"$ref": "#/$defs/window"},
+        "stable": {"$ref": "#/$defs/window"}
+      }
+    },
+    "violations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "expected", "actual"],
+        "properties": {
+          "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+          "expected": {"type": "string"},
+          "actual": {}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast_window_runs", "stable_window_runs", "minimum_stable_window_seconds", "maximum_gap_seconds", "maximum_report_age_seconds", "maximum_retried_observations"],
+      "properties": {
+        "fast_window_runs": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "stable_window_runs": {"type": "integer", "minimum": 2, "maximum": 10000},
+        "minimum_stable_window_seconds": {"type": "integer", "minimum": 1, "maximum": 604800},
+        "maximum_gap_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "maximum_report_age_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "maximum_retried_observations": {"type": "integer", "minimum": 0, "maximum": 10000}
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "selected", "match", "drift", "lookup_error", "retried_observations", "coverage_seconds", "maximum_gap_seconds", "latest_age_seconds", "future_observations", "non_monotonic_observations", "first_event_id", "last_event_id"],
+      "properties": {
+        "requested": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "selected": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "match": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "drift": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "lookup_error": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "retried_observations": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "coverage_seconds": {"type": "number", "minimum": 0, "maximum": 604800},
+        "maximum_gap_seconds": {"type": "number", "minimum": 0, "maximum": 604800},
+        "latest_age_seconds": {"type": ["number", "null"], "minimum": 0, "maximum": 604800},
+        "future_observations": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "non_monotonic_observations": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "first_event_id": {"type": ["string", "null"], "pattern": "^direct-traffic-shadow-event-[0-9a-f]{32}$"},
+        "last_event_id": {"type": ["string", "null"], "pattern": "^direct-traffic-shadow-event-[0-9a-f]{32}$"}
+      }
+    }
+  }
+}

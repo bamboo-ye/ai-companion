@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/evals/agent/case.v1.schema.json",
+  "title": "Agent evaluation case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "tags", "given", "expect", "tape"],
+  "properties": {
+    "schema_version": {"const": "agent-eval-case-v1"},
+    "id": {"type": "string", "minLength": 1},
+    "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "given": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "user_message", "tools"],
+      "properties": {
+        "module": {"enum": ["companion", "life", "work"]},
+        "user_message": {"type": "string", "minLength": 1},
+        "context": {"type": "object"},
+        "tools": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "expect": {
+      "type": "object",
+      "properties": {
+        "status": {"type": "string"},
+        "outcome": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+        "execution_mode": {"enum": ["direct", "single_action", "agentic"]},
+        "tool_sequence": {"type": "array", "items": {"type": "string"}},
+        "required_nodes": {"type": "array", "items": {"type": "string"}},
+        "forbidden_nodes": {"type": "array", "items": {"type": "string"}},
+        "max_model_calls": {"type": "integer", "minimum": 0},
+        "max_steps": {"type": "integer", "minimum": 1},
+        "max_retries": {"type": "integer", "minimum": 0},
+        "quality_pass": {"type": "boolean"},
+        "response_contains": {"type": "array", "items": {"type": "string"}},
+        "response_not_contains": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "tape": {
+      "type": "object",
+      "properties": {
+        "plans": {"type": "array"},
+        "decisions": {"type": "array"},
+        "compositions": {"type": "array"},
+        "responses": {"type": "array"},
+        "revisions": {"type": "array"},
+        "assessments": {"type": "array"},
+        "preparations": {"type": "array"},
+        "commits": {"type": "array"},
+        "observations": {"type": "array"},
+        "retries": {"type": "array"}
+      }
+    }
+  }
+}

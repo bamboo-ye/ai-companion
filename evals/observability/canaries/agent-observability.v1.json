@@ -1,0 +1,7 @@
+{
+  "schema_version": "observability-canary-command-v1",
+  "name": "agent-observability",
+  "command": ["sh", "scripts/run_agent_observability_canary.sh"],
+  "timeout_seconds": 45,
+  "stabilization_seconds": 1
+}

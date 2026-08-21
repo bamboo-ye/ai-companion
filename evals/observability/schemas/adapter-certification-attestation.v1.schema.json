@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-adapter-certification-attestation.v1.schema.json",
+  "title": "Observability deployment adapter certification attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "certification_id",
+    "certification_nonce",
+    "adapter",
+    "implementation_version",
+    "provider_instance_sha256",
+    "supports_idempotent_submit",
+    "supports_lookup",
+    "request_sha256",
+    "report_sha256",
+    "report",
+    "key_id",
+    "certified_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-adapter-certification-attestation-v1"
+    },
+    "certification_id": {
+      "type": "string",
+      "pattern": "^adapter-cert-[0-9a-f]{32}$"
+    },
+    "certification_nonce": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "implementation_version": {"type": "string", "minLength": 1},
+    "provider_instance_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "supports_idempotent_submit": {"const": true},
+    "supports_lookup": {"const": true},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "report": {"$ref": "adapter-certification.v1.schema.json"},
+    "key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "certified_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

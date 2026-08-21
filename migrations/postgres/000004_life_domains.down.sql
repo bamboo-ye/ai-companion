@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS app.workspace_ledger_export_shares;
+DROP TABLE IF EXISTS app.notification_deliveries;
+DROP TABLE IF EXISTS app.reminder_events;
+DROP TABLE IF EXISTS app.external_reminder_links;
+DROP TABLE IF EXISTS app.reminders;
+DROP TABLE IF EXISTS app.plan_items;
+DROP TABLE IF EXISTS app.plans;
+DROP TABLE IF EXISTS app.ledger_exports;
+DROP TABLE IF EXISTS app.ledger_entries;
+DROP TABLE IF EXISTS app.ledger_candidates;

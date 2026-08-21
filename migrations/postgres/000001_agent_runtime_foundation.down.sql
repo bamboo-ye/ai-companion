@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS agent.run_events;
+DROP TABLE IF EXISTS agent.tool_calls;
+DROP TABLE IF EXISTS agent.interrupts;
+DROP TABLE IF EXISTS agent.runs;
+
+DROP SCHEMA IF EXISTS agent;
+DROP SCHEMA IF EXISTS eventing;
+DROP SCHEMA IF EXISTS app;
+DROP SCHEMA IF EXISTS langgraph;

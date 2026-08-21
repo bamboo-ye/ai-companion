@@ -2,6 +2,8 @@ package conversation
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -10,6 +12,8 @@ import (
 )
 
 type DevelopmentProvider struct{}
+
+var internalMessageMarkerPattern = regexp.MustCompile(`<!--ai-(?:document|generated-file|ledger-export|skill-run):[^>]+-->`)
 
 func (DevelopmentProvider) Generate(ctx context.Context, persona character.Character, history []Message) (string, Usage, error) {
 	select {
@@ -41,12 +45,39 @@ func (DevelopmentProvider) Generate(ctx context.Context, persona character.Chara
 	return text, Usage{Provider: "development", Model: "deterministic-persona-v1", InputTokens: len([]rune(latest))/2 + 1, OutputTokens: len([]rune(text))/2 + 1, Latency: time.Since(started)}, nil
 }
 
+func (DevelopmentProvider) GenerateWithTools(ctx context.Context, _ character.Character, _ []Message, tools []ModelToolDefinition) (ModelToolTurn, Usage, error) {
+	select {
+	case <-ctx.Done():
+		return ModelToolTurn{}, Usage{}, ctx.Err()
+	default:
+	}
+	if len(tools) == 0 {
+		return ModelToolTurn{}, Usage{}, fmt.Errorf("tool definitions are required")
+	}
+	selected := tools[0]
+	for _, tool := range tools {
+		if strings.HasSuffix(tool.Name, "_no_tool") {
+			selected = tool
+			break
+		}
+	}
+	return ModelToolTurn{Call: &ModelToolCall{ID: "development-tool-call", Name: selected.Name, Arguments: map[string]any{}}}, Usage{Provider: "development", Model: "deterministic-tool-router-v1"}, nil
+}
+
 func SplitBubbles(text string) []string {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
-	parts := semanticParts(text)
+	markers := make([]string, 0, 1)
+	visibleText := strings.TrimSpace(internalMessageMarkerPattern.ReplaceAllStringFunc(text, func(marker string) string {
+		markers = append(markers, marker)
+		return ""
+	}))
+	if visibleText == "" {
+		return []string{strings.Join(markers, "\n")}
+	}
+	parts := semanticParts(visibleText)
 	clean := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if part = strings.TrimSpace(part); part != "" {
@@ -57,12 +88,14 @@ func SplitBubbles(text string) []string {
 			clean = append(clean, part)
 		}
 	}
-	if len(clean) < 2 || utf8.RuneCountInString(text) < 40 {
-		return []string{text}
-	}
-	if len(clean) > 5 {
+	if len(clean) < 2 || utf8.RuneCountInString(visibleText) < 40 {
+		clean = []string{visibleText}
+	} else if len(clean) > 5 {
 		tail := strings.Join(clean[4:], "。 ")
 		clean = append(clean[:4], tail)
+	}
+	if len(markers) > 0 {
+		clean[len(clean)-1] += "\n" + strings.Join(markers, "\n")
 	}
 	return clean
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically refresh the AI Companion TLS certificate
+
+[Timer]
+OnBootSec=10min
+OnCalendar=*-*-* 03,15:17:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=ai-companion-certificate-refresh.service
+
+[Install]
+WantedBy=timers.target

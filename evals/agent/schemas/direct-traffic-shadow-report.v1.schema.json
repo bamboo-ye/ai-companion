@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-shadow-report.v1.schema.json",
+  "title": "Direct traffic shadow comparison report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "observer_instance_sha256", "provider_instance_sha256", "environment_sha256", "outcome", "drift_fields", "attempts", "duration_seconds", "error_code", "local", "provider"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-shadow-report-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "observer_instance_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider_instance_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "environment_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "outcome": {"enum": ["match", "drift", "lookup_error"]},
+    "drift_fields": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["current_traffic_percent", "revision", "history_chain_sha256", "provider_snapshot_age", "local_state_changed_during_read"]}
+    },
+    "attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+    "duration_seconds": {"type": "number", "minimum": 0, "maximum": 3600},
+    "error_code": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "local": {"$ref": "#/$defs/localState"},
+    "provider": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/providerState"}]}
+  },
+  "$defs": {
+    "localState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "history_chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "revision": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "history_chain_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "providerState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "history_chain_sha256", "observed_at"],
+      "properties": {
+        "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "revision": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "history_chain_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

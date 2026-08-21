@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/platform/id"
@@ -48,7 +49,7 @@ func (s *Store) SetSkillEnabled(ctx context.Context, userID, skillName string, e
 }
 
 func (s *Store) RecoverInterruptedSkillRuns(ctx context.Context, now time.Time) (int, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE skill_runs SET status='failed',current_state='failed',error_code='execution_interrupted',error_message='Skill execution was interrupted by a service restart; retry is safe',revision=revision+1,updated_at=?,completed_at=? WHERE status='running' AND execution_mode='inline'`, now, now)
+	result, err := s.db.ExecContext(ctx, `UPDATE skill_runs SET status='failed',current_state='failed',error_code='execution_interrupted',error_message='Skill execution was interrupted by a service restart; retry is safe',worker_id=NULL,lease_expires_at=NULL,revision=revision+1,updated_at=?,completed_at=? WHERE status='running' AND (execution_mode='inline' OR worker_id IS NULL)`, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -133,8 +134,8 @@ func (s *Store) CreateSkillRun(ctx context.Context, run skill.Run) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO skill_runs (id,user_id,skill_name,skill_version,execution_mode,status,current_state,risk_level,requires_confirmation,input_json,output_json,create_key,confirmation_key,last_action,last_action_key,attempt,max_steps,timeout_ms,max_input_bytes,max_cost_micros,error_code,error_message,revision,available_at,worker_id,lease_expires_at,created_at,updated_at,completed_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?,?,?,?,NULLIF(?,''),?,NULLIF(?,''),?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,?,?,?)`,
-		run.ID, run.UserID, run.SkillName, run.SkillVersion, run.ExecutionMode, run.Status, run.CurrentState, run.RiskLevel, run.RequiresConfirmation, run.Input, run.Output, run.CreateKey, run.ConfirmationKey, run.LastAction, run.LastActionKey, run.Attempt, run.MaxSteps, run.TimeoutMS, run.MaxInputBytes, run.MaxCostMicros, run.ErrorCode, run.ErrorMessage, run.Revision, run.AvailableAt, run.WorkerID, run.LeaseExpiresAt, run.CreatedAt, run.UpdatedAt, run.CompletedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO skill_runs (id,user_id,skill_name,skill_version,execution_mode,status,current_state,risk_level,requires_confirmation,input_json,output_json,conversation_id,origin_message_id,create_key,confirmation_key,last_action,last_action_key,attempt,max_steps,timeout_ms,max_input_bytes,max_cost_micros,error_code,error_message,revision,available_at,worker_id,lease_expires_at,created_at,updated_at,completed_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?,?,?,?,NULLIF(?,''),UUID_TO_BIN(NULLIF(?,'')),UUID_TO_BIN(NULLIF(?,'')),?,NULLIF(?,''),?,NULLIF(?,''),?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,?,?,?)`,
+		run.ID, run.UserID, run.SkillName, run.SkillVersion, run.ExecutionMode, run.Status, run.CurrentState, run.RiskLevel, run.RequiresConfirmation, run.Input, run.Output, run.ConversationID, run.OriginMessageID, run.CreateKey, run.ConfirmationKey, run.LastAction, run.LastActionKey, run.Attempt, run.MaxSteps, run.TimeoutMS, run.MaxInputBytes, run.MaxCostMicros, run.ErrorCode, run.ErrorMessage, run.Revision, run.AvailableAt, run.WorkerID, run.LeaseExpiresAt, run.CreatedAt, run.UpdatedAt, run.CompletedAt)
 	if isDuplicate(err) {
 		return skill.ErrConflict
 	}
@@ -211,8 +212,8 @@ func (s *Store) SaveSkillRun(ctx context.Context, run skill.Run, expectedRevisio
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE skill_runs SET status=?,current_state=?,output_json=NULLIF(?,''),confirmation_key=NULLIF(?,''),last_action=?,last_action_key=NULLIF(?,''),attempt=?,error_code=?,error_message=?,revision=?,available_at=?,worker_id=NULL,lease_expires_at=NULL,updated_at=?,completed_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND revision=?`,
-		run.Status, run.CurrentState, run.Output, run.ConfirmationKey, run.LastAction, run.LastActionKey, run.Attempt, run.ErrorCode, run.ErrorMessage, run.Revision, run.AvailableAt, run.UpdatedAt, run.CompletedAt, run.ID, run.UserID, expectedRevision)
+	result, err := tx.ExecContext(ctx, `UPDATE skill_runs SET status=?,current_state=?,input_json=?,output_json=NULLIF(?,''),confirmation_key=NULLIF(?,''),last_action=?,last_action_key=NULLIF(?,''),attempt=?,error_code=?,error_message=?,revision=?,available_at=?,worker_id=NULL,lease_expires_at=NULL,updated_at=?,completed_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND revision=?`,
+		run.Status, run.CurrentState, run.Input, run.Output, run.ConfirmationKey, run.LastAction, run.LastActionKey, run.Attempt, run.ErrorCode, run.ErrorMessage, run.Revision, run.AvailableAt, run.UpdatedAt, run.CompletedAt, run.ID, run.UserID, expectedRevision)
 	if isDuplicate(err) {
 		return skill.ErrConflict
 	}
@@ -240,6 +241,9 @@ func (s *Store) SaveSkillRun(ctx context.Context, run skill.Run, expectedRevisio
 			return err
 		}
 	}
+	if err = appendSkillRetryDelivery(ctx, tx, run); err != nil {
+		return err
+	}
 	if err = appendSkillAuditAndOutbox(ctx, tx, run, steps); err != nil {
 		return err
 	}
@@ -247,6 +251,47 @@ func (s *Store) SaveSkillRun(ctx context.Context, run skill.Run, expectedRevisio
 		return err
 	}
 	return tx.Commit()
+}
+
+func appendSkillRetryDelivery(ctx context.Context, tx *sql.Tx, run skill.Run) error {
+	if strings.TrimSpace(run.DeliveryContent) == "" || run.Attempt < 2 || run.ConversationID == "" || run.OriginMessageID == "" {
+		return nil
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM skill_run_deliveries WHERE run_id=UUID_TO_BIN(?) AND attempt=?)`, run.ID, run.Attempt).Scan(&exists); err != nil || exists {
+		return err
+	}
+	var owner, status string
+	if err := tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(user_id),status FROM conversations WHERE id=UUID_TO_BIN(?) FOR UPDATE`, run.ConversationID).Scan(&owner, &status); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if owner != run.UserID || status != "active" {
+		return nil
+	}
+	var sequence uint64
+	if err := tx.QueryRowContext(ctx, `SELECT sequence_no FROM messages WHERE id=UUID_TO_BIN(?) AND conversation_id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND role='user'`, run.OriginMessageID, run.ConversationID, run.UserID).Scan(&sequence); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var bubble int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(bubble_no),0)+1 FROM messages WHERE conversation_id=UUID_TO_BIN(?) AND sequence_no=?`, run.ConversationID, sequence+1).Scan(&bubble); err != nil {
+		return err
+	}
+	messageID, err := id.New()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO messages (id,conversation_id,user_id,role,sequence_no,bubble_no,content,status,reply_to_id,created_at,completed_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),UUID_TO_BIN(?),'assistant',?,?,?,'completed',UUID_TO_BIN(?),?,?)`, messageID, run.ConversationID, run.UserID, sequence+1, bubble, run.DeliveryContent, run.OriginMessageID, run.UpdatedAt, run.UpdatedAt); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO skill_run_deliveries (run_id,attempt,message_id,created_at) VALUES (UUID_TO_BIN(?),?,UUID_TO_BIN(?),?)`, run.ID, run.Attempt, messageID, run.UpdatedAt); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE conversations SET last_message_at=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?)`, run.UpdatedAt, run.UpdatedAt, run.ConversationID, run.UserID)
+	return err
 }
 
 func (s *Store) ShareGeneratedFileWithWorkspace(ctx context.Context, userID, workspaceID, runID, fileID string, now time.Time) error {
@@ -348,7 +393,16 @@ func appendSkillAuditAndOutbox(ctx context.Context, tx *sql.Tx, run skill.Run, s
 			return err
 		}
 	}
-	if run.Status != "succeeded" {
+	eventType := ""
+	switch run.Status {
+	case "succeeded":
+		eventType = "skill.run.succeeded.v1"
+	case "failed":
+		eventType = "skill.run.failed.v1"
+	case "cancelled":
+		eventType = "skill.run.cancelled.v1"
+	}
+	if eventType == "" {
 		return nil
 	}
 	eventID, err := id.New()
@@ -356,7 +410,7 @@ func appendSkillAuditAndOutbox(ctx context.Context, tx *sql.Tx, run skill.Run, s
 		return err
 	}
 	payload, _ := json.Marshal(map[string]string{"run_id": run.ID, "user_id": run.UserID, "skill_name": run.SkillName, "skill_version": run.SkillVersion})
-	_, err = tx.ExecContext(ctx, `INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at) VALUES (UUID_TO_BIN(?),'skill_run',UUID_TO_BIN(?),'skill.run.succeeded.v1',1,?,?)`, eventID, run.ID, payload, run.UpdatedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at) VALUES (UUID_TO_BIN(?),'skill_run',UUID_TO_BIN(?),?,1,?,?)`, eventID, run.ID, eventType, payload, run.UpdatedAt)
 	return err
 }
 
@@ -393,7 +447,7 @@ func (s *Store) loadSkillChildren(ctx context.Context, run *skill.Run) error {
 	return fileRows.Close()
 }
 
-const skillRunSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),skill_name,skill_version,execution_mode,status,current_state,risk_level,requires_confirmation,input_json,output_json,create_key,COALESCE(confirmation_key,''),last_action,COALESCE(last_action_key,''),attempt,max_steps,timeout_ms,max_input_bytes,max_cost_micros,error_code,error_message,revision,available_at,COALESCE(worker_id,''),lease_expires_at,created_at,updated_at,completed_at FROM skill_runs`
+const skillRunSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),skill_name,skill_version,execution_mode,status,current_state,risk_level,requires_confirmation,input_json,output_json,COALESCE(BIN_TO_UUID(conversation_id),''),COALESCE(BIN_TO_UUID(origin_message_id),''),create_key,COALESCE(confirmation_key,''),last_action,COALESCE(last_action_key,''),attempt,max_steps,timeout_ms,max_input_bytes,max_cost_micros,error_code,error_message,revision,available_at,COALESCE(worker_id,''),lease_expires_at,created_at,updated_at,completed_at FROM skill_runs`
 const skillStepSelect = `SELECT BIN_TO_UUID(id),sequence_no,state,status,tool_name,input_json,output_json,error_code,error_message,started_at,completed_at FROM skill_run_steps`
 const skillFileSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(run_id),display_name,media_type,size_bytes,sha256,storage_key,created_at FROM generated_files`
 
@@ -401,7 +455,7 @@ func scanSkillRun(row rowScanner) (skill.Run, error) {
 	var run skill.Run
 	var input, output []byte
 	var completed, leaseExpires sql.NullTime
-	err := row.Scan(&run.ID, &run.UserID, &run.SkillName, &run.SkillVersion, &run.ExecutionMode, &run.Status, &run.CurrentState, &run.RiskLevel, &run.RequiresConfirmation, &input, &output, &run.CreateKey, &run.ConfirmationKey, &run.LastAction, &run.LastActionKey, &run.Attempt, &run.MaxSteps, &run.TimeoutMS, &run.MaxInputBytes, &run.MaxCostMicros, &run.ErrorCode, &run.ErrorMessage, &run.Revision, &run.AvailableAt, &run.WorkerID, &leaseExpires, &run.CreatedAt, &run.UpdatedAt, &completed)
+	err := row.Scan(&run.ID, &run.UserID, &run.SkillName, &run.SkillVersion, &run.ExecutionMode, &run.Status, &run.CurrentState, &run.RiskLevel, &run.RequiresConfirmation, &input, &output, &run.ConversationID, &run.OriginMessageID, &run.CreateKey, &run.ConfirmationKey, &run.LastAction, &run.LastActionKey, &run.Attempt, &run.MaxSteps, &run.TimeoutMS, &run.MaxInputBytes, &run.MaxCostMicros, &run.ErrorCode, &run.ErrorMessage, &run.Revision, &run.AvailableAt, &run.WorkerID, &leaseExpires, &run.CreatedAt, &run.UpdatedAt, &completed)
 	run.Input, run.Output = append([]byte(nil), input...), append([]byte(nil), output...)
 	if completed.Valid {
 		run.CompletedAt = &completed.Time

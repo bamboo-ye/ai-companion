@@ -12,4 +12,5 @@ bin
 tmp
 *.test
 *.tsbuildinfo
-
+**/._*
+**/.DS_Store

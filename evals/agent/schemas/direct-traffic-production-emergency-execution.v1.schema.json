@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-emergency-execution.v1.schema.json",
+  "title": "Direct traffic production emergency execution envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "namespace_sha256", "rollout_request", "rollout_attestation", "adapter_certification", "adapter_certification_sha256", "emergency_gate_attestation", "emergency_gate_attestation_sha256", "activation_receipt", "activation_receipt_sha256", "expected_state", "request_sha256"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-emergency-execution-v1"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "rollout_request": {
+      "type": "object",
+      "required": ["decision", "expected_traffic_percent", "target_traffic_percent", "expected_revision"],
+      "properties": {
+        "decision": {"enum": ["rollback", "disable"]},
+        "expected_traffic_percent": {"const": 5},
+        "target_traffic_percent": {"const": 0},
+        "expected_revision": {"const": 1}
+      }
+    },
+    "rollout_attestation": {"$ref": "direct-rollout-attestation.v1.schema.json"},
+    "adapter_certification": {"$ref": "direct-traffic-adapter-certification.v1.schema.json"},
+    "adapter_certification_sha256": {"$ref": "#/$defs/digest"},
+    "emergency_gate_attestation": {"$ref": "direct-traffic-production-emergency-gate-attestation.v1.schema.json"},
+    "emergency_gate_attestation_sha256": {"$ref": "#/$defs/digest"},
+    "activation_receipt": {"$ref": "direct-traffic-production-receipt.v1.schema.json"},
+    "activation_receipt_sha256": {"$ref": "#/$defs/digest"},
+    "expected_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "operations", "history_chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"const": 5},
+        "revision": {"const": 1},
+        "operations": {"const": 1},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "request_sha256": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

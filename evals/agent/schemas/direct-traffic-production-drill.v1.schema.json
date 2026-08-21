@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-drill.v1.schema.json",
+  "title": "Direct traffic full production integration drill v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "mode", "decision", "contains_live_provider_evidence", "suite", "sources", "transitions", "checks", "terminal"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-drill-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "mode": {"const": "local-production-integration"},
+    "decision": {"const": "pass"},
+    "contains_live_provider_evidence": {"const": false},
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_module", "tests_run", "exit_code", "output_sha256"],
+      "properties": {
+        "test_module": {"const": "workers/python/tests/test_agent_direct_traffic_production.py"},
+        "tests_run": {"type": "integer", "minimum": 1},
+        "exit_code": {"const": 0},
+        "output_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "current_traffic_percent", "target_traffic_percent", "expected_revision", "result_revision", "expected_operations", "result_operations", "receipt_schema_version", "previous_chain_sha256", "chain_sha256"],
+        "properties": {
+          "name": {"enum": ["activation", "emergency_rollback", "recovery", "expansion_10", "expansion_25", "expansion_50", "expansion_100"]},
+          "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+          "target_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+          "expected_revision": {"type": "integer", "minimum": 0, "maximum": 6},
+          "result_revision": {"type": "integer", "minimum": 1, "maximum": 7},
+          "expected_operations": {"type": "integer", "minimum": 0, "maximum": 6},
+          "result_operations": {"type": "integer", "minimum": 1, "maximum": 7},
+          "receipt_schema_version": {"type": "string", "minLength": 1},
+          "previous_chain_sha256": {"$ref": "#/$defs/digest"},
+          "chain_sha256": {"$ref": "#/$defs/digest"}
+        }
+      }
+    },
+    "checks": {"type": "array", "minItems": 10, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "operations", "rollout_decision", "rollout_reason", "chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"const": 100},
+        "revision": {"const": 7},
+        "operations": {"const": 7},
+        "rollout_decision": {"const": "hold"},
+        "rollout_reason": {"const": "maximum_stage_reached"},
+        "chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-recovery-gate.v1.schema.json",
+  "title": "Direct traffic production recovery Gate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_id", "generated_at", "decision", "environment_sha256", "provider_instance_sha256", "namespace_sha256", "observer_instance_sha256", "current_traffic_percent", "target_traffic_percent", "cooldown_seconds", "minimum_cooldown_seconds", "source", "violations"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-recovery-gate-v1"},
+    "gate_id": {"type": "string", "pattern": "^direct-traffic-production-recovery-gate-[0-9a-f]{32}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "decision": {"enum": ["pass", "hold"]},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "observer_instance_sha256": {"$ref": "#/$defs/digest"},
+    "current_traffic_percent": {"const": 0},
+    "target_traffic_percent": {"const": 5},
+    "cooldown_seconds": {"type": "integer", "minimum": 0},
+    "minimum_cooldown_seconds": {"type": "integer", "minimum": 60},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rollout_attestation_sha256", "rollout_report_sha256", "adapter_certification_sha256", "shadow_attestation_sha256", "rollback_receipt_sha256"],
+      "properties": {
+        "rollout_attestation_sha256": {"$ref": "#/$defs/digest"},
+        "rollout_report_sha256": {"$ref": "#/$defs/digest"},
+        "adapter_certification_sha256": {"$ref": "#/$defs/digest"},
+        "shadow_attestation_sha256": {"$ref": "#/$defs/digest"},
+        "rollback_receipt_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "violations": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

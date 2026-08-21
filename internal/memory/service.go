@@ -64,14 +64,23 @@ func (s *Service) Observe(ctx context.Context, userID, conversationID, messageID
 	if !ok {
 		return nil
 	}
+	_, err := s.SaveFromModel(ctx, userID, conversationID, messageID, content)
+	return err
+}
+
+func (s *Service) SaveFromModel(ctx context.Context, userID, conversationID, messageID, content string) (Memory, error) {
+	content = strings.Trim(strings.TrimSpace(content), "。！？!? ")
+	if len([]rune(content)) < 2 || len([]rune(content)) > 2000 {
+		return Memory{}, fmt.Errorf("%w: content must contain 2-2000 characters", ErrValidation)
+	}
 	now := s.now().UTC()
 	memoryID, err := id.New()
 	if err != nil {
-		return err
+		return Memory{}, err
 	}
 	item := Memory{ID: memoryID, UserID: userID, Type: classify(content), Content: content, NormalizedHash: hash(normalize(content)), SourceConversationID: conversationID, SourceMessageID: messageID, Confidence: .99, Importance: .7, Sensitivity: sensitivity(content), Status: "active", ValidFrom: now, CreatedAt: now, UpdatedAt: now}
-	_, _, err = s.store.UpsertMemory(ctx, item)
-	return err
+	saved, _, err := s.store.UpsertMemory(ctx, item)
+	return saved, err
 }
 func (s *Service) Create(ctx context.Context, userID, content string) (Memory, error) {
 	content = strings.TrimSpace(content)

@@ -1,6 +1,7 @@
 package document
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -66,6 +67,23 @@ func TestPDFMagicDetection(t *testing.T) {
 	item, created, err := service.Upload(context.Background(), "user-1", "report.bin", []byte("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"))
 	if err != nil || !created || item.MediaType != "application/pdf" {
 		t.Fatalf("PDF upload = %#v, %v, %v", item, created, err)
+	}
+}
+
+func TestPDFLeadingWhitespaceIsNormalizedBeforeStorage(t *testing.T) {
+	blobs := NewMemoryBlobStore()
+	service := NewService(NewMemoryStore(), blobs, 1024)
+	raw := []byte("\n\n \t%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF")
+	item, created, err := service.Upload(context.Background(), "user-1", "report.pdf", raw)
+	if err != nil || !created || item.MediaType != "application/pdf" {
+		t.Fatalf("PDF upload = %#v, %v, %v", item, created, err)
+	}
+	stored, err := blobs.Get(context.Background(), item.StorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(stored, []byte("%PDF-")) || item.SizeBytes != int64(len(stored)) {
+		t.Fatalf("PDF was not normalized: size=%d data=%q", item.SizeBytes, stored[:min(8, len(stored))])
 	}
 }
 

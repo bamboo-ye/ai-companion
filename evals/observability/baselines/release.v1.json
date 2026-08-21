@@ -1,0 +1,30 @@
+{
+  "schema_version": "observability-release-baseline-v1",
+  "version": "release.v1",
+  "absolute_maximum": {
+    "degradation_level": 0,
+    "queue_lag": 499,
+    "oldest_job_age_seconds": 119.999,
+    "model_error_ratio": 0.199999,
+    "model_latency_p95_seconds": 9.999,
+    "agent_run_duration_p95_seconds": 480,
+    "retry_scheduled": 19,
+    "retry_exhausted_total": 2
+  },
+  "relative_maximum_increase": {
+    "queue_lag": 50,
+    "oldest_job_age_seconds": 30,
+    "model_error_ratio": 0.05,
+    "model_latency_p95_seconds": 2,
+    "agent_run_duration_p95_seconds": 30,
+    "agent_terminal_failures": 1,
+    "retry_scheduled": 5,
+    "retry_exhausted_total": 1
+  },
+  "conditional_minimum": {
+    "metric": "retry_recovery_ratio",
+    "sample_metric": "retry_settled",
+    "minimum_samples": 5,
+    "minimum": 0.8
+  }
+}

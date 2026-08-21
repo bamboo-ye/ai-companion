@@ -1,0 +1,13 @@
+{
+  "schema_version": "agent-eval-baseline-v1",
+  "version": "pr.v1",
+  "graph_version": "3.6.0",
+  "minimum_cases": 7,
+  "minimum": {
+    "hard_pass_rate": 1.0
+  },
+  "maximum": {
+    "model_calls_p95": 3,
+    "steps_p95": 8
+  }
+}

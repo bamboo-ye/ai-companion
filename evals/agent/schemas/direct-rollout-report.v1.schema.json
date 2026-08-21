@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/agent-direct-rollout-report.v1.schema.json",
+  "title": "Agent direct multi-window rollout decision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "decision_id", "generated_at", "decision",
+    "current_traffic_percent", "target_traffic_percent", "environment_sha256",
+    "source", "windows", "evidence", "reasons"
+  ],
+  "properties": {
+    "schema_version": {"const": "agent-direct-rollout-report-v1"},
+    "decision_id": {"type": "string", "pattern": "^direct-rollout-[0-9a-f]{32}$"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "decision": {"enum": ["expand", "hold", "rollback", "disable"]},
+    "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+    "target_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_version", "policy_sha256", "history_chain_sha256", "history_events", "direct_events"],
+      "properties": {
+        "policy_version": {"const": "agent-direct-rollout-policy-v1"},
+        "policy_sha256": {"$ref": "#/$defs/digest"},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"},
+        "history_events": {"type": "integer", "minimum": 0},
+        "direct_events": {"type": "integer", "minimum": 0}
+      }
+    },
+    "windows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast", "stable"],
+      "properties": {
+        "fast": {"$ref": "#/$defs/fastWindow"},
+        "stable": {"$ref": "#/$defs/stableWindow"}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {"type": "object"}
+    },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "expected", "actual"],
+        "properties": {
+          "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+          "expected": {"type": "string"},
+          "actual": {}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "failureCodes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "fastWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "selected", "healthy", "failure_codes"],
+      "properties": {
+        "requested": {"type": "integer", "minimum": 1},
+        "selected": {"type": "integer", "minimum": 0},
+        "healthy": {"type": "integer", "minimum": 0},
+        "failure_codes": {"$ref": "#/$defs/failureCodes"}
+      }
+    },
+    "stableWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "selected", "healthy", "coverage_seconds", "maximum_gap_seconds", "latest_age_seconds", "failure_codes"],
+      "properties": {
+        "required": {"type": "integer", "minimum": 1},
+        "selected": {"type": "integer", "minimum": 0},
+        "healthy": {"type": "integer", "minimum": 0},
+        "coverage_seconds": {"type": "number", "minimum": 0},
+        "maximum_gap_seconds": {"type": "number", "minimum": 0},
+        "latest_age_seconds": {"type": ["number", "null"], "minimum": 0},
+        "failure_codes": {"$ref": "#/$defs/failureCodes"}
+      }
+    }
+  }
+}

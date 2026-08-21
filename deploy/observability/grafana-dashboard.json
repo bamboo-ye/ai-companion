@@ -4,7 +4,7 @@
   "tags": ["ai-companion", "m6", "reliability"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": {
     "from": "now-6h",
@@ -147,6 +147,144 @@
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "targets": [
         { "expr": "sum by (route, status) (rate(ai_companion_http_requests_total[5m]))", "legendFormat": "{{route}} {{status}}" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Agent Execution Retry Outcomes (5m)",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        {
+          "expr": "ai_companion_agent_execution_retries_recent",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Agent Retry Recovery Ratio",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 23 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        {
+          "expr": "ai_companion_agent_execution_retry_recovery_ratio and on() (sum(ai_companion_agent_execution_retries_recent{outcome=~\"recovered|exhausted|deadline_exhausted\"}) >= 5)",
+          "legendFormat": "recovery"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Deployment Scheduler State",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "ai_companion_deployment_scheduler_up", "legendFormat": "up" },
+        { "expr": "ai_companion_deployment_scheduler_ready", "legendFormat": "ready" },
+        { "expr": "ai_companion_deployment_scheduler_due", "legendFormat": "due" },
+        { "expr": "ai_companion_deployment_scheduler_consecutive_failures", "legendFormat": "failures" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Scheduler Certification Remaining",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        {
+          "expr": "clamp_min(ai_companion_deployment_scheduler_certification_expiry_timestamp_seconds - time(), 0)",
+          "legendFormat": "remaining"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 900 },
+              { "color": "green", "value": 1800 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Deployment Shadow State",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "ai_companion_deployment_shadow_up", "legendFormat": "up" },
+        { "expr": "ai_companion_deployment_shadow_ready", "legendFormat": "ready" },
+        { "expr": "ai_companion_deployment_shadow_consecutive_failures", "legendFormat": "failures" },
+        { "expr": "ai_companion_deployment_shadow_lookup_errors", "legendFormat": "lookup errors" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Deployment Shadow Outcomes",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "ai_companion_deployment_shadow_outcomes", "legendFormat": "{{outcome}}" },
+        { "expr": "ai_companion_deployment_shadow_drift", "legendFormat": "drift" },
+        { "expr": "ai_companion_deployment_shadow_retried_lookups", "legendFormat": "retries" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Agent Dispatch Hints and Queue",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(ai_companion_agent_dispatch_hints_total[5m]))", "legendFormat": "hint {{outcome}}/s" },
+        { "expr": "ai_companion_agent_dispatch_queue_depth", "legendFormat": "queued" },
+        { "expr": "ai_companion_agent_dispatch_in_flight", "legendFormat": "in flight" },
+        { "expr": "ai_companion_agent_dispatch_replays_pending", "legendFormat": "replays pending" }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Agent Terminal Tool Wake",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 50 },
+      "datasource": { "type": "prometheus", "uid": "$datasource" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_companion_agent_tool_wake_latency_seconds_bucket[5m]))) and on() (sum(increase(ai_companion_agent_tool_wake_latency_seconds_count[5m])) >= 5)",
+          "legendFormat": "wake p95 seconds"
+        },
+        {
+          "expr": "sum by (outcome) (rate(ai_companion_agent_tool_wake_events_total[5m]))",
+          "legendFormat": "{{outcome}}/s"
+        }
       ]
     }
   ]

@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh AI Companion TLS certificate and reload Caddy
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ai-companion-refresh-certificate

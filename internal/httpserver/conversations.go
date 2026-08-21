@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/chatattachment"
 	"github.com/windcry1/ai-companion/internal/conversation"
-	"github.com/windcry1/ai-companion/internal/ledger"
-	"github.com/windcry1/ai-companion/internal/planner"
+	"github.com/windcry1/ai-companion/internal/document"
 )
 
 func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +36,13 @@ func (s *Server) listConversations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+func (s *Server) deleteConversation(w http.ResponseWriter, r *http.Request) {
+	if err := s.conversations.Delete(r.Context(), currentAuth(r).User.ID, r.PathValue("conversation_id")); err != nil {
+		writeConversationError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	after, _ := strconv.ParseUint(r.URL.Query().Get("after_sequence"), 10, 64)
@@ -59,29 +68,112 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Content string `json:"content"`
+		Content     string   `json:"content"`
+		DocumentIDs []string `json:"document_ids"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
 	auth := currentAuth(r)
-	message, job, err := s.conversations.Send(r.Context(), auth.User.ID, r.PathValue("conversation_id"), input.Content)
+	if len(input.DocumentIDs) > 3 {
+		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "too_many_attachments", Message: "单条消息最多发送 3 个文件"})
+		return
+	}
+	documents := make([]document.Document, 0, len(input.DocumentIDs))
+	for _, documentID := range input.DocumentIDs {
+		item, documentErr := s.documents.Get(r.Context(), auth.User.ID, documentID)
+		if documentErr != nil {
+			writeDocumentError(w, documentErr)
+			return
+		}
+		documents = append(documents, item)
+	}
+	visibleContent := strings.TrimSpace(input.Content)
+	if visibleContent == "" && len(input.DocumentIDs) > 0 {
+		visibleContent = "请处理这个文件"
+	}
+	messageContent := visibleContent
+	for _, item := range documents {
+		messageContent = chatattachment.AppendDocument(messageContent, item.ID, item.Name)
+	}
+	if len(s.agentChatModules) > 0 {
+		conversationItem, conversationErr := s.conversations.Get(
+			r.Context(),
+			auth.User.ID,
+			r.PathValue("conversation_id"),
+		)
+		if conversationErr != nil {
+			writeConversationError(w, conversationErr)
+			return
+		}
+		persona, characterErr := s.characters.Get(
+			r.Context(),
+			auth.User.ID,
+			conversationItem.CharacterID,
+		)
+		if characterErr != nil {
+			writeConversationError(w, conversation.ErrNotFound)
+			return
+		}
+		if s.agentModuleEnabled(persona.Module) {
+			if s.agentRuns == nil {
+				writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "agent_unavailable", Message: "当前模块的 Agent 运行时暂不可用"})
+				return
+			}
+			if validateErr := s.conversations.ValidateContent(messageContent); validateErr != nil {
+				writeConversationError(w, validateErr)
+				return
+			}
+			history, historyErr := s.conversations.Messages(
+				r.Context(),
+				auth.User.ID,
+				conversationItem.ID,
+				0,
+				0,
+				100,
+			)
+			if historyErr != nil {
+				writeConversationError(w, historyErr)
+				return
+			}
+			trustedHistory := make([]map[string]string, 0, len(history))
+			for _, prior := range history {
+				if prior.Role == "user" || prior.Role == "assistant" {
+					trustedHistory = append(trustedHistory, map[string]string{
+						"role": prior.Role, "content": prior.Content,
+					})
+				}
+			}
+			message, run, acceptErr := s.agentRuns.AcceptChat(r.Context(), agent.AcceptChatInput{
+				UserID: auth.User.ID, ConversationID: conversationItem.ID,
+				CharacterID: persona.ID, Module: persona.Module, Content: messageContent,
+				Context: map[string]any{
+					"timezone":      auth.User.Timezone,
+					"system_prompt": conversation.PersonaSystemPrompt(persona),
+					"history":       trustedHistory,
+					"email_profile": map[string]any{
+						"sender_name":      auth.User.DisplayName,
+						"default_language": defaultEmailLanguage(auth.User.Locale),
+						"profile_version":  "account-email-profile-v1",
+					},
+				},
+			})
+			if acceptErr != nil {
+				writeAgentRunError(w, acceptErr)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{
+				"message": message, "agent_run": publicAgentRun(run), "runtime": "agent",
+			})
+			return
+		}
+	}
+	message, job, err := s.conversations.Send(r.Context(), auth.User.ID, r.PathValue("conversation_id"), messageContent)
 	if err != nil {
 		writeConversationError(w, err)
 		return
 	}
-	response := map[string]any{"message": message, "job": job}
-	if ledger.LooksLikeCandidate(input.Content) {
-		if candidate, candidateErr := s.ledger.ParseCandidate(r.Context(), auth.User.ID, message.ID, input.Content, auth.User.Timezone); candidateErr == nil {
-			response["ledger_candidate"] = candidate
-		}
-	}
-	if planner.LooksLikeReminder(input.Content) {
-		if candidate, candidateErr := s.planner.ParseReminder(r.Context(), auth.User.ID, message.ID, input.Content, auth.User.Timezone); candidateErr == nil {
-			response["reminder_candidate"] = candidate
-		}
-	}
-	writeJSON(w, http.StatusAccepted, response)
+	writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "job": job})
 }
 func (s *Server) getGenerationJob(w http.ResponseWriter, r *http.Request) {
 	job, err := s.conversations.Job(r.Context(), currentAuth(r).User.ID, r.PathValue("job_id"))
@@ -113,6 +205,10 @@ func (s *Server) streamGenerationEvents(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, apiError{Code: "stream_unsupported", Message: "当前连接不支持流式响应"})
 		return
 	}
+	// Generation jobs can legitimately run longer than the server-wide write
+	// timeout (for example, PDF translation). Heartbeats and authentication
+	// keep this dedicated stream bounded by the request context.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	after, _ := strconv.ParseUint(r.Header.Get("Last-Event-ID"), 10, 64)
 	if query, _ := strconv.ParseUint(r.URL.Query().Get("after_event_id"), 10, 64); query > after {
 		after = query
@@ -157,6 +253,13 @@ func (s *Server) streamGenerationEvents(w http.ResponseWriter, r *http.Request) 
 		case <-ticker.C:
 		}
 	}
+}
+
+func defaultEmailLanguage(locale string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh") {
+		return "zh-CN"
+	}
+	return "en-US"
 }
 
 func writeConversationError(w http.ResponseWriter, err error) {

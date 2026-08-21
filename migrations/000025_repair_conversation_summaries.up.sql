@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS conversation_summaries (
+    id BINARY(16) NOT NULL,
+    conversation_id BINARY(16) NOT NULL,
+    user_id BINARY(16) NOT NULL,
+    version INT UNSIGNED NOT NULL,
+    start_sequence BIGINT UNSIGNED NOT NULL,
+    end_sequence BIGINT UNSIGNED NOT NULL,
+    range_started_at TIMESTAMP(6) NOT NULL,
+    range_ended_at TIMESTAMP(6) NOT NULL,
+    content TEXT NOT NULL,
+    token_count INT UNSIGNED NOT NULL,
+    summarizer_version VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_conversation_summaries_version (conversation_id, version),
+    KEY idx_conversation_summaries_latest (conversation_id, end_sequence DESC),
+    KEY idx_conversation_summaries_user_created (user_id, created_at),
+    CONSTRAINT fk_conversation_summaries_conversation FOREIGN KEY (conversation_id) REFERENCES conversations(id),
+    CONSTRAINT fk_conversation_summaries_user FOREIGN KEY (user_id) REFERENCES users(id),
+    CONSTRAINT chk_conversation_summaries_range CHECK (start_sequence <= end_sequence)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
