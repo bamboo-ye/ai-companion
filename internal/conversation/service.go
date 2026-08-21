@@ -157,6 +157,7 @@ type ToolRequest struct {
 	CharacterID    string
 	Module         string
 	Text           string
+	History        []Message
 }
 
 type ToolResult struct {
@@ -487,10 +488,11 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 	provider := s.providerFor(policy)
 	routingUsage := Usage{}
 	modelRouted := false
+	referenceHistory := routingReferenceHistory(history, queryIndex)
 	if modelTools, ok := s.tools.(ModelToolExecutor); ok && query != "" {
 		request := ToolRequest{
 			UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
-			Module: persona.Module, Text: query,
+			Module: persona.Module, Text: query, History: referenceHistory,
 		}
 		definitions := modelTools.ModelTools(request)
 		if len(definitions) > 0 {
@@ -509,12 +511,12 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 			if fewShots := routingFewShotPrompt(persona.Module, definitions); fewShots != "" {
 				routingHistory = append(routingHistory, Message{Role: "system", Content: fewShots})
 			}
-			if references := routingReferenceHistory(history, queryIndex); len(references) > 0 {
+			if len(referenceHistory) > 0 {
 				routingHistory = append(routingHistory, Message{
 					Role:    "system",
 					Content: "以下近期会话仅用于消解当前消息中的明确指代，或识别对助手上一轮所追问缺失字段的直接补充。除仍未完成的最近请求外，当前消息决定本轮言语行为；不得沿用历史中的旧命令，也不得把历史事项当作真实存在，写操作仍须查询业务数据：",
 				})
-				routingHistory = append(routingHistory, references...)
+				routingHistory = append(routingHistory, referenceHistory...)
 			}
 			routingHistory = append(routingHistory, Message{Role: "user", Content: query})
 			turn, usage, routeErr := toolProvider.GenerateWithTools(ctx, persona, routingHistory, definitions)
@@ -561,7 +563,7 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 		if contextProvider, ok := s.tools.(ToolContextProvider); ok {
 			toolContext, contextErr := contextProvider.Context(ctx, ToolRequest{
 				UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
-				Module: persona.Module, Text: query,
+				Module: persona.Module, Text: query, History: referenceHistory,
 			})
 			if contextErr == nil && strings.TrimSpace(toolContext) != "" {
 				history = append([]Message{{Role: "system", Content: toolContext}}, history...)
@@ -571,7 +573,7 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 	if !modelRouted && s.tools != nil && query != "" {
 		toolResult, toolErr := s.tools.Execute(ctx, ToolRequest{
 			UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
-			Module: persona.Module, Text: query,
+			Module: persona.Module, Text: query, History: referenceHistory,
 		})
 		if toolErr != nil {
 			_, _ = s.store.AppendEvent(ctx, jobID, "tool_failed", map[string]any{"error": toolErr.Error()}, s.now().UTC())

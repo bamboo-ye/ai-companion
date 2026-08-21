@@ -90,6 +90,33 @@ func TestToolGatewayPrepareAndCommitLedgerWithReplay(t *testing.T) {
 	}
 }
 
+func TestToolGatewayCarriesTrustedReminderClarificationHistory(t *testing.T) {
+	gateway, _ := newLedgerGateway(t)
+	reader := gateway.runs.(staticRunReader)
+	input, err := json.Marshal(map[string]any{
+		"message_id": "evening-follow-up",
+		"text":       "今晚",
+		"context": map[string]any{"history": []map[string]string{
+			{"role": "system", "content": "不应传入工具"},
+			{"role": "user", "content": "提醒我晚上查看邮件"},
+			{"role": "assistant", "content": "还需要补充“提醒日期”，补充后我就能创建提醒。"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.run.Input = input
+	gateway.runs = reader
+
+	prepared, err := gateway.Prepare(context.Background(), "run-1", ToolPrepareInput{
+		CallKey: "evening:prepare", ToolName: "life_prepare_reminder",
+		Arguments: map[string]any{}, ExpectedRevision: 1,
+	})
+	if err != nil || prepared.Status != "requires_confirmation" || !strings.Contains(prepared.Summary, "事项：查看邮件") {
+		t.Fatalf("Prepare() = %#v, %v", prepared, err)
+	}
+}
+
 func TestToolGatewayCommitsConfirmedLifeTaskCompletion(t *testing.T) {
 	gateway, _ := newLedgerGateway(t)
 	ctx := context.Background()

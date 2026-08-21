@@ -81,6 +81,9 @@ type ToolGateway struct {
 type agentRunInput struct {
 	MessageID string `json:"message_id"`
 	Text      string `json:"text"`
+	Context   struct {
+		History []conversation.Message `json:"history"`
+	} `json:"context"`
 }
 
 type confirmationClaims struct {
@@ -352,10 +355,20 @@ func (g *ToolGateway) loadRequest(ctx context.Context, runID string, expectedRev
 	if input.MessageID == "" || input.Text == "" {
 		return Run{}, conversation.ToolRequest{}, fmt.Errorf("%w: message_id and text are required", ErrValidation)
 	}
+	history := make([]conversation.Message, 0, len(input.Context.History))
+	for _, message := range input.Context.History {
+		message.Content = strings.TrimSpace(message.Content)
+		if (message.Role == "user" || message.Role == "assistant") && message.Content != "" {
+			history = append(history, conversation.Message{Role: message.Role, Content: message.Content})
+		}
+	}
+	if len(history) > 20 {
+		history = history[len(history)-20:]
+	}
 	return run, conversation.ToolRequest{
 		UserID: run.UserID, MessageID: input.MessageID, JobID: run.ID,
 		ConversationID: run.ConversationID, CharacterID: run.CharacterID,
-		Module: run.Module, Text: input.Text,
+		Module: run.Module, Text: input.Text, History: history,
 	}, nil
 }
 

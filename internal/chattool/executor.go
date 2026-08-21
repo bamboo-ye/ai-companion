@@ -656,7 +656,11 @@ func (e *Executor) createReminder(ctx context.Context, request conversation.Tool
 func (e *Executor) createReminderWithHints(ctx context.Context, request conversation.ToolRequest, title, dateHint string) (conversation.ToolResult, error) {
 	title = strings.TrimSpace(title)
 	dateHint = strings.TrimSpace(dateHint)
-	item, err := e.planner.ParseReminderWithSlots(ctx, request.UserID, request.MessageID, request.Text, title, dateHint, defaultTimezone)
+	parseText := request.Text
+	if continuation := reminderClarificationContext(request.History); continuation != "" {
+		parseText = continuation + " " + parseText
+	}
+	item, err := e.planner.ParseReminderWithSlots(ctx, request.UserID, request.MessageID, parseText, title, dateHint, defaultTimezone)
 	if err != nil {
 		return handled("life.reminder.create", "这条提醒还不能识别，请补充明确的日期、时间和事项。", nil), nil
 	}
@@ -666,6 +670,18 @@ func (e *Executor) createReminderWithHints(ctx context.Context, request conversa
 		}
 		if containsString(item.NeedsClarification, "future_time") {
 			return handled("life.reminder.create", "这个时间已经过去，未安排。请提供一个未来时间。", item), nil
+		}
+		if len(item.NeedsClarification) == 1 && item.NeedsClarification[0] == "due_at" && item.Title != "" {
+			return handled("life.reminder.create", fmt.Sprintf(
+				"事项“%s”已保留；还需要补充提醒日期，例如“今晚”“明天”或“下周五”。补充后我就能创建提醒。",
+				item.Title,
+			), item), nil
+		}
+		if len(item.NeedsClarification) == 1 && item.NeedsClarification[0] == "title" && item.LocalDue != "" {
+			return handled("life.reminder.create", fmt.Sprintf(
+				"提醒日期“%s”已保留；还需要补充事项名称。补充后我就能创建提醒。",
+				item.LocalDue,
+			), item), nil
 		}
 		return handled("life.reminder.create", "还需要补充"+friendlyMissing(item.NeedsClarification)+"，补充后我就能创建提醒。", item), nil
 	}
@@ -682,6 +698,33 @@ func (e *Executor) createReminderWithHints(ctx context.Context, request conversa
 		),
 	}
 	return result, nil
+}
+
+// reminderClarificationContext follows only the immediately preceding chain
+// of reminder-field questions. It restores fields the user already supplied
+// without treating unrelated or completed historical commands as active.
+func reminderClarificationContext(history []conversation.Message) string {
+	fragments := make([]string, 0, 4)
+	for index, turns := len(history)-1, 0; index >= 1 && turns < 4; turns++ {
+		assistant := history[index]
+		user := history[index-1]
+		if assistant.Role != "assistant" || user.Role != "user" ||
+			!isReminderClarification(assistant.Content) || strings.TrimSpace(user.Content) == "" {
+			break
+		}
+		fragments = append([]string{strings.TrimSpace(user.Content)}, fragments...)
+		index -= 2
+	}
+	return strings.Join(fragments, " ")
+}
+
+func isReminderClarification(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.Contains(text, "补充") {
+		return false
+	}
+	return strings.Contains(text, "创建提醒") || strings.Contains(text, "提醒日期") ||
+		strings.Contains(text, "提醒时间")
 }
 
 func (e *Executor) lifeQuery(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, bool, error) {

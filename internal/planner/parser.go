@@ -98,8 +98,10 @@ func ParseReminderWithSlots(text, title, dateHint, timezone string, reference ti
 		if len([]rune(title)) > 255 {
 			return Reminder{}, fmt.Errorf("%w: title must not exceed 255 characters", ErrValidation)
 		}
-		result.Title = title
-		result.NeedsClarification = removeClarification(result.NeedsClarification, "title")
+		if normalizedTitle := reminderTitle(title); normalizedTitle != "" {
+			result.Title = normalizedTitle
+			result.NeedsClarification = removeClarification(result.NeedsClarification, "title")
+		}
 	}
 	if len(result.NeedsClarification) == 0 {
 		result.Status = "pending_confirmation"
@@ -421,6 +423,11 @@ func reminderTitle(text string) string {
 	value = colonClockPattern.ReplaceAllString(value, " ")
 	for _, token := range []string{"请", "明天", "明早", "明晚", "今天", "今晚", "每天", "每周", "提醒我", "提醒", "一下"} {
 		value = strings.ReplaceAll(value, token, "")
+	}
+	value = strings.Trim(strings.TrimSpace(value), "，,。.!！?？ ")
+	for _, period := range []string{"上午", "早上", "清晨", "中午", "下午", "晚上"} {
+		value = strings.TrimSpace(strings.TrimPrefix(value, period))
+		value = strings.TrimSpace(strings.TrimSuffix(value, period))
 	}
 	return strings.Trim(strings.TrimSpace(value), "，,。.!！?？ ")
 }
