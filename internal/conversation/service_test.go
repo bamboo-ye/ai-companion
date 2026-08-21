@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,44 @@ import (
 	memorydomain "github.com/windcry1/ai-companion/internal/memory"
 	"github.com/windcry1/ai-companion/internal/reliability"
 )
+
+func TestRecentMessagesReturnsNewestWindowInChronologicalOrder(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	conversationID := "recent-history-conversation"
+	if err := store.CreateConversation(ctx, Conversation{
+		ID: conversationID, UserID: "user-1", CharacterID: "character-1",
+		Status: "active", NextSequence: 1, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 130; index++ {
+		content := fmt.Sprintf("message-%03d", index)
+		now := time.Now().Add(time.Duration(index) * time.Millisecond)
+		_, _, err := store.AcceptMessage(ctx, "user-1", conversationID, Message{
+			ID: fmt.Sprintf("message-id-%03d", index), UserID: "user-1",
+			ConversationID: conversationID, Role: "user", Bubble: 1,
+			Content: content, Status: "completed", CreatedAt: now, CompletedAt: &now,
+		}, Job{ID: fmt.Sprintf("job-%03d", index), ConversationID: conversationID})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := NewService(store, nil, nil)
+	recent, err := service.RecentMessages(ctx, "user-1", conversationID, 100)
+	if err != nil || len(recent) != 100 {
+		t.Fatalf("RecentMessages() len=%d err=%v", len(recent), err)
+	}
+	if recent[0].Content != "message-031" || recent[len(recent)-1].Content != "message-130" {
+		t.Fatalf("recent window = %q ... %q", recent[0].Content, recent[len(recent)-1].Content)
+	}
+	for index := 1; index < len(recent); index++ {
+		if recent[index-1].Sequence >= recent[index].Sequence {
+			t.Fatalf("recent history is not chronological at %d: %#v", index, recent)
+		}
+	}
+}
 
 type blockingProvider struct{}
 

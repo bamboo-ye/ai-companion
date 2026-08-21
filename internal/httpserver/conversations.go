@@ -124,12 +124,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 				writeConversationError(w, validateErr)
 				return
 			}
-			history, historyErr := s.conversations.Messages(
+			history, historyErr := s.conversations.RecentMessages(
 				r.Context(),
 				auth.User.ID,
 				conversationItem.ID,
-				0,
-				0,
 				100,
 			)
 			if historyErr != nil {

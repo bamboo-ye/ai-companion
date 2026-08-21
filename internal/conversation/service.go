@@ -94,6 +94,10 @@ type Store interface {
 	RecoverInterrupted(context.Context, time.Time) error
 }
 
+type recentMessageStore interface {
+	ListRecentMessages(context.Context, string, string, int) ([]Message, error)
+}
+
 type Provider interface {
 	Generate(context.Context, character.Character, []Message) (string, Usage, error)
 }
@@ -266,6 +270,41 @@ func (s *Service) Messages(ctx context.Context, userID, conversationID string, a
 		limit = 100
 	}
 	return s.store.ListMessages(ctx, userID, conversationID, after, afterBubble, limit)
+}
+
+// RecentMessages returns the newest messages in chronological order. It is
+// distinct from cursor pagination, which intentionally starts at the oldest
+// matching row and must not be used to build the current Agent context.
+func (s *Service) RecentMessages(ctx context.Context, userID, conversationID string, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	if store, ok := s.store.(recentMessageStore); ok {
+		return store.ListRecentMessages(ctx, userID, conversationID, limit)
+	}
+
+	recent := make([]Message, 0, limit)
+	var after uint64
+	var afterBubble int
+	for {
+		page, err := s.store.ListMessages(ctx, userID, conversationID, after, afterBubble, 200)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		recent = append(recent, page...)
+		if len(recent) > limit {
+			recent = recent[len(recent)-limit:]
+		}
+		last := page[len(page)-1]
+		after, afterBubble = last.Sequence, last.Bubble
+		if len(page) < 200 {
+			break
+		}
+	}
+	return recent, nil
 }
 func (s *Service) Job(ctx context.Context, userID, jobID string) (Job, error) {
 	return s.store.GetJob(ctx, userID, jobID)

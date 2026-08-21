@@ -275,7 +275,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             decision.tool_arguments,
             {"local_date": "2026-07-24"},
         )
-        self.assertEqual(port.requests[0]["tool_choice"], "auto")
+        self.assertEqual(port.requests[0]["tool_choice"], "required")
         self.assertNotIn("parallel_tool_calls", port.requests[0])
         self.assertEqual(port.requests[0]["model"], "openrouter/free")
         self.assertNotIn("models", port.requests[0])
@@ -389,6 +389,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             decision.tool_arguments,
             {"title": "提交报销材料", "date_hint": "下周五"},
         )
+        self.assertEqual(port.requests[0]["tool_choice"], "required")
         prompt = "\n".join(
             str(message.get("content", ""))
             for message in port.requests[0]["messages"]

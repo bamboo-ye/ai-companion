@@ -576,7 +576,7 @@ class OpenRouterDecisionPort:
                     }
                     for item in routing_definitions
                 ],
-                "tool_choice": "auto",
+                "tool_choice": "required" if structured_life_routing else "auto",
                 "max_tokens": self._config.max_tokens,
             }
         )

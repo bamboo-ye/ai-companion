@@ -112,6 +112,32 @@ func (s *Store) ListMessages(ctx context.Context, userID, conversationID string,
 	return items, rows.Err()
 }
 
+func (s *Store) ListRecentMessages(ctx context.Context, userID, conversationID string, limit int) ([]conversation.Message, error) {
+	if _, err := s.GetConversation(ctx, userID, conversationID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, messageSelect+` WHERE conversation_id=UUID_TO_BIN(?) ORDER BY sequence_no DESC,bubble_no DESC LIMIT ?`, conversationID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]conversation.Message, 0, limit)
+	for rows.Next() {
+		item, scanErr := scanMessage(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
+		items[left], items[right] = items[right], items[left]
+	}
+	return items, nil
+}
+
 func (s *Store) GetLatestSummary(ctx context.Context, userID, conversationID string) (conversation.ConversationSummary, error) {
 	item, err := scanConversationSummary(s.db.QueryRowContext(ctx, conversationSummarySelect+` JOIN conversations c ON c.id=s.conversation_id WHERE s.conversation_id=UUID_TO_BIN(?) AND c.user_id=UUID_TO_BIN(?) ORDER BY s.version DESC LIMIT 1`, conversationID, userID))
 	if errors.Is(err, sql.ErrNoRows) {
