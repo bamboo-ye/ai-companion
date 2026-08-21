@@ -397,6 +397,47 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("上一轮明确追问某个缺失字段", prompt)
         self.assertIn("continue_create", prompt)
 
+    def test_life_router_continues_ledger_and_schedule_clarifications(self) -> None:
+        port = StubOpenRouter([tool_response("life_prepare_ledger_entry")])
+        life_context = {
+            "history": [
+                {"role": "user", "content": "打车花了36元"},
+                {"role": "assistant", "content": "还需要补充发生时间。"},
+            ],
+            "tools": [
+                {
+                    "name": "life_prepare_ledger_entry",
+                    "description": "创建或继续补充账单",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_prepare_schedule_change",
+                    "description": "调整或继续补充事项时间",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_no_tool",
+                    "description": "无需工具",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
+        }
+
+        decision = port.decide(
+            module="life",
+            message="今天",
+            context=life_context,
+        )
+
+        self.assertEqual(decision.tool_name, "life_prepare_ledger_entry")
+        prompt = "\n".join(
+            str(message.get("content", ""))
+            for message in port.requests[0]["messages"]
+            if message.get("role") == "system"
+        )
+        self.assertIn("ledger_entry", prompt)
+        self.assertIn("continue_reschedule", prompt)
+
     def test_router_selects_and_composer_builds_complex_tool_arguments(self) -> None:
         port = StubOpenRouter(
             [

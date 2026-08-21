@@ -1723,6 +1723,25 @@ def _routing_few_shot_prompt(module: ModuleKey, tool_names: set[str]) -> str:
                 },
             }
         )
+    if "life_prepare_ledger_entry" in tool_names:
+        examples.append(
+            {
+                "history": [
+                    {"role": "user", "content": "打车花了36元"},
+                    {"role": "assistant", "content": "还需要补充发生时间。"},
+                ],
+                "user": "今天",
+                "semantic": {
+                    "speech_act": "continue_create",
+                    "object": "ledger_entry",
+                    "filled_slot": "occurred_at",
+                },
+                "decision": {
+                    "tool": "life_prepare_ledger_entry",
+                    "arguments": {},
+                },
+            }
+        )
     if "life_prepare_reminder" in tool_names:
         examples.extend(
             (
@@ -1769,15 +1788,32 @@ def _routing_few_shot_prompt(module: ModuleKey, tool_names: set[str]) -> str:
             )
         )
     if "life_prepare_schedule_change" in tool_names:
-        examples.append(
-            {
-                "user": "把选课提醒改到明天下午3点",
-                "semantic": {"speech_act": "reschedule", "object": "reminder"},
-                "decision": {
-                    "tool": "life_prepare_schedule_change",
-                    "arguments": {},
+        examples.extend(
+            (
+                {
+                    "user": "把选课提醒改到明天下午3点",
+                    "semantic": {"speech_act": "reschedule", "object": "reminder"},
+                    "decision": {
+                        "tool": "life_prepare_schedule_change",
+                        "arguments": {},
+                    },
                 },
-            }
+                {
+                    "history": [
+                        {"role": "user", "content": "把选课提醒改一下"},
+                        {"role": "assistant", "content": "还需要补充新的日期或时间。"},
+                    ],
+                    "user": "明天下午3点",
+                    "semantic": {
+                        "speech_act": "continue_reschedule",
+                        "object": "reminder",
+                    },
+                    "decision": {
+                        "tool": "life_prepare_schedule_change",
+                        "arguments": {},
+                    },
+                },
+            )
         )
     if not examples:
         return ""
