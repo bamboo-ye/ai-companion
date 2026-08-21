@@ -147,6 +147,15 @@ func TestReminderSlotsMergeIndependentFollowUpFields(t *testing.T) {
 	if err != nil || dateFromCurrentMessage.Title != "提交报销材料" || dateFromCurrentMessage.LocalDue != "2026-08-28" {
 		t.Fatalf("independent title slot = %#v err=%v", dateFromCurrentMessage, err)
 	}
+
+	evening, err := ParseReminder("提醒我晚上查看邮件", "Asia/Shanghai", reference)
+	if err != nil || evening.Title != "查看邮件" || evening.DueAt != nil || !containsClarification(evening.NeedsClarification, "due_at") {
+		t.Fatalf("evening reminder = %#v err=%v", evening, err)
+	}
+	completed, err := ParseReminderWithSlots("提醒我晚上查看邮件 今晚", "今晚", "", "Asia/Shanghai", reference)
+	if err != nil || completed.Title != "查看邮件" || completed.LocalDue != "2026-08-21" || len(completed.NeedsClarification) != 0 {
+		t.Fatalf("completed evening reminder = %#v err=%v", completed, err)
+	}
 }
 
 func TestParseSchedulePreservesFallbackDateAndSupportsColonClock(t *testing.T) {

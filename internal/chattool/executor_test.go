@@ -226,17 +226,63 @@ func TestReminderFollowUpFillsOnlyThePreviouslyMissingSlot(t *testing.T) {
 	first, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
 		UserID: "user-1", MessageID: "reminder-first-turn", Module: "life", Text: "提醒我订机票",
 	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{"title": "订机票"}})
-	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "提醒日期") {
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "事项“订机票”已保留") || !strings.Contains(first.Response, "提醒日期") {
 		t.Fatalf("first turn = %#v err=%v", first, err)
 	}
 
 	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
 		UserID: "user-1", MessageID: "reminder-follow-up", Module: "life", Text: "这周结束前",
-	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{
-		"title": "订机票", "date_hint": "这周结束前",
-	}})
+		History: []conversation.Message{
+			{Role: "user", Content: "提醒我订机票"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{}})
 	if err != nil || second.Confirmation == nil || !strings.Contains(second.Confirmation.Summary, "事项：订机票") || !strings.Contains(second.Confirmation.Summary, "日期：2026-08-23") {
 		t.Fatalf("follow-up turn = %#v err=%v", second, err)
+	}
+}
+
+func TestReminderFollowUpKeepsEveningTitleWithoutModelRepeatingIt(t *testing.T) {
+	ctx := context.Background()
+	location, _ := time.LoadLocation("Asia/Shanghai")
+	clock := func() time.Time { return time.Date(2026, 8, 21, 10, 0, 0, 0, location) }
+	plannerService := planner.NewServiceWithClock(planner.NewMemoryStore(), clock)
+	executor := New(ledger.NewService(ledger.NewMemoryStore()), plannerService, nil, nil)
+	executor.now = clock
+
+	first, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "evening-first", Module: "life", Text: "提醒我晚上查看邮件",
+	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{}})
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "事项“查看邮件”已保留") || !strings.Contains(first.Response, "提醒日期") {
+		t.Fatalf("first turn = %#v err=%v", first, err)
+	}
+
+	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "evening-second", Module: "life", Text: "今晚",
+		History: []conversation.Message{
+			{Role: "user", Content: "提醒我晚上查看邮件"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{}})
+	if err != nil || second.Confirmation == nil || !strings.Contains(second.Confirmation.Summary, "事项：查看邮件") ||
+		!strings.Contains(second.Confirmation.Summary, "日期：2026-08-21") {
+		t.Fatalf("second turn = %#v err=%v", second, err)
+	}
+
+	// A conversation already affected by the old behavior can still recover:
+	// the executor accumulates the whole contiguous clarification chain.
+	recovered, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "evening-third", Module: "life", Text: "查看邮件",
+		History: []conversation.Message{
+			{Role: "user", Content: "提醒我晚上查看邮件"},
+			{Role: "assistant", Content: first.Response},
+			{Role: "user", Content: "今晚"},
+			{Role: "assistant", Content: "还需要补充“事项名称”，补充后我就能创建提醒。"},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_reminder", Arguments: map[string]any{"title": "查看邮件"}})
+	if err != nil || recovered.Confirmation == nil || !strings.Contains(recovered.Confirmation.Summary, "事项：查看邮件") ||
+		!strings.Contains(recovered.Confirmation.Summary, "日期：2026-08-21") {
+		t.Fatalf("recovered third turn = %#v err=%v", recovered, err)
 	}
 }
 
