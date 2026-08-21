@@ -11,12 +11,14 @@ import (
 )
 
 var (
-	amountPattern       = regexp.MustCompile(`(?i)(\d+(?:\.\d{1,2})?)\s*(人民币|美元|元|块|cny|rmb|usd|dollars?|¥|\$)`)
-	explicitDatePattern = regexp.MustCompile(`(20\d{2})[-年/](\d{1,2})[-月/](\d{1,2})日?`)
+	amountPattern                = regexp.MustCompile(`(?i)(\d+(?:\.\d{1,2})?)\s*(人民币|美元|元|块|cny|rmb|usd|dollars?|¥|￥|\$)`)
+	prefixedAmountPattern        = regexp.MustCompile(`(?i)(人民币|美元|cny|rmb|usd|¥|￥|\$)\s*(\d+(?:\.\d{1,2})?)`)
+	transactionBareAmountPattern = regexp.MustCompile(`(?:花了?|花费|消费了?|支出了?|支付了?|付款了?|付了?|收入了?|赚了?|到账|工资(?:到账)?|奖金(?:到账)?|收款|收到|收了?)\s*[:：]?\s*(\d+(?:\.\d{1,2})?)`)
+	explicitDatePattern          = regexp.MustCompile(`(20\d{2})[-年/](\d{1,2})[-月/](\d{1,2})日?`)
 )
 
 func LooksLikeCandidate(text string) bool {
-	if !amountPattern.MatchString(strings.TrimSpace(text)) {
+	if _, _, ok := extractAmount(strings.TrimSpace(text)); !ok {
 		return false
 	}
 	return detectDirection(text) != "" || detectCategory(text) != "other"
@@ -32,14 +34,14 @@ func Parse(text, timezone string, reference time.Time) (Candidate, error) {
 		return Candidate{}, fmt.Errorf("%w: invalid timezone", ErrValidation)
 	}
 	result := Candidate{RawText: text, Timezone: timezone, Direction: detectDirection(text), Category: detectCategory(text), Merchant: detectMerchant(text), NeedsClarification: []string{}, Status: "pending", Confidence: .25}
-	match := amountPattern.FindStringSubmatch(text)
-	if len(match) == 3 {
-		amount, parseErr := strconv.ParseFloat(match[1], 64)
+	amountText, currencyText, hasAmount := extractAmount(text)
+	if hasAmount {
+		amount, parseErr := strconv.ParseFloat(amountText, 64)
 		if parseErr != nil || amount <= 0 || amount > 1_000_000_000 {
 			return Candidate{}, fmt.Errorf("%w: invalid amount", ErrValidation)
 		}
 		result.AmountMinor = int64(math.Round(amount * 100))
-		result.Currency = normalizeCurrency(match[2])
+		result.Currency = normalizeCurrency(currencyText)
 		result.Confidence += .3
 	} else {
 		result.NeedsClarification = append(result.NeedsClarification, "amount")
@@ -72,12 +74,12 @@ func Parse(text, timezone string, reference time.Time) (Candidate, error) {
 
 func detectDirection(text string) string {
 	lower := strings.ToLower(text)
-	for _, keyword := range []string{"收入", "工资", "奖金", "到账", "收款", "income", "salary"} {
+	for _, keyword := range []string{"收入", "工资", "奖金", "到账", "收款", "收到", "收了", "赚", "income", "salary"} {
 		if strings.Contains(lower, keyword) {
 			return "income"
 		}
 	}
-	for _, keyword := range []string{"花", "买", "支付", "付款", "消费", "打车", "吃", "支出", "expense", "paid", "spent"} {
+	for _, keyword := range []string{"花", "买", "支付", "付款", "付", "消费", "打车", "吃", "支出", "expense", "paid", "spent"} {
 		if strings.Contains(lower, keyword) {
 			return "expense"
 		}
@@ -127,6 +129,33 @@ func normalizeCurrency(value string) string {
 	default:
 		return "CNY"
 	}
+}
+
+func extractAmount(text string) (string, string, bool) {
+	if match := amountPattern.FindStringSubmatch(text); len(match) == 3 {
+		return match[1], match[2], true
+	}
+	if match := prefixedAmountPattern.FindStringSubmatch(text); len(match) == 3 {
+		return match[2], match[1], true
+	}
+	indices := transactionBareAmountPattern.FindStringSubmatchIndex(text)
+	if len(indices) != 4 || hasNonMoneyUnit(text[indices[1]:]) {
+		return "", "", false
+	}
+	return text[indices[2]:indices[3]], "CNY", true
+}
+
+func hasNonMoneyUnit(text string) bool {
+	text = strings.TrimSpace(text)
+	for _, unit := range []string{
+		"分钟", "小时", "公里", "千米", "厘米", "毫米", "公斤", "千克",
+		"点", "号", "日", "天", "周", "月", "年", "米", "次", "个", "份", "杯", "本",
+	} {
+		if strings.HasPrefix(text, unit) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseOccurredAt(text string, reference time.Time, location *time.Location) (time.Time, string, bool) {

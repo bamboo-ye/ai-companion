@@ -97,6 +97,32 @@ func TestLedgerFollowUpKeepsAmountAndDirectionWithoutModelRepeatingThem(t *testi
 	}
 }
 
+func TestLedgerFollowUpKeepsBareAmountAfterExplicitExpenseCue(t *testing.T) {
+	ctx := context.Background()
+	ledgerService := ledger.NewService(ledger.NewMemoryStore())
+	executor := New(ledgerService, planner.NewService(planner.NewMemoryStore()), nil, nil)
+
+	first, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "meal-first", Module: "life", Text: "吃饭花了20",
+	}, conversation.ModelToolCall{Name: "life_prepare_ledger_entry", Arguments: map[string]any{}})
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "金额“¥ 20.00”") ||
+		!strings.Contains(first.Response, "类型“支出”") || !strings.Contains(first.Response, "发生时间") {
+		t.Fatalf("first ledger turn = %#v err=%v", first, err)
+	}
+
+	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "meal-second", Module: "life", Text: "今天",
+		History: []conversation.Message{
+			{Role: "user", Content: "吃饭花了20"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_ledger_entry", Arguments: map[string]any{}})
+	if err != nil || second.Confirmation == nil || !strings.Contains(second.Confirmation.Summary, "金额：¥ 20.00") ||
+		!strings.Contains(second.Confirmation.Summary, "类型：支出") {
+		t.Fatalf("second ledger turn = %#v err=%v", second, err)
+	}
+}
+
 func TestClarificationContextStopsAtUnrelatedAssistantTurn(t *testing.T) {
 	history := []conversation.Message{
 		{Role: "user", Content: "奶茶花了5块"},
