@@ -81,7 +81,7 @@ func TestLedgerFollowUpKeepsAmountAndDirectionWithoutModelRepeatingThem(t *testi
 	}
 
 	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
-		UserID: "user-1", MessageID: "milk-tea-second", Module: "life", Text: "今天",
+		UserID: "user-1", MessageID: "milk-tea-second", Module: "life", Text: "今天‘",
 		History: []conversation.Message{
 			{Role: "user", Content: "奶茶花了5块"},
 			{Role: "assistant", Content: first.Response},

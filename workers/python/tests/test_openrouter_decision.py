@@ -426,11 +426,13 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
 
         decision = port.decide(
             module="life",
-            message="今天",
+            message="今天‘",
             context=life_context,
         )
 
         self.assertEqual(decision.tool_name, "life_prepare_ledger_entry")
+        self.assertEqual(port.requests[0]["messages"][-1]["content"], "今天")
+        self.assertEqual(port.requests[0]["tool_choice"], "required")
         prompt = "\n".join(
             str(message.get("content", ""))
             for message in port.requests[0]["messages"]

@@ -513,6 +513,7 @@ class OpenRouterDecisionPort:
                 response=self._generate_response(module, message, context),
             )
         structured_life_routing = module == "life" and bool(no_tool_definitions)
+        routing_message = _normalize_routing_user_message(message)
         routing_definitions = (
             [*actionable, *no_tool_definitions]
             if structured_life_routing
@@ -557,9 +558,10 @@ class OpenRouterDecisionPort:
             (
                 {
                     "role": "system",
-                    "content": "可信执行状态：" + _routing_message(message, context),
+                    "content": "可信执行状态："
+                    + _routing_message(routing_message, context),
                 },
-                {"role": "user", "content": message},
+                {"role": "user", "content": routing_message},
             )
         )
         payload.update(
@@ -589,7 +591,7 @@ class OpenRouterDecisionPort:
             allow_direct=(
                 False
                 if structured_life_routing
-                else _direct_response_allowed(module, message, context)
+                else _direct_response_allowed(module, routing_message, context)
             ),
         )
         if not name:
@@ -1634,6 +1636,23 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
         compact_observations.append(compact)
     state["completed_observations"] = compact_observations
     return json.dumps(state, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _normalize_routing_user_message(message: str) -> str:
+    """Remove only unmatched edge quotes caused by common input-method slips."""
+    original = message.strip()
+    normalized = original.strip("\u200b\ufeff")
+    while normalized.endswith(("‘", "“")):
+        normalized = normalized[:-1].rstrip()
+    while normalized.startswith(("’", "”")):
+        normalized = normalized[1:].lstrip()
+    for quote in ("'", '"', "`"):
+        if normalized.count(quote) % 2 == 1:
+            if normalized.endswith(quote):
+                normalized = normalized[:-1].rstrip()
+            elif normalized.startswith(quote):
+                normalized = normalized[1:].lstrip()
+    return normalized or original
 
 
 def _routing_few_shot_prompt(module: ModuleKey, tool_names: set[str]) -> str:
