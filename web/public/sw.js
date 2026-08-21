@@ -1,4 +1,4 @@
-const CACHE_NAME = "ai-companion-shell-v11";
+const CACHE_NAME = "ai-companion-shell-v12";
 const SHELL_ASSETS = [
   "/",
   "/manifest.webmanifest",
