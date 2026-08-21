@@ -277,6 +277,10 @@ func TestLifeRoutingFewShotsContrastCompletionQueryAndCreation(t *testing.T) {
 		routingFewShotPrompt("life", []ModelToolDefinition{{Name: "life_query_active_reminders"}}) != "" {
 		t.Fatal("life completion few-shots leaked outside their applicable tool catalog")
 	}
+	continuationPrompt := routingFewShotPrompt("life", []ModelToolDefinition{{Name: "life_prepare_ledger_entry"}})
+	if !strings.Contains(continuationPrompt, "补充未完成账单") || !strings.Contains(continuationPrompt, "life_prepare_ledger_entry") {
+		t.Fatalf("ledger-only catalog should still receive continuation guidance: %s", continuationPrompt)
+	}
 }
 
 func TestRoutingReferenceHistorySupportsPronounsWithoutCarryingOldCommands(t *testing.T) {

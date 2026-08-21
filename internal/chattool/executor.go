@@ -88,7 +88,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 			},
 		},
 		{
-			Name: "life_prepare_ledger_entry", Description: "用户明确陈述一笔已经发生或正在发生的收入、支出、消费并希望记入账本时调用。查询已有账单、汇总或导出账单时不要调用。服务端只生成待确认候选，不会直接入账。",
+			Name: "life_prepare_ledger_entry", Description: "用户明确陈述一笔已经发生或正在发生的收入、支出、消费并希望记入账本，或正在补充上一轮账单所缺的金额、收支类型、发生时间时调用。查询已有账单、汇总或导出账单时不要调用。服务端会累积连续澄清中的已知字段，只生成待确认候选，不会直接入账。",
 			Parameters: emptyObject(),
 		},
 		{
@@ -103,7 +103,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 			},
 		},
 		{
-			Name: "life_prepare_today_plan", Description: "用户要求把一件事情新增到今天的计划或今日待办时调用。不要用于查询今日计划、创建未来提醒或调整已有事项时间。",
+			Name: "life_prepare_today_plan", Description: "用户要求把一件事情新增到今天的计划或今日待办，或正在回答上一轮对计划事项名称的追问时调用。不要用于查询今日计划、创建未来提醒或调整已有事项时间。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -114,7 +114,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 			},
 		},
 		{
-			Name: "life_prepare_task_completion", Description: "用户明确表示某个已有的今日计划或提醒已经完成，或明确要求把已有事项标记为完成时调用，例如‘我完成了8月10号的选课’、‘选课做完了’。不要用于‘还没完成’等否定陈述、将来打算、条件句、新增任务或查询。工具会先查询真实未完成事项，再结合标题、日期和类型消歧；只有唯一匹配才生成待确认操作，不会直接完成事项。",
+			Name: "life_prepare_task_completion", Description: "用户明确表示某个已有的今日计划或提醒已经完成、明确要求把已有事项标记为完成，或正在补充上一轮完成操作所缺的标题、日期、事项类型时调用，例如‘我完成了8月10号的选课’、‘选课做完了’。不要用于‘还没完成’等否定陈述、将来打算、条件句、新增任务或查询。工具会累积连续澄清，先查询真实未完成事项，再结合标题、日期和类型消歧；只有唯一匹配才生成待确认操作，不会直接完成事项。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -128,7 +128,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 			RequiresPlan: true,
 		},
 		{
-			Name: "life_prepare_schedule_change", Description: "用户要求为一个已有提醒或已有今日计划设置、提前、推迟或调整日期/时间时调用。新增提醒或新增计划时不要调用。服务端会查找真实事项并要求确认。",
+			Name: "life_prepare_schedule_change", Description: "用户要求为一个已有提醒或已有今日计划设置、提前、推迟或调整日期/时间，或正在补充上一轮改期请求所缺的事项、日期、时段时调用。新增提醒或新增计划时不要调用。服务端会累积连续澄清、查找真实事项并要求确认。",
 			Parameters:   emptyObject(),
 			RequiresPlan: true,
 		},
@@ -625,12 +625,21 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 }
 
 func (e *Executor) recordLedger(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {
-	candidate, err := e.ledger.ParseCandidate(ctx, request.UserID, request.MessageID, request.Text, defaultTimezone)
+	parseText := request.Text
+	if continuation := ledgerClarificationContext(request.History); continuation != "" {
+		parseText = continuation + " " + parseText
+	}
+	candidate, err := e.ledger.ParseCandidate(ctx, request.UserID, request.MessageID, parseText, defaultTimezone)
 	if err != nil {
 		return handled("life.ledger.record", "这条账单还不能识别，请补充金额、收支类型和发生时间。", nil), nil
 	}
 	if len(candidate.NeedsClarification) > 0 {
-		return handled("life.ledger.record", "还需要补充"+friendlyMissing(candidate.NeedsClarification)+"，补充后我就能写入生活账本。", candidate), nil
+		preserved := ledgerPreservedFields(candidate)
+		prefix := ""
+		if preserved != "" {
+			prefix = "已保留" + preserved + "；"
+		}
+		return handled("life.ledger.record", prefix+"还需要补充"+friendlyMissing(candidate.NeedsClarification)+"，补充后我就能写入生活账本。", candidate), nil
 	}
 	summary := fmt.Sprintf(
 		"类型：%s\n分类：%s\n金额：%s %.2f\n时间：%s",
@@ -647,6 +656,20 @@ func (e *Executor) recordLedger(ctx context.Context, request conversation.ToolRe
 		Summary:     summary,
 	}
 	return result, nil
+}
+
+func ledgerPreservedFields(candidate ledger.Candidate) string {
+	fields := make([]string, 0, 3)
+	if candidate.AmountMinor > 0 && candidate.Currency != "" {
+		fields = append(fields, fmt.Sprintf("金额“%s %.2f”", currencySymbol(candidate.Currency), float64(candidate.AmountMinor)/100))
+	}
+	if candidate.Direction != "" {
+		fields = append(fields, "类型“"+directionName(candidate.Direction)+"”")
+	}
+	if candidate.OccurredAt != nil {
+		fields = append(fields, "发生时间“"+candidate.OccurredAt.In(mustLocation()).Format("2006-01-02 15:04")+"”")
+	}
+	return strings.Join(fields, "、")
 }
 
 func (e *Executor) createReminder(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {
@@ -700,22 +723,66 @@ func (e *Executor) createReminderWithHints(ctx context.Context, request conversa
 	return result, nil
 }
 
-// reminderClarificationContext follows only the immediately preceding chain
-// of reminder-field questions. It restores fields the user already supplied
+// Clarification context follows only an immediately preceding chain of
+// matching field questions. It restores fields the user already supplied
 // without treating unrelated or completed historical commands as active.
 func reminderClarificationContext(history []conversation.Message) string {
+	return clarificationContext(history, isReminderClarification)
+}
+
+func ledgerClarificationContext(history []conversation.Message) string {
+	return clarificationContext(history, isLedgerClarification)
+}
+
+func scheduleClarificationContext(history []conversation.Message) string {
+	return clarificationContext(history, isScheduleClarification)
+}
+
+func completionClarificationContext(history []conversation.Message) string {
+	return clarificationContext(history, isCompletionClarification)
+}
+
+func todayPlanClarificationContext(history []conversation.Message) string {
+	return clarificationContext(history, isTodayPlanClarification)
+}
+
+func clarificationContext(history []conversation.Message, matches func(string) bool) string {
 	fragments := make([]string, 0, 4)
 	for index, turns := len(history)-1, 0; index >= 1 && turns < 4; turns++ {
 		assistant := history[index]
 		user := history[index-1]
 		if assistant.Role != "assistant" || user.Role != "user" ||
-			!isReminderClarification(assistant.Content) || strings.TrimSpace(user.Content) == "" {
+			!matches(assistant.Content) || strings.TrimSpace(user.Content) == "" {
 			break
 		}
 		fragments = append([]string{strings.TrimSpace(user.Content)}, fragments...)
 		index -= 2
 	}
 	return strings.Join(fragments, " ")
+}
+
+func isLedgerClarification(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.Contains(text, "补充") && (strings.Contains(text, "生活账本") ||
+		strings.Contains(text, "发生时间") || strings.Contains(text, "收入还是支出"))
+}
+
+func isScheduleClarification(text string) bool {
+	return containsAny(strings.TrimSpace(text),
+		"还需要补充新的日期或时间", "需要补充具体时间", "无法唯一判断。请说明上午还是下午",
+		"请提供一个未来时间", "没有找到要调整的提醒或今日计划事项", "找到了多个同名事项",
+	)
+}
+
+func isCompletionClarification(text string) bool {
+	return containsAny(strings.TrimSpace(text),
+		"请告诉我要完成的具体事项名称", "没有找到匹配的未完成事项", "找到了多个候选",
+		"日期线索，但日期无效", "没有日期为",
+	)
+}
+
+func isTodayPlanClarification(text string) bool {
+	return strings.Contains(strings.TrimSpace(text), "请告诉我要加入今日计划的具体事项")
 }
 
 func isReminderClarification(text string) bool {
@@ -778,8 +845,20 @@ func (e *Executor) prepareTaskCompletion(ctx context.Context, request conversati
 	title = strings.TrimSpace(title)
 	taskType = strings.TrimSpace(taskType)
 	dateHint = strings.TrimSpace(dateHint)
-	if title == "" {
-		return handled("life.task.complete", "请告诉我要完成的具体事项名称。", nil), nil
+	completionText := request.Text
+	if continuation := completionClarificationContext(request.History); continuation != "" {
+		completionText = continuation + " " + completionText
+		title = completionText
+	} else if title == "" {
+		title = completionText
+	}
+	if taskType == "" {
+		switch {
+		case strings.Contains(completionText, "提醒"):
+			taskType = "reminder"
+		case containsAny(completionText, "今日计划", "今天计划", "今天的计划"):
+			taskType = "today_plan"
+		}
 	}
 	if taskType != "" && taskType != "today_plan" && taskType != "reminder" {
 		return handled("life.task.complete", "事项类型只能是今日计划或提醒。", nil), nil
@@ -815,7 +894,7 @@ func (e *Executor) prepareTaskCompletion(ctx context.Context, request conversati
 	matches := matchCompletionTargets(title, targets)
 	dateSource := dateHint
 	if dateSource == "" {
-		dateSource = request.Text
+		dateSource = completionText
 	}
 	resolvedDate, datePresent, dateValid := parseCompletionDateHint(dateSource, e.now())
 	if datePresent && !dateValid {
@@ -995,6 +1074,10 @@ func looksLikeScheduleChange(text string) bool {
 }
 
 func (e *Executor) prepareScheduleChange(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {
+	parseText := request.Text
+	if continuation := scheduleClarificationContext(request.History); continuation != "" {
+		parseText = continuation + " " + parseText
+	}
 	now := e.now().In(mustLocation())
 	today, err := e.planner.Today(ctx, request.UserID, now.Format("2006-01-02"), defaultTimezone)
 	if err != nil {
@@ -1004,8 +1087,8 @@ func (e *Executor) prepareScheduleChange(ctx context.Context, request conversati
 	if err != nil {
 		return conversation.ToolResult{}, err
 	}
-	wantsReminder := strings.Contains(request.Text, "提醒")
-	wantsPlan := containsAny(request.Text, "今日计划", "今天计划", "今天的计划", "计划事项")
+	wantsReminder := strings.Contains(parseText, "提醒")
+	wantsPlan := containsAny(parseText, "今日计划", "今天计划", "今天的计划", "计划事项")
 	targets := make([]scheduleTarget, 0, len(reminders)+len(today.Items))
 	if !wantsPlan || wantsReminder {
 		for _, item := range reminders {
@@ -1023,7 +1106,7 @@ func (e *Executor) prepareScheduleChange(ctx context.Context, request conversati
 			targets = append(targets, scheduleTarget{kind: "today_plan", id: item.ID, title: item.Title, localDate: today.LocalDate, startsAt: item.StartsAt, updatedAt: item.UpdatedAt})
 		}
 	}
-	target, matches := matchScheduleTarget(request.Text, targets)
+	target, matches := matchScheduleTarget(parseText, targets)
 	if matches == 0 {
 		return handled("life.schedule.change", "没有找到要调整的提醒或今日计划事项。请在指令中写出事项的完整名称，例如“把整理合同安排在下午3点”。", targets), nil
 	}
@@ -1038,7 +1121,7 @@ func (e *Executor) prepareScheduleChange(ctx context.Context, request conversati
 		}
 		fallback = &base
 	}
-	schedule, err := planner.ParseSchedule(request.Text, defaultTimezone, now, fallback)
+	schedule, err := planner.ParseSchedule(parseText, defaultTimezone, now, fallback)
 	if err != nil {
 		if errors.Is(err, planner.ErrDayPeriodRequired) {
 			return handled("life.schedule.change", "这个时间的上午和下午都还没有过去，无法唯一判断。请说明上午还是下午，例如“上午10点”或“下午3点”。", target), nil
@@ -1119,6 +1202,12 @@ func (e *Executor) addTodayPlanItem(ctx context.Context, request conversation.To
 
 func (e *Executor) addTodayPlanItemWithTitle(ctx context.Context, request conversation.ToolRequest, title string) (conversation.ToolResult, error) {
 	title = strings.TrimSpace(title)
+	if title == "" && todayPlanClarificationContext(request.History) != "" {
+		title = todayPlanItemTitle(request.Text)
+		if title == "" {
+			title = strings.TrimSpace(request.Text)
+		}
+	}
 	if title == "" {
 		return handled("life.plan.add", "请告诉我要加入今日计划的具体事项。", nil), nil
 	}

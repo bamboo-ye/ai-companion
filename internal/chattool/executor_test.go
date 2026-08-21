@@ -67,6 +67,48 @@ func TestLifeCharacterRecordsLedgerEntry(t *testing.T) {
 	}
 }
 
+func TestLedgerFollowUpKeepsAmountAndDirectionWithoutModelRepeatingThem(t *testing.T) {
+	ctx := context.Background()
+	ledgerService := ledger.NewService(ledger.NewMemoryStore())
+	executor := New(ledgerService, planner.NewService(planner.NewMemoryStore()), nil, nil)
+
+	first, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "milk-tea-first", Module: "life", Text: "奶茶花了5块",
+	}, conversation.ModelToolCall{Name: "life_prepare_ledger_entry", Arguments: map[string]any{}})
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "金额“¥ 5.00”") ||
+		!strings.Contains(first.Response, "类型“支出”") || !strings.Contains(first.Response, "发生时间") {
+		t.Fatalf("first ledger turn = %#v err=%v", first, err)
+	}
+
+	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "milk-tea-second", Module: "life", Text: "今天",
+		History: []conversation.Message{
+			{Role: "user", Content: "奶茶花了5块"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_ledger_entry", Arguments: map[string]any{}})
+	if err != nil || second.Confirmation == nil || !strings.Contains(second.Confirmation.Summary, "金额：¥ 5.00") ||
+		!strings.Contains(second.Confirmation.Summary, "类型：支出") {
+		t.Fatalf("second ledger turn = %#v err=%v", second, err)
+	}
+	entries, err := ledgerService.List(ctx, "user-1", ledger.EntryFilter{Limit: 20})
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("ledger changed before confirmation: %#v err=%v", entries, err)
+	}
+}
+
+func TestClarificationContextStopsAtUnrelatedAssistantTurn(t *testing.T) {
+	history := []conversation.Message{
+		{Role: "user", Content: "奶茶花了5块"},
+		{Role: "assistant", Content: "还需要补充“发生时间”，补充后我就能写入生活账本。"},
+		{Role: "user", Content: "先不用了"},
+		{Role: "assistant", Content: "好的，这次先不处理。"},
+	}
+	if contextText := ledgerClarificationContext(history); contextText != "" {
+		t.Fatalf("unrelated history leaked into clarification: %q", contextText)
+	}
+}
+
 func TestCharacterModuleToolAllowlist(t *testing.T) {
 	ledgerService := ledger.NewService(ledger.NewMemoryStore())
 	executor := New(ledgerService, planner.NewService(planner.NewMemoryStore()), nil, nil)
@@ -349,6 +391,26 @@ func TestLifeCharacterAddsAndRemembersWholeTodayPlan(t *testing.T) {
 	}
 }
 
+func TestTodayPlanFollowUpUsesRequestedMissingTitle(t *testing.T) {
+	executor := New(ledger.NewService(ledger.NewMemoryStore()), planner.NewService(planner.NewMemoryStore()), nil, nil)
+	first, err := executor.ExecuteModelTool(context.Background(), conversation.ToolRequest{
+		UserID: "user-1", MessageID: "plan-first", Module: "life", Text: "加入今日计划",
+	}, conversation.ModelToolCall{Name: "life_prepare_today_plan", Arguments: map[string]any{}})
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "具体事项") {
+		t.Fatalf("first plan turn = %#v err=%v", first, err)
+	}
+	second, err := executor.ExecuteModelTool(context.Background(), conversation.ToolRequest{
+		UserID: "user-1", MessageID: "plan-second", Module: "life", Text: "买菜",
+		History: []conversation.Message{
+			{Role: "user", Content: "加入今日计划"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_today_plan", Arguments: map[string]any{}})
+	if err != nil || second.Confirmation == nil || second.Confirmation.Payload["title"] != "买菜" {
+		t.Fatalf("second plan turn = %#v err=%v", second, err)
+	}
+}
+
 func TestLifeToolsAreExposedToModelWithoutTextPatterns(t *testing.T) {
 	executor := New(ledger.NewService(ledger.NewMemoryStore()), planner.NewService(planner.NewMemoryStore()), nil, nil)
 	tools := executor.ModelTools(conversation.ToolRequest{Module: "life", Text: "任意自然语言"})
@@ -481,6 +543,18 @@ func TestLifeTaskCompletionChecksDateAndClarifiesBeforeMutation(t *testing.T) {
 		!strings.Contains(ambiguous.Response, "暂不执行") {
 		t.Fatalf("ambiguous completion = %#v, %v", ambiguous, err)
 	}
+	recovered, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "resolved-course", Module: "life", Text: "8月10号的提醒",
+		History: []conversation.Message{
+			{Role: "user", Content: "选课做完了"},
+			{Role: "assistant", Content: ambiguous.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_task_completion", Arguments: map[string]any{
+		"title": "8月10号的提醒", "task_type": "reminder", "date_hint": "8月10号",
+	}})
+	if err != nil || recovered.Confirmation == nil || recovered.Confirmation.Payload["item_id"] != "course-august" {
+		t.Fatalf("recovered completion = %#v, %v", recovered, err)
+	}
 
 	mismatch, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
 		UserID: "user-1", MessageID: "mismatch-course", Module: "life", Text: "我完成了8月11号的选课",
@@ -590,6 +664,41 @@ func TestNaturalLanguageScheduleChangesRequireConfirmation(t *testing.T) {
 	updatedReminder, err := plannerService.RescheduleReminder(ctx, "user-1", reminderResult.Confirmation.Payload["reminder_id"], reminderResult.Confirmation.Payload["local_due"], reminderResult.Confirmation.Payload["timezone"], &reminderExpected)
 	if err != nil || updatedReminder.LocalDue != "2026-07-18 16:00" {
 		t.Fatalf("updated reminder = %#v err=%v", updatedReminder, err)
+	}
+}
+
+func TestScheduleChangeFollowUpKeepsTargetWithoutRepeatingIt(t *testing.T) {
+	ctx := context.Background()
+	plannerStore := planner.NewMemoryStore()
+	location, _ := time.LoadLocation("Asia/Shanghai")
+	clock := func() time.Time { return time.Date(2026, 7, 17, 10, 0, 0, 0, location) }
+	plannerService := planner.NewServiceWithClock(plannerStore, clock)
+	executor := New(ledger.NewService(ledger.NewMemoryStore()), plannerService, nil, nil)
+	executor.now = clock
+	due := time.Date(2026, 7, 18, 0, 0, 0, 0, location).UTC()
+	if err := plannerStore.CreateReminder(ctx, planner.Reminder{
+		ID: "follow-up-reminder", UserID: "user-1", Title: "交报告", DueAt: &due,
+		LocalDue: "2026-07-18", Timezone: "Asia/Shanghai", TimePrecision: "date", Status: "active", UpdatedAt: due,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "schedule-first", Module: "life", Text: "把交报告提醒改一下",
+	}, conversation.ModelToolCall{Name: "life_prepare_schedule_change", Arguments: map[string]any{}})
+	if err != nil || first.Confirmation != nil || !strings.Contains(first.Response, "新的日期或时间") {
+		t.Fatalf("first schedule turn = %#v err=%v", first, err)
+	}
+	second, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "schedule-second", Module: "life", Text: "明天下午4点",
+		History: []conversation.Message{
+			{Role: "user", Content: "把交报告提醒改一下"},
+			{Role: "assistant", Content: first.Response},
+		},
+	}, conversation.ModelToolCall{Name: "life_prepare_schedule_change", Arguments: map[string]any{}})
+	if err != nil || second.Confirmation == nil || !strings.Contains(second.Confirmation.Summary, "事项：交报告") ||
+		!strings.Contains(second.Confirmation.Summary, "修改后：2026-07-18 16:00") {
+		t.Fatalf("second schedule turn = %#v err=%v", second, err)
 	}
 }
 

@@ -690,15 +690,15 @@ func routingFewShotPrompt(module string, definitions []ModelToolDefinition) stri
 	for _, definition := range definitions {
 		available[definition.Name] = true
 	}
-	if !available["life_prepare_task_completion"] {
-		return ""
+	examples := make([]string, 0, 12)
+	if available["life_prepare_task_completion"] {
+		examples = append(examples,
+			`用户：“我完成了8月10号的选课” → 完成事实，不是查询；life_prepare_task_completion，参数 {"title":"选课","date_hint":"8月10号"}`,
+			`用户：“选课做完了” → life_prepare_task_completion，参数 {"title":"选课"}`,
+			`用户：“把选课标记为完成” → life_prepare_task_completion，参数 {"title":"选课"}`,
+		)
 	}
-	examples := []string{
-		`用户：“我完成了8月10号的选课” → 完成事实，不是查询；life_prepare_task_completion，参数 {"title":"选课","date_hint":"8月10号"}`,
-		`用户：“选课做完了” → life_prepare_task_completion，参数 {"title":"选课"}`,
-		`用户：“把选课标记为完成” → life_prepare_task_completion，参数 {"title":"选课"}`,
-	}
-	if available["life_query_active_reminders"] {
+	if available["life_prepare_task_completion"] && available["life_query_active_reminders"] {
 		examples = append(examples,
 			`用户：“8月10号有选课提醒吗” → 查询；life_query_active_reminders，参数 {}`,
 			`用户：“我还没完成选课” → 否定完成，不能标记完成；life_query_active_reminders，参数 {}`,
@@ -706,6 +706,11 @@ func routingFewShotPrompt(module string, definitions []ModelToolDefinition) stri
 	}
 	if available["life_prepare_today_plan"] {
 		examples = append(examples, `用户：“把选课加入今日计划” → life_prepare_today_plan，参数 {"title":"选课"}`)
+	}
+	if available["life_prepare_ledger_entry"] {
+		examples = append(examples,
+			`最近对话：用户“打车花了36元” / 助手追问“请补充发生时间” / 用户：“今天” → 补充未完成账单；life_prepare_ledger_entry，参数 {}`,
+		)
 	}
 	if available["life_prepare_reminder"] {
 		examples = append(examples,
@@ -718,10 +723,16 @@ func routingFewShotPrompt(module string, definitions []ModelToolDefinition) stri
 		examples = append(examples, `最近对话：助手问“需要我把8月10号选课提醒关掉吗？” / 用户：“需要” → 接受上轮提议；life_prepare_task_completion，参数 {"title":"选课","task_type":"reminder","date_hint":"8月10号"}`)
 	}
 	if available["life_prepare_schedule_change"] {
-		examples = append(examples, `用户：“把选课提醒改到明天下午3点” → 调整已有事项；life_prepare_schedule_change，参数 {}`)
+		examples = append(examples,
+			`用户：“把选课提醒改到明天下午3点” → 调整已有事项；life_prepare_schedule_change，参数 {}`,
+			`最近对话：用户“把选课提醒改一下” / 助手追问“请补充新的日期或时间” / 用户：“明天下午3点” → 补充未完成改期；life_prepare_schedule_change，参数 {}`,
+		)
 	}
 	if available["life_no_tool"] {
 		examples = append(examples, `用户：“我准备完成选课” → 将来意愿，不代表已经完成；life_no_tool，参数 {}`)
+	}
+	if len(examples) == 0 {
+		return ""
 	}
 	return "生活助手语义路由对比示例。先区分言语行为，再判断对象；特别检查否定、时态、条件、多轮指代和对上一轮缺失字段的直接补充。只有助手刚刚明确追问且请求仍未完成时，才可继承最近请求中明确出现的日期或事项；不得继承已完成的旧命令。日期只是事项匹配线索，不能据此把完成陈述改判为查询。完成工具只启动‘查询候选→唯一匹配→请求确认’流程，绝不假设事项一定存在：\n" + strings.Join(examples, "\n")
 }
