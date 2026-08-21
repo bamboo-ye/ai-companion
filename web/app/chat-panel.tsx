@@ -10,8 +10,7 @@ type PendingDocument = { id: string; name: string; media_type: string; size_byte
 type GeneratedFileLink = { runID: string; fileID: string; name: string };
 type LedgerExportLink = { exportID: string; name: string };
 type AgentInterrupt = { type: string; summary: string; tool_name?: string; arguments?: Record<string,unknown> };
-type AgentObservation = { tool_name?: string };
-type AgentRunOutput = { response?: string; interrupts?: AgentInterrupt[]; observations?: AgentObservation[] };
+type AgentRunOutput = { interrupts?: AgentInterrupt[]; tool_result?: { response?: string } };
 type AgentRun = { id: string; status: string; revision: number; output?: AgentRunOutput; error_message?: string };
 
 export function ChatPanel({ token, character, onClose }: { token: string; character: { id: string; name: string; module: "companion" | "life" | "work" }; onClose: () => void }) {
@@ -121,5 +120,5 @@ function attachedDocuments(content:string){return Array.from(content.matchAll(/<
 function generatedFiles(content:string):GeneratedFileLink[]{return Array.from(content.matchAll(/<!--ai-generated-file:([^|>]+)\|([^|>]+)\|([^>]*)-->/g),match=>({runID:match[1],fileID:match[2],name:match[3]||"下载文件"}))}
 function ledgerExportFiles(content:string):LedgerExportLink[]{return Array.from(content.matchAll(/<!--ai-ledger-export:([^|>]+)\|([^>]*)-->/g),match=>({exportID:match[1],name:match[2]||"账单.xlsx"}))}
 function runtimeFailure(content:string){const match=content.match(/<!--ai-(agent-run|generation-job):([^|>]+)\|(failed|timed_out|cancelled)(?:\|[^>]*)?-->/);return match?{runtime:match[1],id:match[2]}:null}
-function executionResultNotice(output?:AgentRunOutput){if(!output?.response||!output.observations?.some(item=>Boolean(item.tool_name?.trim())))return "";return `执行结果：${output.response}`}
+function executionResultNotice(output?:AgentRunOutput){const response=output?.tool_result?.response?.trim();return response?`执行结果：${response}`:""}
 function delay(milliseconds:number){return new Promise(resolve=>setTimeout(resolve,milliseconds))}
