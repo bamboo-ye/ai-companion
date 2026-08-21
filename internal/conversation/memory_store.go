@@ -105,6 +105,21 @@ func (s *MemoryStore) ListMessages(_ context.Context, userID, conversationID str
 	return result, nil
 }
 
+func (s *MemoryStore) ListRecentMessages(_ context.Context, userID, conversationID string, limit int) ([]Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	conv, ok := s.conversations[conversationID]
+	if !ok || conv.UserID != userID || conv.Status == "deleted" {
+		return nil, ErrNotFound
+	}
+	items := s.messages[conversationID]
+	start := len(items) - limit
+	if start < 0 {
+		start = 0
+	}
+	return append([]Message(nil), items[start:]...), nil
+}
+
 func (s *MemoryStore) GetLatestSummary(_ context.Context, userID, conversationID string) (ConversationSummary, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
