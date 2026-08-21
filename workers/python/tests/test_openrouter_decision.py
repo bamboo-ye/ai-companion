@@ -345,14 +345,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("不能只凭关键词", prompt)
 
     def test_life_router_treats_direct_answer_as_missing_reminder_slot(self) -> None:
-        port = StubOpenRouter(
-            [
-                tool_response(
-                    "life_prepare_reminder",
-                    '{"title":"提交报销材料","date_hint":"下周五"}',
-                )
-            ]
-        )
+        port = StubOpenRouter([])
         life_context = {
             "history": [
                 {"role": "user", "content": "提醒我提交报销材料"},
@@ -385,25 +378,21 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
 
         self.assertEqual(decision.tool_name, "life_prepare_reminder")
-        self.assertEqual(
-            decision.tool_arguments,
-            {"title": "提交报销材料", "date_hint": "下周五"},
-        )
-        self.assertEqual(port.requests[0]["tool_choice"], "required")
-        prompt = "\n".join(
-            str(message.get("content", ""))
-            for message in port.requests[0]["messages"]
-            if message.get("role") == "system"
-        )
-        self.assertIn("上一轮明确追问某个缺失字段", prompt)
-        self.assertIn("continue_create", prompt)
+        self.assertEqual(decision.tool_arguments, {})
+        self.assertEqual(port.requests, [])
 
-    def test_life_router_continues_ledger_and_schedule_clarifications(self) -> None:
-        port = StubOpenRouter([tool_response("life_prepare_ledger_entry")])
+    def test_life_router_locks_exact_ledger_clarification_to_unfinished_flow(self) -> None:
+        port = StubOpenRouter([])
         life_context = {
             "history": [
-                {"role": "user", "content": "打车花了36元"},
-                {"role": "assistant", "content": "还需要补充发生时间。"},
+                {"role": "user", "content": "吃饭花了20"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "已保留金额“¥ 20.00”、类型“支出”；还需要补充“发生时间”，"
+                        "补充后我就能写入生活账本。"
+                    ),
+                },
             ],
             "tools": [
                 {
@@ -431,15 +420,101 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
 
         self.assertEqual(decision.tool_name, "life_prepare_ledger_entry")
-        self.assertEqual(port.requests[0]["messages"][-1]["content"], "今天")
-        self.assertEqual(port.requests[0]["tool_choice"], "required")
-        prompt = "\n".join(
-            str(message.get("content", ""))
-            for message in port.requests[0]["messages"]
-            if message.get("role") == "system"
+        self.assertEqual(decision.tool_arguments, {})
+        self.assertEqual(port.requests, [])
+
+    def test_explicit_today_plan_query_can_leave_ledger_clarification(self) -> None:
+        port = StubOpenRouter([tool_response("life_query_today_plan")])
+        life_context = {
+            "history": [
+                {"role": "user", "content": "吃饭花了20"},
+                {
+                    "role": "assistant",
+                    "content": "还需要补充“发生时间”，补充后我就能写入生活账本。",
+                },
+            ],
+            "tools": [
+                {
+                    "name": "life_prepare_ledger_entry",
+                    "description": "创建或继续补充账单",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_query_today_plan",
+                    "description": "查询今日计划",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_no_tool",
+                    "description": "无需工具",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
+        }
+
+        decision = port.decide(
+            module="life",
+            message="今天的计划是什么",
+            context=life_context,
         )
-        self.assertIn("ledger_entry", prompt)
-        self.assertIn("continue_reschedule", prompt)
+
+        self.assertEqual(decision.tool_name, "life_query_today_plan")
+        self.assertEqual(port.requests[0]["tool_choice"], "required")
+
+    def test_required_continuation_arguments_are_pinned_to_one_tool(self) -> None:
+        port = StubOpenRouter(
+            [tool_response("life_prepare_today_plan", '{"title":"查看邮件"}')]
+        )
+        life_context = {
+            "history": [
+                {"role": "user", "content": "加入今日计划"},
+                {
+                    "role": "assistant",
+                    "content": "请告诉我要加入今日计划的具体事项。",
+                },
+            ],
+            "tools": [
+                {
+                    "name": "life_prepare_today_plan",
+                    "description": "创建今日计划",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}},
+                        "required": ["title"],
+                    },
+                },
+                {
+                    "name": "life_query_today_plan",
+                    "description": "查询今日计划",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "life_no_tool",
+                    "description": "无需工具",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            ],
+        }
+
+        decision = port.decide(
+            module="life",
+            message="查看邮件",
+            context=life_context,
+        )
+
+        self.assertEqual(decision.tool_name, "life_prepare_today_plan")
+        self.assertEqual(decision.tool_arguments, {"title": "查看邮件"})
+        self.assertEqual(
+            port.requests[0]["tool_choice"],
+            {
+                "type": "function",
+                "function": {"name": "life_prepare_today_plan"},
+            },
+        )
+        self.assertEqual(
+            [item["function"]["name"] for item in port.requests[0]["tools"]],
+            ["life_prepare_today_plan"],
+        )
 
     def test_router_selects_and_composer_builds_complex_tool_arguments(self) -> None:
         port = StubOpenRouter(

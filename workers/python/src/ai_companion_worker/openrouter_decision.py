@@ -514,8 +514,31 @@ class OpenRouterDecisionPort:
             )
         structured_life_routing = module == "life" and bool(no_tool_definitions)
         routing_message = _normalize_routing_user_message(message)
+        continuation_tool = (
+            _active_life_clarification_tool(
+                context.get("history"),
+                routing_message,
+                {str(item["name"]) for item in actionable},
+            )
+            if structured_life_routing
+            else ""
+        )
+        if continuation_tool:
+            selected_continuation = next(
+                item for item in actionable if item["name"] == continuation_tool
+            )
+            parameters = selected_continuation.get("parameters")
+            required = parameters.get("required", []) if isinstance(parameters, dict) else []
+            if not required:
+                return ModelDecision(
+                    intent=continuation_tool,
+                    tool_name=continuation_tool,
+                    tool_arguments={},
+                )
         routing_definitions = (
-            [*actionable, *no_tool_definitions]
+            [item for item in actionable if item["name"] == continuation_tool]
+            if continuation_tool
+            else [*actionable, *no_tool_definitions]
             if structured_life_routing
             else actionable
         )
@@ -578,7 +601,16 @@ class OpenRouterDecisionPort:
                     }
                     for item in routing_definitions
                 ],
-                "tool_choice": "required" if structured_life_routing else "auto",
+                "tool_choice": (
+                    {
+                        "type": "function",
+                        "function": {"name": continuation_tool},
+                    }
+                    if continuation_tool
+                    else "required"
+                    if structured_life_routing
+                    else "auto"
+                ),
                 "max_tokens": self._config.max_tokens,
             }
         )
@@ -1653,6 +1685,164 @@ def _normalize_routing_user_message(message: str) -> str:
             elif normalized.startswith(quote):
                 normalized = normalized[1:].lstrip()
     return normalized or original
+
+
+def _active_life_clarification_tool(
+    history: Any,
+    message: str,
+    available_tools: set[str],
+) -> str:
+    """Bind a direct slot answer to the immediately unfinished life workflow."""
+    if not isinstance(history, list) or len(history) < 2:
+        return ""
+    previous_user, previous_assistant = history[-2], history[-1]
+    if not isinstance(previous_user, dict) or not isinstance(previous_assistant, dict):
+        return ""
+    if previous_user.get("role") != "user" or previous_assistant.get("role") != "assistant":
+        return ""
+    assistant_text = previous_assistant.get("content")
+    if not isinstance(assistant_text, str) or not assistant_text.strip():
+        return ""
+    reply = message.strip()
+    if not reply or _is_cancel_or_explicit_life_pivot(reply):
+        return ""
+
+    assistant_text = assistant_text.strip()
+    missing_text = (
+        assistant_text.rsplit("还需要补充", 1)[-1]
+        if "还需要补充" in assistant_text
+        else assistant_text
+    )
+    tool_name = ""
+    reply_matches = False
+    if "补充" in assistant_text and (
+        "生活账本" in assistant_text
+        or "发生时间" in assistant_text
+        or "收入还是支出" in assistant_text
+    ):
+        tool_name = "life_prepare_ledger_entry"
+        expected_checks: list[bool] = []
+        if "发生时间" in missing_text:
+            expected_checks.append(_looks_like_temporal_slot(reply))
+        if "金额" in missing_text:
+            expected_checks.append(any(character.isdigit() for character in reply))
+        if "收入还是支出" in missing_text:
+            expected_checks.append(any(marker in reply for marker in ("收入", "支出")))
+        reply_matches = any(expected_checks) if expected_checks else True
+    elif "请告诉我要加入今日计划的具体事项" in assistant_text:
+        tool_name = "life_prepare_today_plan"
+        reply_matches = True
+    elif any(
+        marker in assistant_text
+        for marker in (
+            "还需要补充新的日期或时间",
+            "需要补充具体时间",
+            "没有找到要调整的提醒或今日计划事项",
+            "找到了多个同名事项",
+        )
+    ):
+        tool_name = "life_prepare_schedule_change"
+        reply_matches = (
+            _looks_like_temporal_slot(reply)
+            if "日期或时间" in assistant_text or "具体时间" in assistant_text
+            else True
+        )
+    elif any(
+        marker in assistant_text
+        for marker in (
+            "请告诉我要完成的具体事项名称",
+            "没有找到匹配的未完成事项",
+            "找到了多个候选",
+            "日期线索，但日期无效",
+            "没有日期为",
+        )
+    ):
+        tool_name = "life_prepare_task_completion"
+        reply_matches = True
+    elif "补充" in assistant_text and (
+        "创建提醒" in assistant_text
+        or "提醒日期" in missing_text
+        or "事项名称" in missing_text
+    ):
+        tool_name = "life_prepare_reminder"
+        reply_matches = (
+            _looks_like_temporal_slot(reply)
+            if "提醒日期" in missing_text
+            else True
+        )
+    elif any(
+        marker in assistant_text
+        for marker in (
+            "无法唯一判断。请说明上午还是下午",
+            "请提供一个未来时间",
+        )
+    ):
+        prior_text = str(previous_user.get("content", ""))
+        tool_name = (
+            "life_prepare_schedule_change"
+            if any(marker in prior_text for marker in ("改到", "调整", "提前", "推迟", "安排在"))
+            else "life_prepare_reminder"
+        )
+        reply_matches = _looks_like_temporal_slot(reply)
+
+    if reply_matches and tool_name in available_tools:
+        return tool_name
+    return ""
+
+
+def _looks_like_temporal_slot(text: str) -> bool:
+    if any(character.isdigit() for character in text):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "今天",
+            "今晚",
+            "明天",
+            "明晚",
+            "后天",
+            "昨天",
+            "昨晚",
+            "本周",
+            "这周",
+            "下周",
+            "周末",
+            "星期",
+            "月底",
+            "月初",
+            "上午",
+            "下午",
+            "中午",
+            "晚上",
+            "早上",
+            "凌晨",
+            "刚刚",
+            "结束前",
+        )
+    )
+
+
+def _is_cancel_or_explicit_life_pivot(text: str) -> bool:
+    if any(marker in text for marker in ("算了", "不用了", "先不用", "取消", "不记了")):
+        return True
+    return any(
+        marker in text
+        for marker in (
+            "提醒我",
+            "加入今日计划",
+            "添加到今日计划",
+            "记一笔",
+            "写入账本",
+            "导出账单",
+            "有哪些",
+            "是什么",
+            "多少",
+            "查询",
+            "列出",
+            "吗？",
+            "吗?",
+        )
+    )
 
 
 def _routing_few_shot_prompt(module: ModuleKey, tool_names: set[str]) -> str:
