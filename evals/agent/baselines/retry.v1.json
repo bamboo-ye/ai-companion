@@ -1,0 +1,25 @@
+{
+  "schema_version": "agent-retry-baseline-v1",
+  "version": "retry.v1",
+  "minimum": {
+    "ready_samples": 1,
+    "retry_events": 4,
+    "retry_runs": 3,
+    "retry_after_events": 2,
+    "exponential_events": 2,
+    "recovered_runs": 3,
+    "retry_recovery_rate": 1
+  },
+  "maximum": {
+    "unrecovered_runs": 0,
+    "max_scheduled_delay_ms": 120000,
+    "duplicate_schedule_count": 0,
+    "attempt_sequence_violation_count": 0,
+    "attempt_limit_violation_count": 0,
+    "delay_policy_violation_count": 0,
+    "deadline_violation_count": 0,
+    "policy_config_mismatch_count": 0,
+    "orphan_retry_count": 0,
+    "duplicate_completion_count": 0
+  }
+}

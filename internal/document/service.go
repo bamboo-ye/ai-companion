@@ -91,6 +91,7 @@ func (s *Service) Upload(ctx context.Context, userID, originalName string, data 
 	if len(data) == 0 || int64(len(data)) > s.maxBytes {
 		return Document{}, false, fmt.Errorf("%w: file size must be between 1 and %d bytes", ErrValidation, s.maxBytes)
 	}
+	data = normalizePDFPrefix(data)
 	mediaType, err := detectMediaType(data)
 	if err != nil {
 		return Document{}, false, err
@@ -137,6 +138,18 @@ func (s *Service) List(ctx context.Context, userID string) ([]Document, error) {
 
 func (s *Service) Get(ctx context.Context, userID, documentID string) (Document, error) {
 	return s.store.GetDocument(ctx, userID, documentID)
+}
+
+func (s *Service) Read(ctx context.Context, userID, documentID string) (Document, []byte, error) {
+	item, err := s.store.GetDocument(ctx, userID, documentID)
+	if err != nil {
+		return Document{}, nil, err
+	}
+	data, err := s.blobs.Get(ctx, item.StorageKey)
+	if err != nil {
+		return Document{}, nil, err
+	}
+	return item, data, nil
 }
 
 func (s *Service) ShareWithWorkspace(ctx context.Context, userID, workspaceID, documentID string) error {
@@ -189,17 +202,30 @@ func cleanName(value string) (string, error) {
 }
 
 func detectMediaType(data []byte) (string, error) {
-	header := data
-	if len(header) > 1024 {
-		header = header[:1024]
-	}
-	if bytes.Contains(header, []byte("%PDF-")) {
+	if bytes.HasPrefix(data, []byte("%PDF-")) {
 		return "application/pdf", nil
 	}
 	if utf8.Valid(data) && !bytes.ContainsRune(data, '\x00') {
 		return "text/plain", nil
 	}
 	return "", ErrUnsupportedType
+}
+
+func normalizePDFPrefix(data []byte) []byte {
+	const maxLeadingWhitespace = 64
+	limit := min(len(data), maxLeadingWhitespace+len("%PDF-"))
+	index := bytes.Index(data[:limit], []byte("%PDF-"))
+	if index <= 0 {
+		return data
+	}
+	for _, value := range data[:index] {
+		switch value {
+		case ' ', '\t', '\r', '\n', '\f':
+		default:
+			return data
+		}
+	}
+	return data[index:]
 }
 
 func storageKey(userID, hash string) string {

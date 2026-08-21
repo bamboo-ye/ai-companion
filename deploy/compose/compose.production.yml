@@ -1,0 +1,62 @@
+services:
+  kafka:
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/9092"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  migrate-postgres:
+    image: ai-companion-migrate:${APP_IMAGE_TAG:-production}
+
+  api:
+    image: ai-companion-api:${APP_IMAGE_TAG:-production}
+
+  worker:
+    image: ai-companion-worker:${APP_IMAGE_TAG:-production}
+
+  agent-checkpoint-setup:
+    image: ai-companion-agent:${APP_IMAGE_TAG:-production}
+
+  agent-worker:
+    image: ai-companion-agent:${APP_IMAGE_TAG:-production}
+
+  web:
+    image: ai-companion-web:${APP_IMAGE_TAG:-production}
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://or.windcry1.com}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    profiles: ["app"]
+    image: caddy:2.11.4-alpine
+    command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-or.windcry1.com}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ../caddy/caddy.json:/etc/caddy/caddy.json:ro
+      - ${TLS_CERT_FILE:-/opt/ai-companion/shared/tls/fullchain.pem}:/etc/caddy/tls/fullchain.pem:ro
+      - ${TLS_KEY_FILE:-/opt/ai-companion/shared/tls/privkey.pem}:/etc/caddy/tls/privkey.pem:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

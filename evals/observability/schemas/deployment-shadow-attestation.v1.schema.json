@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/deployment-shadow-attestation.v1.schema.json",
+  "title": "Signed deployment shadow gate attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attestation_id",
+    "created_at",
+    "expires_at",
+    "gate_id",
+    "decision",
+    "provider_instance_sha256",
+    "gate_report_sha256",
+    "history_chain_sha256",
+    "key_id",
+    "algorithm",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-shadow-attestation-v1"
+    },
+    "attestation_id": {
+      "type": "string",
+      "pattern": "^shadow-attestation-[0-9a-f]{32}$"
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "gate_id": {
+      "type": "string",
+      "pattern": "^shadow-gate-[0-9a-f]{32}$"
+    },
+    "decision": { "enum": ["pass", "hold"] },
+    "provider_instance_sha256": { "$ref": "#/$defs/digest" },
+    "gate_report_sha256": { "$ref": "#/$defs/digest" },
+    "history_chain_sha256": { "$ref": "#/$defs/digest" },
+    "key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "algorithm": { "const": "hmac-sha256" },
+    "signature": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

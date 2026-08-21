@@ -1,0 +1,36 @@
+{
+  "schema_version": "agent-performance-baseline-v2",
+  "version": "performance.v2",
+  "minimum": {
+    "dispatch_samples": 12,
+    "processed_dispatch_samples": 12,
+    "paired_execution_samples": 12,
+    "python_samples": 12,
+    "direct_python_samples": 5,
+    "warm_direct_python_samples": 4,
+    "warmup_samples": 1,
+    "warmup_ready_processes": 1,
+    "tool_wake_samples": 4,
+    "awakened_tool_run_samples": 4
+  },
+  "maximum": {
+    "queue_wait_p95_ms": 250,
+    "dispatch_duration_p95_ms": 45000,
+    "pool_wait_p95_ms": 250,
+    "python_duration_p95_ms": 40000,
+    "direct_python_duration_p95_ms": 15000,
+    "warm_direct_python_duration_p95_ms": 12000,
+    "direct_model_duration_p95_ms": 12000,
+    "direct_max_model_attempt_timeout_p95_ms": 15000,
+    "direct_runtime_overhead_p95_ms": 500,
+    "warmup_duration_p95_ms": 30000,
+    "warmup_error_rate": 0,
+    "tool_wake_event_age_p95_ms": 1000,
+    "tool_wake_duration_p95_ms": 250,
+    "tool_wake_latency_p95_ms": 1000,
+    "dispatch_error_rate": 0,
+    "python_error_rate": 0,
+    "cold_start_rate": 0.25,
+    "recycle_rate": 0.05
+  }
+}

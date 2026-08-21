@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/agent-direct-traffic-adapter-certification.v1.schema.json",
+  "title": "Agent direct traffic adapter certification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "certification_id", "certification_nonce", "adapter_contract_version",
+    "adapter", "implementation_version", "provider_instance_sha256", "environment_sha256",
+    "certification_isolation_mode", "certification_namespace_sha256", "report_sha256", "report",
+    "key_id", "certified_at", "expires_at", "signature"
+  ],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-adapter-certification-v1"},
+    "certification_id": {"type": "string", "pattern": "^direct-traffic-adapter-cert-[0-9a-f]{32}$"},
+    "certification_nonce": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "adapter_contract_version": {"const": "agent-direct-traffic-adapter-contract-v1"},
+    "adapter": {"type": "string", "minLength": 1, "maxLength": 256},
+    "implementation_version": {"type": "string", "minLength": 1, "maxLength": 256},
+    "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "certification_isolation_mode": {"const": "isolated-certification-namespace-v1"},
+    "certification_namespace_sha256": {"$ref": "#/$defs/digest"},
+    "report_sha256": {"$ref": "#/$defs/digest"},
+    "report": {"type": "object"},
+    "key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "certified_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "signature": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -1,0 +1,7 @@
+{
+  "schema_version": "observability-canary-command-v1",
+  "name": "api-health",
+  "command": ["sh", "scripts/run_api_health_canary.sh"],
+  "timeout_seconds": 30,
+  "stabilization_seconds": 1
+}

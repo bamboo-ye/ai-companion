@@ -57,11 +57,16 @@ func (r *Router) Route(input Input) (Result, error) {
 		result = routed("office", 0.96, "none", "office.email_draft", "命中邮件草稿动作")
 		if recipient := emailPattern.FindString(text); recipient != "" {
 			result.Slots["to"] = []string{recipient}
-		} else {
-			result.RequiredSlots = append(result.RequiredSlots, "to")
 		}
 		result.RequiredSlots = append(result.RequiredSlots, "subject")
 		result.Slots["purpose"] = text
+		if language := targetLanguage(lower); language != "" {
+			if language == "English" {
+				result.Slots["output_language"] = "en-US"
+			} else if language == "Chinese" {
+				result.Slots["output_language"] = "zh-CN"
+			}
+		}
 		return result, nil
 	}
 	if containsAny(lower, "docx", "word文档", "word 文档", "编辑文档", "修改文档") {

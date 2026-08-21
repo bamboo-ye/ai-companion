@@ -1,0 +1,46 @@
+{
+  "schema_version": "agent-direct-canary-suite-v1",
+  "version": "agent-direct-canary-suite-v1",
+  "cases": [
+    {
+      "id": "cache-purpose",
+      "message": "请用一句话简要说明缓存的作用，不要调用任何工具。",
+      "min_chars": 8,
+      "max_chars": 180,
+      "max_sentences": 2,
+      "required_term_groups": [["缓存"], ["重复", "速度", "性能", "访问"]]
+    },
+    {
+      "id": "api-idempotency",
+      "message": "请用一句话简要解释接口幂等性，不要调用任何工具。",
+      "min_chars": 8,
+      "max_chars": 180,
+      "max_sentences": 2,
+      "required_term_groups": [["幂等"], ["重复", "多次", "一次", "结果", "影响"]]
+    },
+    {
+      "id": "binary-search-order",
+      "message": "请用一句话说明二分查找为什么要求数据有序，不要调用任何工具。",
+      "min_chars": 8,
+      "max_chars": 180,
+      "max_sentences": 2,
+      "required_term_groups": [["有序"], ["一半", "范围", "方向", "中间"]]
+    },
+    {
+      "id": "transaction-rollback",
+      "message": "请用一句话解释数据库事务回滚的作用，不要调用任何工具。",
+      "min_chars": 8,
+      "max_chars": 180,
+      "max_sentences": 2,
+      "required_term_groups": [["回滚"], ["恢复", "撤销", "一致", "状态"]]
+    },
+    {
+      "id": "retry-backoff",
+      "message": "请用一句话说明网络重试为什么需要退避，不要调用任何工具。",
+      "min_chars": 8,
+      "max_chars": 180,
+      "max_sentences": 2,
+      "required_term_groups": [["退避"], ["压力", "拥塞", "频率", "间隔", "雪崩"]]
+    }
+  ]
+}

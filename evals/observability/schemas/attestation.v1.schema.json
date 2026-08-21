@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-release-gate-attestation.v1.schema.json",
+  "title": "Observability release gate attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "created_at",
+    "gate_generated_at",
+    "run_id",
+    "decision",
+    "key_id",
+    "algorithm",
+    "gate_report_sha256",
+    "artifacts",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {"const": "observability-release-gate-attestation-v1"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "gate_generated_at": {"type": "string", "format": "date-time"},
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "decision": {"enum": ["promote", "rollback"]},
+    "key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "algorithm": {"const": "hmac-sha256"},
+    "gate_report_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "prefixItems": [
+        {"$ref": "#/$defs/afterArtifact"},
+        {"$ref": "#/$defs/beforeArtifact"},
+        {"$ref": "#/$defs/gateJsonArtifact"},
+        {"$ref": "#/$defs/gateXmlArtifact"},
+        {"$ref": "#/$defs/metricsJsonArtifact"},
+        {"$ref": "#/$defs/metricsXmlArtifact"}
+      ],
+      "items": false
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256", "size"],
+      "properties": {
+        "name": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size": {"type": "integer", "minimum": 1, "maximum": 4194304}
+      }
+    },
+    "afterArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "after.json"}}}
+      ]
+    },
+    "beforeArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "before.json"}}}
+      ]
+    },
+    "gateJsonArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "gate-report.json"}}}
+      ]
+    },
+    "gateXmlArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "gate-report.xml"}}}
+      ]
+    },
+    "metricsJsonArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "metrics-report.json"}}}
+      ]
+    },
+    "metricsXmlArtifact": {
+      "allOf": [
+        {"$ref": "#/$defs/artifact"},
+        {"properties": {"name": {"const": "metrics-report.xml"}}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-execution.v1.schema.json",
+  "title": "Direct traffic production execution envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "namespace_sha256", "rollout_request", "rollout_attestation", "adapter_certification", "adapter_certification_sha256", "shadow_attestation", "shadow_attestation_sha256", "production_gate_attestation", "production_gate_attestation_sha256", "expected_state", "request_sha256"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-execution-v1"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "rollout_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "operation_id", "idempotency_key", "environment_sha256", "provider_instance_sha256", "attestation_id", "attestation_sha256", "history_chain_sha256", "key_id", "decision_id", "decision", "expected_traffic_percent", "target_traffic_percent", "expected_revision"],
+      "properties": {
+        "schema_version": {"const": "agent-direct-traffic-request-v1"},
+        "operation_id": {"type": "string", "pattern": "^direct-traffic-op-[0-9a-f]{32}$"},
+        "idempotency_key": {"$ref": "#/$defs/digest"},
+        "environment_sha256": {"$ref": "#/$defs/digest"},
+        "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+        "attestation_id": {"type": "string", "pattern": "^direct-rollout-attestation-[0-9a-f]{32}$"},
+        "attestation_sha256": {"$ref": "#/$defs/digest"},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"},
+        "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "decision_id": {"type": "string", "pattern": "^direct-rollout-[0-9a-f]{32}$"},
+        "decision": {"const": "expand"},
+        "expected_traffic_percent": {"const": 0},
+        "target_traffic_percent": {"const": 5},
+        "expected_revision": {"const": 0}
+      }
+    },
+    "rollout_attestation": {"$ref": "direct-rollout-attestation.v1.schema.json"},
+    "adapter_certification": {"$ref": "direct-traffic-adapter-certification.v1.schema.json"},
+    "adapter_certification_sha256": {"$ref": "#/$defs/digest"},
+    "shadow_attestation": {"$ref": "direct-traffic-shadow-attestation.v1.schema.json"},
+    "shadow_attestation_sha256": {"$ref": "#/$defs/digest"},
+    "production_gate_attestation": {"$ref": "direct-traffic-production-gate-attestation.v1.schema.json"},
+    "production_gate_attestation_sha256": {"$ref": "#/$defs/digest"},
+    "expected_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "operations", "history_chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"const": 0},
+        "revision": {"const": 0},
+        "operations": {"const": 0},
+        "history_chain_sha256": {"const": "0000000000000000000000000000000000000000000000000000000000000000"}
+      }
+    },
+    "request_sha256": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

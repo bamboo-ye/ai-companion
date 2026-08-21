@@ -48,6 +48,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	pair, err := s.identity.Login(r.Context(), input)
 	if err != nil {
+		if errors.Is(err, identity.ErrUnauthorized) {
+			writeJSON(w, http.StatusUnauthorized, apiError{
+				Code:    "invalid_credentials",
+				Message: "邮箱或密码不正确；如果尚未注册，请先创建账户",
+			})
+			return
+		}
 		writeDomainError(w, err)
 		return
 	}

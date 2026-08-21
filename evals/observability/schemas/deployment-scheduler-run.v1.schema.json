@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-scheduler-run.v1.schema.json",
+  "title": "Observability deployment scheduler run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "adapter",
+    "implementation_version",
+    "certification_id",
+    "before",
+    "batch",
+    "after"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-scheduler-run-v1"
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "implementation_version": {"type": "string", "minLength": 1},
+    "certification_id": {
+      "type": "string",
+      "pattern": "^adapter-cert-[0-9a-f]{32}$"
+    },
+    "before": {
+      "$ref": "deployment-reconciliation-health.v1.schema.json"
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected",
+        "completed",
+        "pending",
+        "indeterminate",
+        "busy",
+        "adapter_unavailable",
+        "retryable_errors"
+      ],
+      "properties": {
+        "selected": {"type": "integer", "minimum": 0},
+        "completed": {"type": "integer", "minimum": 0},
+        "pending": {"type": "integer", "minimum": 0},
+        "indeterminate": {"type": "integer", "minimum": 0},
+        "busy": {"type": "integer", "minimum": 0},
+        "adapter_unavailable": {"type": "integer", "minimum": 0},
+        "retryable_errors": {"type": "integer", "minimum": 0}
+      }
+    },
+    "after": {
+      "$ref": "deployment-reconciliation-health.v1.schema.json"
+    }
+  }
+}

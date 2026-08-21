@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-scheduler-state.v1.schema.json",
+  "title": "Observability deployment scheduler service state v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adapter",
+    "implementation_version",
+    "provider_instance_sha256",
+    "certification_id",
+    "certification_expires_at",
+    "service_started_at",
+    "updated_at",
+    "successful_runs",
+    "failed_runs",
+    "consecutive_failures",
+    "last_success_at",
+    "last_error_at",
+    "last_error_code",
+    "last_run_duration_seconds",
+    "last_report"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-scheduler-state-v1"
+    },
+    "adapter": {"const": "sqlite-sandbox"},
+    "implementation_version": {"type": "string", "minLength": 1},
+    "provider_instance_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "certification_id": {
+      "type": "string",
+      "pattern": "^adapter-cert-[0-9a-f]{32}$"
+    },
+    "certification_expires_at": {"type": "string", "format": "date-time"},
+    "service_started_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "successful_runs": {"type": "integer", "minimum": 0},
+    "failed_runs": {"type": "integer", "minimum": 0},
+    "consecutive_failures": {"type": "integer", "minimum": 0},
+    "last_success_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "last_error_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "last_error_code": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "controller_error",
+        "filesystem_error",
+        "scheduler_error",
+        "sqlite_error"
+      ]
+    },
+    "last_run_duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "last_report": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "deployment-scheduler-run.v1.schema.json"}
+      ]
+    }
+  }
+}

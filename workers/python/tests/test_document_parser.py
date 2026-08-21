@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import unittest
 
-from ai_companion_worker.document_parser import parse_document
+from ai_companion_worker.document_parser import (
+    MAX_CHUNK_TOKENS,
+    Page,
+    _chunk_pages,
+    _layout_to_markdown,
+    _needs_structured_fallback,
+    _remove_repeated_margins,
+    parse_document,
+)
 
 
 class DocumentParserTest(unittest.TestCase):
@@ -17,6 +25,53 @@ class DocumentParserTest(unittest.TestCase):
         self.assertEqual(len(result.pages), 1)
         self.assertIn("Evidence lives on page one", result.pages[0].text)
         self.assertEqual(result.chunks[0].page_start, 1)
+
+    def test_pdf_with_safe_leading_whitespace_is_normalized(self) -> None:
+        result = parse_document(b"\n\n\n\n\n" + _sample_pdf(), "application/pdf")
+        self.assertEqual(len(result.pages), 1)
+        self.assertIn("Evidence lives on page one", result.pages[0].text)
+
+    def test_fixed_width_table_is_preserved_as_markdown_code(self) -> None:
+        markdown = _layout_to_markdown("Name      Score\nAlice     98\nBob       87")
+        self.assertIn("```text", markdown)
+        self.assertIn("Name      Score", markdown)
+        self.assertIn("Alice     98", markdown)
+
+    def test_repeated_page_margins_are_removed(self) -> None:
+        pages = _remove_repeated_margins(
+            [
+                f"Quarterly Report\nPage body {page}\nConfidential - {page}"
+                for page in range(1, 5)
+            ]
+        )
+        self.assertTrue(all("Quarterly Report" not in page for page in pages))
+        self.assertTrue(all("Confidential" not in page for page in pages))
+        self.assertTrue(all("Page body" in page for page in pages))
+
+    def test_chinese_chunks_use_token_budget_instead_of_character_division(self) -> None:
+        result = parse_document(("第一章 结论\n\n" + "证据" * 1_200).encode(), "text/plain")
+        self.assertGreater(len(result.chunks), 1)
+        self.assertTrue(all(chunk.token_count <= MAX_CHUNK_TOKENS for chunk in result.chunks))
+        self.assertGreater(sum(chunk.token_count for chunk in result.chunks), 1_000)
+
+    def test_heading_context_carries_across_page_boundaries(self) -> None:
+        chunks = _chunk_pages(
+            [
+                Page(1, "## Project Alpha\n\nFirst page evidence.", 1.0, "page-1"),
+                Page(2, "Second page evidence.", 1.0, "page-2"),
+            ]
+        )
+        second_page = next(chunk for chunk in chunks if chunk.page_start == 2)
+        self.assertEqual(second_page.section_path, "Project Alpha")
+
+    def test_structured_fallback_ignores_one_blank_page_but_catches_systemic_failure(
+        self,
+    ) -> None:
+        good = Page(1, "Readable evidence", 1.0, "good")
+        blank = Page(2, "", 0.0, "blank")
+        self.assertFalse(_needs_structured_fallback([good, blank]))
+        self.assertTrue(_needs_structured_fallback([blank]))
+        self.assertTrue(_needs_structured_fallback([good, blank, blank, good]))
 
 
 def _sample_pdf() -> bytes:

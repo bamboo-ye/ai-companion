@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/agent-direct-traffic-adapter-certification-report.v1.schema.json",
+  "title": "Agent direct traffic adapter certification report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "adapter_contract_version", "adapter", "implementation_version",
+    "provider_instance_sha256", "environment_sha256", "certification_isolation_mode",
+    "certification_namespace_sha256", "challenge_id", "operational_state_before_sha256",
+    "operational_state_after_sha256", "idempotent_apply", "lookup", "compare_and_swap",
+    "isolated", "apply_request_sha256", "stale_request_sha256",
+    "external_operation_sha256", "final_traffic_percent", "final_revision"
+  ],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-adapter-certification-report-v1"},
+    "adapter_contract_version": {"const": "agent-direct-traffic-adapter-contract-v1"},
+    "adapter": {"type": "string", "minLength": 1, "maxLength": 256},
+    "implementation_version": {"type": "string", "minLength": 1, "maxLength": 256},
+    "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "certification_isolation_mode": {"const": "isolated-certification-namespace-v1"},
+    "certification_namespace_sha256": {"$ref": "#/$defs/digest"},
+    "challenge_id": {"type": "string", "pattern": "^direct-traffic-challenge-[0-9a-f]{32}$"},
+    "operational_state_before_sha256": {"$ref": "#/$defs/digest"},
+    "operational_state_after_sha256": {"$ref": "#/$defs/digest"},
+    "idempotent_apply": {"const": true},
+    "lookup": {"const": true},
+    "compare_and_swap": {"const": true},
+    "isolated": {"const": true},
+    "apply_request_sha256": {"$ref": "#/$defs/digest"},
+    "stale_request_sha256": {"$ref": "#/$defs/digest"},
+    "external_operation_sha256": {"$ref": "#/$defs/digest"},
+    "final_traffic_percent": {"const": 10},
+    "final_revision": {"const": 1}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

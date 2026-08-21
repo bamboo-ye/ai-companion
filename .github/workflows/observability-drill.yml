@@ -1,0 +1,19 @@
+name: Observability alert drill
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retry-alert-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: make eval-observability-release
+      - run: make observability-drill

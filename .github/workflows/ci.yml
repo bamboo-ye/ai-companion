@@ -20,8 +20,15 @@ jobs:
       - run: gofmt -w cmd internal
       - run: git diff --exit-code
       - run: go test ./...
+      - run: make eval-agent-runtime
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-runtime-eval
+          path: artifacts/agent-eval/runtime.jsonl
+          retention-days: 14
       - run: go vet ./...
-      - run: go build ./cmd/api ./cmd/worker
+      - run: go build ./cmd/api ./cmd/worker ./cmd/agent-worker ./cmd/agent-observability-canary
 
   python:
     runs-on: ubuntu-latest
@@ -30,8 +37,68 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - run: python -m pip install -e workers/python
+      - run: python -m pip install -e 'workers/python[agent,dev]'
       - run: PYTHONPATH=workers/python/src python -m unittest discover -s workers/python/tests -v
+      - run: >-
+          PYTHONPATH=workers/python/src python -m ai_companion_worker.evaluation.runner
+          --mode replay
+          --suite evals/agent/suites/pr.jsonl
+          --baseline evals/agent/baselines/pr.v1.json
+          --json-report artifacts/agent-eval/replay.json
+          --junit-report artifacts/agent-eval/replay.xml
+      - run: make eval-agent-performance
+      - run: make eval-agent-retry
+      - run: make eval-observability-release
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval
+          path: artifacts/agent-eval/
+          # The release metrics comparison is an independent, sanitized artifact.
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-eval
+          path: artifacts/observability-eval/
+          retention-days: 14
+      - run: python -m ruff check workers/python/src workers/python/tests
+      - run: >-
+          python -m mypy
+          workers/python/src/ai_companion_worker/agent_governance.py
+          workers/python/src/ai_companion_worker/agent_runtime.py
+          workers/python/src/ai_companion_worker/openrouter_decision.py
+          workers/python/src/ai_companion_worker/agent_worker.py
+          workers/python/src/ai_companion_worker/agent_gateway_client.py
+          workers/python/src/ai_companion_worker/response_quality.py
+          workers/python/src/ai_companion_worker/evaluation/runner.py
+          workers/python/src/ai_companion_worker/evaluation/performance.py
+          workers/python/src/ai_companion_worker/evaluation/retry.py
+          workers/python/src/ai_companion_worker/evaluation/direct_canary.py
+          workers/python/src/ai_companion_worker/evaluation/direct_rollout.py
+          workers/python/src/ai_companion_worker/evaluation/direct_rollout_traffic.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_adapter.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_certification.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_shadow.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_shadow_gate.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_preproduction.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_preproduction_sandbox.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_preproduction_drill.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_production.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_production_gate.py
+          workers/python/src/ai_companion_worker/evaluation/direct_traffic_production_sandbox.py
+          workers/python/src/ai_companion_worker/evaluation/observability.py
+          workers/python/src/ai_companion_worker/evaluation/release_gate.py
+          workers/python/src/ai_companion_worker/evaluation/release_gate_history.py
+          workers/python/src/ai_companion_worker/evaluation/release_attestation.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_authorization.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_controller.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_resolution.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_scheduler.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_scheduler_service.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_shadow.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_shadow_history.py
+          workers/python/src/ai_companion_worker/evaluation/deployment_shadow_gate.py
 
   web:
     runs-on: ubuntu-latest
@@ -79,3 +146,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose --env-file .env.example -f deploy/compose/compose.yml config --quiet
+      - run: make validate-observability
+      - run: ENV_FILE=.env.example make postgres-test-agent-retry
+
+  agent-observability-canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.4"
+          cache: true
+      - run: cp .env.example .env
+      - run: make agent-worker-up
+      - run: >-
+          METRICS_URL=http://127.0.0.1:8080/metrics
+          OBSERVABILITY_ENVIRONMENT_ID=ci-agent-observability
+          OBSERVABILITY_CANARY_SPEC=evals/observability/canaries/agent-observability.v1.json
+          make observability-release-gate
+      - run: >-
+          METRICS_URL=http://127.0.0.1:8080/metrics
+          OBSERVABILITY_ENVIRONMENT_ID=ci-agent-observability
+          make observability-release-trend
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-observability-canary
+          path: |
+            artifacts/agent-eval/observability-canary.json
+            artifacts/agent-eval/observability-canary.xml
+            artifacts/observability-eval/release-gate-*/
+            artifacts/observability-eval/history.sqlite3
+            artifacts/observability-eval/history-trend.json
+          retention-days: 14
+      - if: always()
+        run: docker compose --profile app --profile agent --profile agent-runtime --env-file .env -f deploy/compose/compose.yml down --volumes --remove-orphans

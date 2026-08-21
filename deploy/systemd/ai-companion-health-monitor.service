@@ -1,0 +1,22 @@
+[Unit]
+Description=AI Companion production health monitor
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ai-companion/current/scripts/monitor_production_health.sh
+Environment=COMPOSE_PROJECT=ai-companion
+Environment=HEALTH_STATE_DIR=/var/lib/ai-companion-monitor
+Environment=LOCAL_READY_URL=http://127.0.0.1:8080/readyz
+Environment=PUBLIC_READY_URL=https://or.windcry1.com/readyz
+Environment=CPU_WARN_PERCENT=80
+StateDirectory=ai-companion-monitor
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=45

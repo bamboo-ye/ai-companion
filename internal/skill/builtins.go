@@ -3,7 +3,6 @@ package skill
 import (
 	"context"
 	"fmt"
-	"net/mail"
 	"regexp"
 	"strings"
 )
@@ -26,21 +25,30 @@ func RegisterBuiltins(registry *Registry) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.email_draft", Version: "1.0.0", DisplayName: "邮件草稿", Category: "office",
-				Description: "只生成邮件草稿，不连接邮箱也不会发送。", RiskLevel: "none", Enabled: true,
+				Name: "office.email_draft", Version: "2.1.0", DisplayName: "邮件草稿", Category: "office",
+				Description: "生成经过语言一致性、结构分工、内容去重、礼貌表达、自我介绍和署名校验的邮件草稿，不连接邮箱也不会发送。", RiskLevel: "none", Enabled: true,
 				ToolName: "email.draft", TimeoutMS: 5_000, MaxSteps: 8,
-				InputSchema: objectSchema([]string{"to", "subject", "purpose"}, map[string]any{
+				InputSchema: objectSchema([]string{
+					"subject", "purpose", "output_language", "relationship", "introduction_policy",
+					"sender_name", "salutation", "body_paragraphs", "request_or_next_step",
+					"courtesy", "closing", "signature_lines", "tone",
+				}, map[string]any{
 					"to": map[string]any{"type": "array"}, "subject": map[string]any{"type": "string"}, "purpose": map[string]any{"type": "string"}, "tone": map[string]any{"type": "string"},
+					"output_language": map[string]any{"type": "string"}, "relationship": map[string]any{"type": "string"}, "introduction_policy": map[string]any{"type": "string"},
+					"sender_name": map[string]any{"type": "string"}, "sender_role": map[string]any{"type": "string"}, "sender_organization": map[string]any{"type": "string"},
+					"salutation": map[string]any{"type": "string"}, "introduction": map[string]any{"type": "string"}, "body_paragraphs": map[string]any{"type": "array"},
+					"request_or_next_step": map[string]any{"type": "string"}, "courtesy": map[string]any{"type": "string"}, "closing": map[string]any{"type": "string"}, "signature_lines": map[string]any{"type": "array"},
 				}),
 				OutputSchema: objectSchema([]string{"to", "subject", "body", "send_status"}, map[string]any{
 					"to": map[string]any{"type": "array"}, "subject": map[string]any{"type": "string"}, "body": map[string]any{"type": "string"}, "send_status": map[string]any{"type": "string"}, "tone": map[string]any{"type": "string"}, "provider_message_id": map[string]any{"type": "string"},
+					"output_language": map[string]any{"type": "string"}, "relationship": map[string]any{"type": "string"}, "email_policy_version": map[string]any{"type": "string"}, "quality_report": map[string]any{"type": "object"},
 				}),
 			},
 			Handler: HandlerFunc(emailDraftHandler),
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.markdown_document", Version: "1.0.0", DisplayName: "Markdown 文档", Category: "office",
+				Name: "office.markdown_document", Version: "1.1.0", DisplayName: "Markdown 文档", Category: "office",
 				Description: "确认后创建新的 Markdown 文件副本，永不覆盖源文件。", RiskLevel: "medium", RequiresConfirmation: true, Enabled: true,
 				ToolName: "file.create_markdown", TimeoutMS: 10_000, MaxSteps: 10,
 				InputSchema: objectSchema([]string{"title", "content"}, map[string]any{
@@ -49,6 +57,7 @@ func RegisterBuiltins(registry *Registry) error {
 				OutputSchema: objectSchema([]string{"title", "change_summary", "source_overwritten"}, map[string]any{
 					"title": map[string]any{"type": "string"}, "change_summary": map[string]any{"type": "string"}, "source_overwritten": map[string]any{"type": "boolean"},
 				}),
+				RepairPolicies: filenameRepairPolicies(".md"),
 			},
 			Handler: HandlerFunc(markdownHandler),
 		},
@@ -65,7 +74,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 	definitions := []Definition{
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_outline", Version: "1.0.0", DisplayName: "PPTX 大纲", Category: "office",
+				Name: "office.pptx_outline", Version: "1.1.0", DisplayName: "PPTX 大纲", Category: "office",
 				Description: "根据受众、页数、风格和简报预览逐页大纲，不创建文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, map[string]any{
@@ -74,6 +83,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 				OutputSchema: objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_overwritten"}, map[string]any{
 					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"}, "source_overwritten": map[string]any{"type": "boolean"},
 				}),
+				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_outline"),
 		},
@@ -93,7 +103,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.0.0", DisplayName: "PPTX 生成", Category: "office",
+				Name: "office.pptx_generate", Version: "1.1.0", DisplayName: "PPTX 生成", Category: "office",
 				Description: "根据已确认的受众、页数、风格和简报生成演示文稿。", RiskLevel: "medium", RequiresConfirmation: true, Enabled: true,
 				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, map[string]any{
@@ -102,8 +112,25 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 				OutputSchema: objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_overwritten"}, map[string]any{
 					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"}, "source_overwritten": map[string]any{"type": "boolean"},
 				}),
+				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_generate"),
+		},
+		{
+			Manifest: Manifest{
+				Name: "office.document_extract", Version: "1.0.0", DisplayName: "附件正文提取", Category: "office",
+				Description: "从受支持的文本或 PDF 附件中提取结构化正文，供 Agent 独立规划后续任务。", RiskLevel: "none", Enabled: true,
+				ToolName: "document.extract_text", TimeoutMS: 120_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
+				InputSchema: objectSchema([]string{"source_filename", "source_base64", "media_type"}, map[string]any{
+					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
+				}),
+				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "source_overwritten"}, map[string]any{
+					"source_filename": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
+					"page_count": map[string]any{"type": "integer"}, "character_count": map[string]any{"type": "integer"},
+					"text": map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"}, "source_overwritten": map[string]any{"type": "boolean"},
+				}),
+			},
+			Handler: officeWorkerHandler(worker, "document_extract"),
 		},
 		{
 			Manifest: Manifest{
@@ -119,6 +146,23 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 			},
 			Handler: officeWorkerHandler(worker, "tabular_profile"),
 		},
+		{
+			Manifest: Manifest{
+				Name: "office.pdf_translate", Version: "1.0.0", DisplayName: "PDF 翻译", Category: "office",
+				Description: "读取文本型 PDF，使用受预算约束的 OpenRouter 模型翻译正文并生成新的 PDF 文件，不覆盖源文件。", RiskLevel: "none", Enabled: true,
+				ToolName: "document.translate_pdf", TimeoutMS: 300_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
+				MaxCostMicros: 60_000,
+				InputSchema: objectSchema([]string{"source_filename", "source_base64", "target_language"}, map[string]any{
+					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "target_language": map[string]any{"type": "string"},
+					"output_filename": map[string]any{"type": "string"},
+				}),
+				OutputSchema: objectSchema([]string{"source_filename", "output_filename", "target_language", "page_count", "source_overwritten", "model_usage"}, map[string]any{
+					"source_filename": map[string]any{"type": "string"}, "output_filename": map[string]any{"type": "string"}, "target_language": map[string]any{"type": "string"},
+					"page_count": map[string]any{"type": "integer"}, "source_overwritten": map[string]any{"type": "boolean"}, "model_usage": map[string]any{"type": "object"},
+				}),
+			},
+			Handler: officeWorkerHandler(worker, "pdf_translate"),
+		},
 	}
 	for _, definition := range definitions {
 		if err := registry.Register(definition); err != nil {
@@ -130,6 +174,13 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
 	return map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": properties}
+}
+
+func filenameRepairPolicies(extension string) []RepairPolicy {
+	return []RepairPolicy{
+		{OperatorID: "remove_optional_filename", FieldPath: "/filename", Extension: extension, SemanticsPreserving: true, Preflight: true},
+		{OperatorID: "filename.safe_basename", FieldPath: "/filename", Extension: extension, SemanticsPreserving: true, Preflight: true},
+	}
 }
 
 func translateHandler(_ context.Context, input map[string]any) (ToolResult, error) {
@@ -169,36 +220,6 @@ func deterministicTranslation(text, target string) string {
 		return strings.NewReplacer("Hello", "你好", "Thank you", "谢谢", "tomorrow", "明天", "completed", "已完成").Replace(text)
 	}
 	return fmt.Sprintf("[%s] %s", target, text)
-}
-
-func emailDraftHandler(_ context.Context, input map[string]any) (ToolResult, error) {
-	rawRecipients, _ := input["to"].([]any)
-	recipients := make([]string, 0, len(rawRecipients))
-	for _, value := range rawRecipients {
-		address := strings.TrimSpace(fmt.Sprint(value))
-		parsed, err := mail.ParseAddress(address)
-		if err != nil || parsed.Address != address {
-			return ToolResult{}, fmt.Errorf("%w: invalid recipient %q", ErrValidation, address)
-		}
-		recipients = append(recipients, address)
-	}
-	if len(recipients) == 0 {
-		return ToolResult{}, fmt.Errorf("%w: at least one recipient is required", ErrValidation)
-	}
-	subject := strings.TrimSpace(input["subject"].(string))
-	purpose := strings.TrimSpace(input["purpose"].(string))
-	if subject == "" || purpose == "" {
-		return ToolResult{}, fmt.Errorf("%w: subject and purpose are required", ErrValidation)
-	}
-	tone, _ := input["tone"].(string)
-	opening, closing := "您好：", "祝好"
-	if tone == "friendly" {
-		opening, closing = "你好！", "谢谢，期待你的回复。"
-	}
-	body := opening + "\n\n" + purpose + "\n\n" + closing
-	return ToolResult{Output: map[string]any{
-		"to": recipients, "subject": subject, "body": body, "tone": tone, "send_status": "draft_only", "provider_message_id": "",
-	}}, nil
 }
 
 var unsafeFilename = regexp.MustCompile(`[^a-zA-Z0-9\p{Han}._-]+`)

@@ -65,6 +65,26 @@ func (s *MemoryStore) GetDocument(_ context.Context, userID, documentID string) 
 	return item, nil
 }
 
+func (s *MemoryStore) ListDocumentChunks(
+	_ context.Context,
+	userID string,
+	documentID string,
+	limit int,
+) ([]Chunk, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.items[documentID]
+	if !ok || item.UserID != userID || item.Status == "deleted" {
+		return nil, ErrNotFound
+	}
+	chunks := append([]Chunk(nil), s.chunks[documentID]...)
+	sort.Slice(chunks, func(i, j int) bool { return chunks[i].Ordinal < chunks[j].Ordinal })
+	if limit > 0 && len(chunks) > limit {
+		chunks = chunks[:limit]
+	}
+	return chunks, nil
+}
+
 func (s *MemoryStore) DeleteDocument(_ context.Context, userID, documentID string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -69,7 +69,7 @@ func TestTopicForRejectsUntrustedNames(t *testing.T) {
 	if topic, err := TopicFor("skill.execute.v1"); err != nil || topic != "skill.execute.v1" {
 		t.Fatalf("topic=%q err=%v", topic, err)
 	}
-	for _, topic := range []string{"chat.command.v1", "memory.extract.v1", "document.cleanup.v1", "ledger.export.v1", "notification.deliver.v1", "email.deliver.v1"} {
+	for _, topic := range []string{"chat.command.v1", "agent.run.requested.v1", "agent.run.resume.requested.v1", "memory.extract.v1", "document.cleanup.v1", "skill.run.failed.v1", "skill.run.cancelled.v1", "ledger.export.v1", "reminder.rescheduled.v1", "notification.deliver.v1", "email.deliver.v1"} {
 		if actual, err := TopicFor(topic); err != nil || actual != topic {
 			t.Fatalf("topic=%q err=%v", actual, err)
 		}

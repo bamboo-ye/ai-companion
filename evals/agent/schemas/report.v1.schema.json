@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/evals/agent/report.v1.schema.json",
+  "title": "Agent evaluation report v1",
+  "type": "object",
+  "required": ["schema_version", "mode", "source", "summary", "regression", "cases"],
+  "properties": {
+    "schema_version": {"const": "agent-eval-report-v1"},
+    "mode": {"enum": ["contract", "replay"]},
+    "source": {"type": "object"},
+    "summary": {"type": "object"},
+    "regression": {"type": "object"},
+    "cases": {"type": "array"}
+  }
+}

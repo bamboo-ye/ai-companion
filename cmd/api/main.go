@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/agent"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/conversation"
@@ -19,7 +20,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/identity"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
-	"github.com/windcry1/ai-companion/internal/persistence/mysqlstore"
+	"github.com/windcry1/ai-companion/internal/persistence"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/realtime"
@@ -55,13 +56,13 @@ func main() {
 		os.Exit(1)
 	}
 	documentBlobs := document.BlobStore(localBlobs)
-	var persistentStore *mysqlstore.Store
-	if cfg.MySQLDSN != "" {
+	var persistentStore persistence.ApplicationStore
+	if cfg.DatabaseDriver != "memory" {
 		connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		persistentStore, err = mysqlstore.Open(connectCtx, cfg.MySQLDSN)
+		persistentStore, err = persistence.Open(connectCtx, cfg.DatabaseDriver, cfg.MySQLDSN, cfg.PostgresDSN)
 		cancel()
 		if err != nil {
-			logger.Error("connect mysql", "error", err)
+			logger.Error("connect persistent database", "driver", cfg.DatabaseDriver, "error", err)
 			os.Exit(1)
 		}
 		defer persistentStore.Close()
@@ -77,9 +78,9 @@ func main() {
 		emailStore = persistentStore
 		billingStore = persistentStore
 		safetyStore = persistentStore
-		logger.Info("using persistent mysql store")
+		logger.Info("using persistent store", "driver", cfg.DatabaseDriver)
 	} else {
-		logger.Warn("MYSQL_DSN is empty; using non-persistent in-memory store")
+		logger.Warn("DATABASE_DRIVER=memory; using non-persistent in-memory store")
 		if cfg.SkillWorkerEnabled {
 			cfg.SkillWorkerEnabled = false
 			logger.Warn("durable Skill queue disabled because API and Worker cannot share the in-memory store")
@@ -87,8 +88,15 @@ func main() {
 	}
 
 	provider := conversation.Provider(conversation.DevelopmentProvider{})
-	if cfg.ModelProvider == "openai-compatible" {
-		provider = conversation.NewOpenAICompatibleProvider(cfg.ModelBaseURL, cfg.ModelAPIKey, cfg.ModelName, cfg.ModelTimeout, cfg.ModelInputCostMicrosPerMillion, cfg.ModelOutputCostMicrosPerMillion)
+	if cfg.ModelProvider == "openrouter" {
+		models := append([]string{cfg.ModelName}, cfg.ModelFallbackNames...)
+		provider = conversation.NewOpenRouterProvider(conversation.OpenRouterOptions{
+			BaseURL: cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
+			DataCollection: cfg.ModelDataCollection, ZDRRequired: cfg.ModelZDRRequired, ReasoningEffort: cfg.ModelReasoningEffort, ReasoningExclude: cfg.ModelReasoningExclude,
+			ProviderSort: cfg.ModelProviderSort, AllowProviderFallbacks: cfg.ModelAllowProviderFallbacks, RequireParameters: cfg.ModelRequireParameters,
+			MaxPromptPrice: cfg.ModelMaxPromptPrice, MaxCompletionPrice: cfg.ModelMaxCompletionPrice,
+			HTTPReferer: cfg.ModelHTTPReferer, AppTitle: cfg.ModelAppTitle, InputCost: cfg.ModelInputCostMicrosPerMillion, OutputCost: cfg.ModelOutputCostMicrosPerMillion,
+		})
 	}
 	provider = conversation.NewCircuitBreakerProvider(provider, reliability.NewCircuitBreaker(cfg.ModelCircuitFailureThreshold, cfg.ModelCircuitCooldown))
 	realtimeGateway := realtime.Gateway(realtime.NewMemoryGateway())
@@ -114,6 +122,14 @@ func main() {
 	server.SetEmailStore(emailStore)
 	server.SetBillingStore(billingStore)
 	server.SetSafetyStore(safetyStore)
+	if persistentStore != nil {
+		server.SetOperationsStore(persistentStore)
+		server.SetOperatorAuthStore(persistentStore)
+		server.SetIdentityAdminStore(persistentStore)
+		if agentStore, ok := any(persistentStore).(agent.Store); ok {
+			server.SetAgentStore(agentStore)
+		}
+	}
 	server.SetDocumentIndex(document.NewQdrantIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 10*time.Second))
 	server.SetLedgerExporter(ledger.ArtifactToolExporter{Executable: cfg.SpreadsheetExecutable, ScriptPath: cfg.SpreadsheetWorkerPath, Timeout: 30 * time.Second})
 	ledgerFiles, ledgerFileErr := ledger.NewLocalExportFileStore(cfg.LedgerStorageDir)

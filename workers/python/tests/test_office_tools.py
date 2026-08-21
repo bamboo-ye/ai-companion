@@ -3,16 +3,286 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import unittest
+from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
 from docx import Document
 from openpyxl import Workbook
+from reportlab.pdfgen import canvas
 
-from ai_companion_worker.office_tools import execute
+from ai_companion_worker.office_tools import (
+    ModelBackedOperationError,
+    _openrouter_translate,
+    _translated_content,
+    execute,
+    main,
+)
 
 
 class OfficeToolsTest(unittest.TestCase):
+    def test_translation_response_rejects_null_content(self) -> None:
+        with self.assertRaisesRegex(ValueError, "translation_model_returned_empty_text"):
+            _translated_content({"choices": [{"message": {"content": None}}]})
+        self.assertEqual(
+            _translated_content(
+                {"choices": [{"message": {"content": [{"type": "text", "text": "翻译结果"}]}}]}
+            ),
+            "翻译结果",
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_uses_budgeted_openrouter_policy_and_usage(self, urlopen: Mock) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "provider": "OpenAI",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "Translated text"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 30,
+                    "completion_tokens": 8,
+                    "cost": 0.000004,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_NAME": "deepseek/deepseek-v4-flash-0731",
+                "MODEL_TRANSLATION_MAX_TOKENS": "8000",
+                "MODEL_TRANSLATION_MAX_COST_MICROS": "60000",
+                "MODEL_TRANSLATION_MAX_PROMPT_PRICE": "0.3",
+                "MODEL_TRANSLATION_MAX_COMPLETION_PRICE": "2.5",
+                "MODEL_DATA_COLLECTION": "deny",
+                "MODEL_ZDR_REQUIRED": "false",
+                "MODEL_PROVIDER_SORT": "price",
+                "MODEL_ALLOW_PROVIDER_FALLBACKS": "true",
+            },
+            clear=True,
+        ):
+            translated, usage = _openrouter_translate("Source text", "English")
+        self.assertEqual(translated, "Translated text")
+        self.assertEqual(usage["cost_micros"], 4)
+        self.assertEqual(usage["cost_accounting"], "reported")
+        self.assertEqual(usage["returned_model"], "openai/gpt-5-mini")
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data)
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["model"], "openai/gpt-5-mini")
+        self.assertEqual(body["max_tokens"], 8000)
+        self.assertEqual(body["provider"]["data_collection"], "deny")
+        self.assertTrue(body["provider"]["require_parameters"])
+        self.assertEqual(
+            body["provider"]["max_price"],
+            {"prompt": 0.3, "completion": 2.5},
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_rejects_truncated_response_and_retains_usage(
+        self, urlopen: Mock
+    ) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": "Partial translation"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 30,
+                    "completion_tokens": 8,
+                    "cost": 0.000004,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+            },
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _openrouter_translate("Source text", "English")
+        self.assertEqual(caught.exception.code, "translation_model_truncated")
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 4)
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_requires_the_complete_page_marker_sequence(
+        self, urlopen: Mock
+    ) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "[[PAGE 1]]\nFirst page translated"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 40,
+                    "completion_tokens": 10,
+                    "cost": 0.000005,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+            },
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _openrouter_translate("[[PAGE 1]]\nFirst\n\n[[PAGE 2]]\nSecond", "English")
+        self.assertEqual(caught.exception.code, "translation_page_markers_invalid")
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 5)
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_invalid_content_retains_usage(self, urlopen: Mock) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "choices": [{"finish_reason": "stop", "message": {"content": None}}],
+                "usage": {
+                    "prompt_tokens": 20,
+                    "completion_tokens": 1,
+                    "cost": 0.000003,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+            },
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _openrouter_translate("Source text", "English")
+        self.assertEqual(caught.exception.code, "translation_model_returned_empty_text")
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 3)
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_invalid_json_retains_reserved_usage_bound(self, urlopen: Mock) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = b"not-json"
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+                "MODEL_TRANSLATION_MAX_COST_MICROS": "60000",
+            },
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _openrouter_translate("Source text", "English")
+        self.assertEqual(caught.exception.code, "translation_model_returned_invalid_json")
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 60_000)
+        self.assertEqual(
+            caught.exception.model_usage["cost_accounting"],
+            "reserved_upper_bound",
+        )
+
+    def test_pdf_translation_render_failure_retains_model_usage(self) -> None:
+        source = io.BytesIO()
+        document = canvas.Canvas(source)
+        document.drawString(72, 760, "Source page")
+        document.save()
+        usage = {"provider": "openrouter", "cost_micros": 7}
+        with (
+            patch(
+                "ai_companion_worker.office_tools._openrouter_translate",
+                return_value=("[[PAGE 1]]\nTranslated page", usage),
+            ),
+            patch(
+                "ai_companion_worker.office_tools._render_translated_pdf",
+                side_effect=RuntimeError("render exploded"),
+            ),
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                execute(
+                    "pdf_translate",
+                    {
+                        "source_filename": "source.pdf",
+                        "source_base64": base64.b64encode(source.getvalue()).decode(),
+                        "target_language": "English",
+                    },
+                )
+        self.assertEqual(caught.exception.code, "translation_render_failed")
+        self.assertEqual(caught.exception.model_usage, usage)
+
+    def test_main_transports_billed_operation_failure_as_structured_output(
+        self,
+    ) -> None:
+        usage = {"provider": "openrouter", "cost_micros": 9}
+        stdin = io.StringIO('{"operation":"pdf_translate","input":{}}')
+        with (
+            patch("sys.stdin", stdin),
+            patch("sys.stdout", new_callable=io.StringIO) as stdout,
+            patch(
+                "ai_companion_worker.office_tools.execute",
+                side_effect=ModelBackedOperationError("translation_render_failed", usage),
+            ),
+        ):
+            main()
+        envelope = json.loads(stdout.getvalue())
+        self.assertEqual(envelope["files"], [])
+        self.assertEqual(envelope["output"]["model_usage"], usage)
+        self.assertEqual(
+            envelope["output"]["operation_error"]["code"],
+            "translation_render_failed",
+        )
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_budget_can_block_before_dispatch(self, urlopen: Mock) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+                "MODEL_TRANSLATION_MAX_COST_MICROS": "100",
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "budget_exhausted"):
+                _openrouter_translate("Source text", "English")
+        urlopen.assert_not_called()
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_rejects_relaxed_price_ceiling(self, urlopen: Mock) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+                "MODEL_TRANSLATION_MAX_PROMPT_PRICE": "0.31",
+            },
+        ):
+            with self.assertRaisesRegex(ValueError, "price_ceiling"):
+                _openrouter_translate("Source text", "English")
+        urlopen.assert_not_called()
+
     def test_docx_edit_creates_copy_and_keeps_source_unchanged(self) -> None:
         source = io.BytesIO()
         document = Document()
@@ -29,27 +299,120 @@ class OfficeToolsTest(unittest.TestCase):
         )
         generated = base64.b64decode(result["files"][0]["data_base64"])
         edited = Document(io.BytesIO(generated))
-        self.assertEqual([item.text for item in edited.paragraphs], ["原始段落", "新增第一段", "新增第二段"])
+        self.assertEqual(
+            [item.text for item in edited.paragraphs], ["原始段落", "新增第一段", "新增第二段"]
+        )
         self.assertEqual(source.getvalue(), original)
         self.assertFalse(result["output"]["source_overwritten"])
 
     def test_pptx_generate_has_requested_slide_count_and_outline(self) -> None:
         result = execute(
             "pptx_generate",
-            {"title": "季度复盘", "audience": "管理层", "style": "简洁", "brief": "业绩亮点\n风险与机会", "slide_count": 5},
+            {
+                "title": "季度复盘",
+                "audience": "管理层",
+                "style": "简洁",
+                "brief": "业绩亮点\n风险与机会",
+                "slide_count": 5,
+            },
         )
         generated = base64.b64decode(result["files"][0]["data_base64"])
         with ZipFile(io.BytesIO(generated)) as archive:
-            slides = [name for name in archive.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")]
+            slides = [
+                name
+                for name in archive.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ]
         self.assertEqual(len(slides), 5)
         self.assertEqual(len(result["output"]["outline"]), 5)
 
         outline = execute(
             "pptx_outline",
-            {"title": "季度复盘", "audience": "管理层", "style": "简洁", "brief": "业绩亮点\n风险与机会", "slide_count": 5},
+            {
+                "title": "季度复盘",
+                "audience": "管理层",
+                "style": "简洁",
+                "brief": "业绩亮点\n风险与机会",
+                "slide_count": 5,
+            },
         )
         self.assertEqual(outline["files"], [])
         self.assertEqual(outline["output"]["outline"], result["output"]["outline"])
+
+    def test_pptx_title_with_slash_is_safe_for_outline_and_generated_filename(self) -> None:
+        payload = {
+            "title": "Important Dates - Semester A 2026/27",
+            "audience": "New Students",
+            "style": "professional",
+            "brief": "Key dates timeline and summary",
+            "slide_count": 5,
+        }
+
+        outline = execute("pptx_outline", payload)
+        self.assertEqual(outline["files"], [])
+        self.assertEqual(
+            outline["output"]["title"], "Important Dates - Semester A 2026/27"
+        )
+
+        presentation = execute("pptx_generate", payload)
+        self.assertEqual(
+            presentation["files"][0]["name"],
+            "Important-Dates-Semester-A-2026-27.pptx",
+        )
+
+    def test_pptx_explicit_filename_still_rejects_paths(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid_output_filename"):
+            execute(
+                "pptx_generate",
+                {
+                    "title": "Quarterly review",
+                    "audience": "Leadership",
+                    "style": "professional",
+                    "brief": "Results and next steps",
+                    "slide_count": 4,
+                    "filename": "reports/quarterly-review.pptx",
+                },
+            )
+
+    def test_document_extract_returns_pdf_text_without_creating_a_file(self) -> None:
+        source = io.BytesIO()
+        document = canvas.Canvas(source)
+        document.drawString(72, 760, "CS5491 course overview")
+        document.showPage()
+        document.drawString(72, 760, "Assessment and project requirements")
+        document.save()
+        result = execute(
+            "document_extract",
+            {
+                "source_filename": "CS5491.pdf",
+                "source_base64": base64.b64encode(b"\n\n\n\n\n" + source.getvalue()).decode(),
+                "media_type": "application/pdf",
+            },
+        )
+        self.assertEqual(result["files"], [])
+        self.assertEqual(result["output"]["page_count"], 2)
+        self.assertEqual(result["output"]["format"], "markdown")
+        self.assertIn("parser_version", result["output"])
+        self.assertIn("CS5491 course overview", result["output"]["text"])
+        self.assertFalse(result["output"]["source_overwritten"])
+
+    def test_document_extract_limits_large_attachment_context_by_tokens(self) -> None:
+        text = "\n\n".join(
+            f"## Section {index}\n" + "证据" * 500 for index in range(20)
+        )
+        result = execute(
+            "document_extract",
+            {
+                "source_filename": "long.txt",
+                "source_base64": base64.b64encode(text.encode()).decode(),
+                "media_type": "text/plain",
+            },
+        )
+        output = result["output"]
+        self.assertTrue(output["truncated"])
+        self.assertLessEqual(output["token_count"], 4_000)
+        self.assertLess(output["selected_chunk_count"], output["total_chunk_count"])
+        self.assertIn("[[PAGE 1]]", output["text"])
 
     def test_csv_profile_reports_types_missing_duplicates_and_download(self) -> None:
         source = "name,amount,note\nA,10,ok\nB,20,\nB,20,\n".encode()
@@ -74,7 +437,10 @@ class OfficeToolsTest(unittest.TestCase):
         workbook.save(source)
         result = execute(
             "tabular_profile",
-            {"source_filename": "sample.xlsx", "source_base64": base64.b64encode(source.getvalue()).decode()},
+            {
+                "source_filename": "sample.xlsx",
+                "source_base64": base64.b64encode(source.getvalue()).decode(),
+            },
         )
         self.assertEqual(result["output"]["sheet_name"], "数据")
         self.assertEqual(result["output"]["columns"][1]["numeric"]["mean"], 12.5)

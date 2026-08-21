@@ -1,0 +1,27 @@
+{
+  "schema_version": "observability-snapshot-v1",
+  "generated_at": "2026-08-10T00:00:00Z",
+  "source": {
+    "input_kind": "prometheus_text",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "metrics": {
+    "degradation_level": 0,
+    "queue_lag": 4,
+    "oldest_job_age_seconds": 2,
+    "model_error_ratio": 0.02,
+    "model_latency_p95_seconds": 1.2,
+    "agent_run_duration_p95_seconds": 10,
+    "agent_runs_completed": 10,
+    "agent_runs_failed": 0,
+    "agent_runs_timed_out": 0,
+    "retry_scheduled": 2,
+    "retry_recovered": 2,
+    "retry_exhausted": 0,
+    "retry_deadline_exhausted": 0,
+    "retry_recovery_ratio": 1,
+    "agent_terminal_failures": 0,
+    "retry_exhausted_total": 0,
+    "retry_settled": 2
+  }
+}

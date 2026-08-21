@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-production-drill-attestation.v1.schema.json",
+  "title": "Direct traffic full production integration drill attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "attestation_id", "created_at", "expires_at", "decision", "mode", "contains_live_provider_evidence", "report_sha256", "source_manifest_sha256", "terminal_chain_sha256", "key_id", "algorithm", "signature"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-production-drill-attestation-v1"},
+    "attestation_id": {"type": "string", "pattern": "^direct-traffic-production-drill-attestation-[0-9a-f]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "decision": {"const": "pass"},
+    "mode": {"const": "local-production-integration"},
+    "contains_live_provider_evidence": {"const": false},
+    "report_sha256": {"$ref": "#/$defs/digest"},
+    "source_manifest_sha256": {"$ref": "#/$defs/digest"},
+    "terminal_chain_sha256": {"$ref": "#/$defs/digest"},
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "algorithm": {"const": "hmac-sha256"},
+    "signature": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": "agent-observability-canary-baseline-v1",
+  "minimum_cycles": 5,
+  "maximum_cycles": 100,
+  "terminal_events_per_cycle": 3,
+  "maximum_wake_latency_seconds": 1,
+  "maximum_duration_seconds": 60,
+  "maximum_python_execution_delta": 0,
+  "maximum_model_call_delta": 0,
+  "required_completion_outcome": "not_claimed",
+  "required_terminal_outcome": "no_match"
+}

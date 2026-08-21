@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-resolution-approval.v1.schema.json",
+  "title": "Observability deployment manual resolution approval v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "resolution_id",
+    "scope",
+    "decision",
+    "deployment_id",
+    "request_sha256",
+    "approved_by",
+    "approver_key_id",
+    "issued_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-resolution-approval-v1"
+    },
+    "resolution_id": {
+      "type": "string",
+      "pattern": "^resolve-[0-9a-f]{32}$"
+    },
+    "scope": {"const": "deployment-manual-resolution"},
+    "decision": {"const": "approve"},
+    "deployment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "approved_by": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "approver_key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

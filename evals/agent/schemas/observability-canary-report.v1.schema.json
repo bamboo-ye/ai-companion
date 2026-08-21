@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/agent-observability-canary-report.v1.schema.json",
+  "title": "Agent observability canary report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "decision", "source", "summary", "violations"],
+  "properties": {
+    "schema_version": {"const": "agent-observability-canary-report-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "decision": {"enum": ["pass", "fail"]},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_version", "baseline_sha256"],
+      "properties": {
+        "baseline_version": {"const": "agent-observability-canary-baseline-v1"},
+        "baseline_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cycles", "dispatch_hints", "not_claimed", "terminal_wakes",
+        "terminal_no_matches", "terminal_errors",
+        "wake_latency_max_seconds", "python_executions", "model_calls", "duration_ms"
+      ],
+      "properties": {
+        "cycles": {"type": "integer", "minimum": 1},
+        "dispatch_hints": {"type": "integer", "minimum": 0},
+        "not_claimed": {"type": "integer", "minimum": 0},
+        "terminal_wakes": {"type": "integer", "minimum": 0},
+        "terminal_no_matches": {"type": "integer", "minimum": 0},
+        "terminal_errors": {"type": "integer", "minimum": 0},
+        "wake_latency_max_seconds": {"type": "number", "minimum": 0},
+        "python_executions": {"type": "integer", "minimum": 0},
+        "model_calls": {"type": "integer", "minimum": 0},
+        "duration_ms": {"type": "integer", "minimum": 0}
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "path", "expected", "actual"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "pattern": "^/summary/"},
+          "expected": {"type": "string"},
+          "actual": {}
+        }
+      }
+    }
+  }
+}

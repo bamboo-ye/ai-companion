@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/agent-performance-report.v1.schema.json",
+  "title": "Agent performance report v1",
+  "type": "object",
+  "required": ["schema_version", "source", "summary", "breakdown", "regression"],
+  "properties": {
+    "schema_version": {"const": "agent-performance-report-v1"},
+    "source": {"type": "object"},
+    "summary": {
+      "type": "object",
+      "required": [
+        "dispatch_samples",
+        "processed_dispatch_samples",
+        "paired_execution_samples",
+        "python_samples",
+        "direct_python_samples",
+        "warm_direct_python_samples",
+        "warmup_samples",
+        "warmup_ready_processes",
+        "warmup_duration_p95_ms",
+        "warmup_error_rate",
+        "queue_wait_p95_ms",
+        "dispatch_duration_p95_ms",
+        "pool_wait_p95_ms",
+        "python_duration_p95_ms",
+        "model_duration_p50_ms",
+        "model_duration_p95_ms",
+        "max_model_attempt_timeout_p95_ms",
+        "runtime_overhead_p50_ms",
+        "runtime_overhead_p95_ms",
+        "direct_python_duration_p95_ms",
+        "direct_model_duration_p95_ms",
+        "direct_max_model_attempt_timeout_p95_ms",
+        "direct_runtime_overhead_p95_ms",
+        "warm_direct_python_duration_p95_ms",
+        "dispatch_error_rate",
+        "python_error_rate",
+        "cold_start_rate",
+        "recycle_rate"
+      ],
+      "additionalProperties": {"type": "number", "minimum": 0}
+    },
+    "breakdown": {"type": "object"},
+    "regression": {
+      "type": "object",
+      "required": ["baseline_version", "violations"],
+      "properties": {
+        "baseline_version": {"type": "string"},
+        "violations": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  }
+}

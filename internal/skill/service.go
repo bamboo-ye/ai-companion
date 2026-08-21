@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/chatattachment"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 )
 
@@ -44,6 +46,15 @@ type Manifest struct {
 	ExecutionMode        string         `json:"execution_mode"`
 	InputSchema          map[string]any `json:"input_schema"`
 	OutputSchema         map[string]any `json:"output_schema"`
+	RepairPolicies       []RepairPolicy `json:"repair_policies,omitempty"`
+}
+
+type RepairPolicy struct {
+	OperatorID          string `json:"operator_id"`
+	FieldPath           string `json:"field_path"`
+	Extension           string `json:"extension,omitempty"`
+	SemanticsPreserving bool   `json:"semantics_preserving"`
+	Preflight           bool   `json:"preflight"`
 }
 
 type Run struct {
@@ -58,6 +69,8 @@ type Run struct {
 	RequiresConfirmation bool            `json:"requires_confirmation"`
 	Input                json.RawMessage `json:"input"`
 	Output               json.RawMessage `json:"output,omitempty"`
+	ConversationID       string          `json:"conversation_id,omitempty"`
+	OriginMessageID      string          `json:"origin_message_id,omitempty"`
 	CreateKey            string          `json:"-"`
 	ConfirmationKey      string          `json:"-"`
 	LastAction           string          `json:"-"`
@@ -78,6 +91,7 @@ type Run struct {
 	AvailableAt          time.Time       `json:"-"`
 	WorkerID             string          `json:"-"`
 	LeaseExpiresAt       *time.Time      `json:"-"`
+	DeliveryContent      string          `json:"-"`
 }
 
 type Step struct {
@@ -157,6 +171,21 @@ func (r *Registry) Register(definition Definition) error {
 	}
 	if manifest.MaxSteps < 5 {
 		return fmt.Errorf("%w: max_steps must be at least 5", ErrValidation)
+	}
+	seenRepairPolicies := make(map[string]struct{}, len(manifest.RepairPolicies))
+	for index := range manifest.RepairPolicies {
+		policy := &manifest.RepairPolicies[index]
+		policy.OperatorID = strings.TrimSpace(policy.OperatorID)
+		policy.FieldPath = strings.TrimSpace(policy.FieldPath)
+		policy.Extension = strings.TrimSpace(policy.Extension)
+		if policy.OperatorID == "" || !strings.HasPrefix(policy.FieldPath, "/") || !policy.SemanticsPreserving {
+			return fmt.Errorf("%w: invalid repair policy", ErrValidation)
+		}
+		policyKey := policy.OperatorID + "\x00" + policy.FieldPath
+		if _, exists := seenRepairPolicies[policyKey]; exists {
+			return fmt.Errorf("%w: duplicate repair policy", ErrValidation)
+		}
+		seenRepairPolicies[policyKey] = struct{}{}
 	}
 	if manifest.MaxInputBytes <= 0 {
 		manifest.MaxInputBytes = 64 << 10
@@ -358,6 +387,30 @@ func (s *Service) definitionForUser(ctx context.Context, userID, skillName strin
 }
 
 func (s *Service) Start(ctx context.Context, userID, skillName, createKey string, input map[string]any) (Run, bool, error) {
+	return s.start(ctx, userID, skillName, createKey, input, "", "")
+}
+
+func (s *Service) StartForConversation(
+	ctx context.Context,
+	userID, skillName, createKey string,
+	input map[string]any,
+	conversationID, originMessageID string,
+) (Run, bool, error) {
+	if strings.TrimSpace(conversationID) == "" || strings.TrimSpace(originMessageID) == "" {
+		return Run{}, false, ErrValidation
+	}
+	return s.start(
+		ctx, userID, skillName, createKey, input,
+		strings.TrimSpace(conversationID), strings.TrimSpace(originMessageID),
+	)
+}
+
+func (s *Service) start(
+	ctx context.Context,
+	userID, skillName, createKey string,
+	input map[string]any,
+	conversationID, originMessageID string,
+) (Run, bool, error) {
 	if strings.TrimSpace(createKey) == "" || len(createKey) > 191 {
 		return Run{}, false, ErrIdempotencyKey
 	}
@@ -370,6 +423,9 @@ func (s *Service) Start(ctx context.Context, userID, skillName, createKey string
 	}
 	if existing, findErr := s.store.FindSkillRunByCreateKey(ctx, userID, createKey); findErr == nil {
 		if existing.SkillName != skillName {
+			return Run{}, false, ErrConflict
+		}
+		if conversationID != "" && (existing.ConversationID != conversationID || existing.OriginMessageID != originMessageID) {
 			return Run{}, false, ErrConflict
 		}
 		return existing, false, nil
@@ -397,7 +453,8 @@ func (s *Service) Start(ctx context.Context, userID, skillName, createKey string
 	run := Run{
 		ID: runID, UserID: userID, SkillName: definition.Manifest.Name, SkillVersion: definition.Manifest.Version, ExecutionMode: definition.Manifest.ExecutionMode,
 		Status: status, CurrentState: state, RiskLevel: definition.Manifest.RiskLevel,
-		RequiresConfirmation: definition.Manifest.RequiresConfirmation, Input: payload, CreateKey: createKey,
+		RequiresConfirmation: definition.Manifest.RequiresConfirmation, Input: payload,
+		ConversationID: conversationID, OriginMessageID: originMessageID, CreateKey: createKey,
 		Attempt: 1, MaxSteps: definition.Manifest.MaxSteps, TimeoutMS: definition.Manifest.TimeoutMS,
 		MaxInputBytes: definition.Manifest.MaxInputBytes, MaxCostMicros: definition.Manifest.MaxCostMicros,
 		Revision: 1, Steps: []Step{}, Files: []GeneratedFile{}, CreatedAt: now, UpdatedAt: now, AvailableAt: now,
@@ -530,6 +587,7 @@ func (s *Service) Retry(ctx context.Context, userID, runID, key string) (Run, er
 	now := s.now().UTC()
 	run.Attempt++
 	run.ErrorCode, run.ErrorMessage, run.LastAction, run.LastActionKey = "", "", "retry", key
+	run.DeliveryContent = ""
 	run.CompletedAt = nil
 	run.Status, run.CurrentState = "running", "execute"
 	if run.RequiresConfirmation {
@@ -551,6 +609,170 @@ func (s *Service) Retry(ctx context.Context, userID, runID, key string) (Run, er
 	return run, nil
 }
 
+// RepairRetry starts a new attempt for the same logical Skill Run after a
+// policy-authorized, semantics-preserving argument repair. The existing run ID
+// is retained so task history, chat delivery, and manual retry all share one
+// lineage. CAS persistence arbitrates races with user-triggered retries.
+func (s *Service) RepairRetry(ctx context.Context, userID, runID, key, operatorID string, input map[string]any) (Run, error) {
+	if strings.TrimSpace(key) == "" || len(key) > 191 {
+		return Run{}, ErrIdempotencyKey
+	}
+	operatorID = strings.TrimSpace(operatorID)
+	if operatorID == "" || input == nil {
+		return Run{}, ErrValidation
+	}
+	run, err := s.store.GetSkillRun(ctx, userID, runID)
+	if err != nil {
+		return Run{}, err
+	}
+	if run.LastAction == "repair_retry" && run.LastActionKey == key {
+		return run, nil
+	}
+	if run.Status != "failed" {
+		return Run{}, ErrConflict
+	}
+	failure, ok := toolFailureFromOutput(run.Output)
+	if !ok || (!failure.Repairable && !failure.RetrySameInput) || failure.SideEffectState != "none" {
+		return Run{}, ErrValidation
+	}
+	definition, err := s.definitionForUser(ctx, userID, run.SkillName)
+	if err != nil {
+		return Run{}, err
+	}
+	if err = validateRepairRetry(definition.Manifest, failure, operatorID, run.Input, input); err != nil {
+		return Run{}, err
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil || len(encoded) == 0 || len(encoded) > run.MaxInputBytes {
+		return Run{}, ErrValidation
+	}
+	if len(run.Steps)+3 > run.MaxSteps {
+		return Run{}, ErrConflict
+	}
+	expected := run.Revision
+	now := s.now().UTC()
+	before := sha256.Sum256(run.Input)
+	after := sha256.Sum256(encoded)
+	auditInput, _ := json.Marshal(map[string]any{
+		"operator_id":      operatorID,
+		"failure_code":     failure.Code,
+		"before_args_hash": hex.EncodeToString(before[:]),
+		"after_args_hash":  hex.EncodeToString(after[:]),
+		"field_paths":      failure.FieldPaths,
+	})
+	run.Input = encoded
+	run.Output = nil
+	run.Attempt++
+	run.ErrorCode, run.ErrorMessage = "", ""
+	run.DeliveryContent = ""
+	run.LastAction, run.LastActionKey = "repair_retry", key
+	run.CompletedAt = nil
+	run.Status, run.CurrentState = "running", "execute"
+	if s.shouldQueue(definition.Manifest) {
+		run.Status, run.CurrentState, run.AvailableAt = "queued", "queued", now
+	}
+	run.WorkerID, run.LeaseExpiresAt = "", nil
+	run.UpdatedAt = now
+	step, _ := completedStep(len(run.Steps)+1, "repair", operatorID, auditInput, nil, now)
+	run.Steps = append(run.Steps, step)
+	run.Revision++
+	if err = s.store.SaveSkillRun(ctx, run, expected, []Step{step}, nil); err != nil {
+		return Run{}, err
+	}
+	if run.Status == "running" {
+		return s.execute(ctx, run, definition)
+	}
+	return run, nil
+}
+
+func validateRepairRetry(manifest Manifest, failure ToolFailure, operatorID string, oldInput json.RawMessage, newInput map[string]any) error {
+	if operatorID == "transport.retry" {
+		if !failure.RetrySameInput || failure.SideEffectState != "none" {
+			return ErrValidation
+		}
+		var previous map[string]any
+		if json.Unmarshal(oldInput, &previous) != nil || !reflect.DeepEqual(previous, newInput) {
+			return ErrValidation
+		}
+		if err := validateObject(newInput, manifest.InputSchema); err != nil {
+			return fmt.Errorf("%w: retry input: %v", ErrValidation, err)
+		}
+		return nil
+	}
+	allowedByFailure := false
+	for _, allowed := range failure.AllowedRepairs {
+		if strings.TrimSpace(allowed) == operatorID {
+			allowedByFailure = true
+			break
+		}
+	}
+	if !allowedByFailure {
+		return ErrValidation
+	}
+	var policy *RepairPolicy
+	for index := range manifest.RepairPolicies {
+		if manifest.RepairPolicies[index].OperatorID == operatorID {
+			policy = &manifest.RepairPolicies[index]
+			break
+		}
+	}
+	if policy == nil || !policy.SemanticsPreserving || !containsString(failure.FieldPaths, policy.FieldPath) {
+		return ErrValidation
+	}
+	if !strings.HasPrefix(policy.FieldPath, "/") || strings.Contains(strings.TrimPrefix(policy.FieldPath, "/"), "/") {
+		return ErrValidation
+	}
+	field := strings.TrimPrefix(policy.FieldPath, "/")
+	var previous map[string]any
+	if json.Unmarshal(oldInput, &previous) != nil {
+		return ErrValidation
+	}
+	previousComparable, nextComparable := cloneAnyMap(previous), cloneAnyMap(newInput)
+	delete(previousComparable, field)
+	delete(nextComparable, field)
+	if !reflect.DeepEqual(previousComparable, nextComparable) {
+		return ErrValidation
+	}
+	switch operatorID {
+	case "remove_optional_filename":
+		if _, exists := newInput[field]; exists {
+			return ErrValidation
+		}
+	case "filename.safe_basename":
+		value, ok := newInput[field].(string)
+		value = strings.TrimSpace(value)
+		if !ok || value == "" || strings.ContainsAny(value, "/\\") || value == "." || value == ".." || len([]byte(value)) > 240 {
+			return ErrValidation
+		}
+		if policy.Extension != "" && !strings.HasSuffix(strings.ToLower(value), strings.ToLower(policy.Extension)) {
+			return ErrValidation
+		}
+	default:
+		return ErrValidation
+	}
+	if err := validateObject(newInput, manifest.InputSchema); err != nil {
+		return fmt.Errorf("%w: repaired input: %v", ErrValidation, err)
+	}
+	return nil
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	result := make(map[string]any, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) Get(ctx context.Context, userID, runID string) (Run, error) {
 	return s.store.GetSkillRun(ctx, userID, runID)
 }
@@ -560,6 +782,30 @@ func (s *Service) List(ctx context.Context, userID string, limit int) ([]Run, er
 		limit = 50
 	}
 	return s.store.ListSkillRuns(ctx, userID, limit)
+}
+
+func (s *Service) ListForConversation(ctx context.Context, userID, conversationID string, limit int) ([]Run, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return s.List(ctx, userID, limit)
+	}
+	items, err := s.store.ListSkillRuns(ctx, userID, 200)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	filtered := make([]Run, 0, min(limit, len(items)))
+	for _, item := range items {
+		if item.ConversationID == conversationID {
+			filtered = append(filtered, item)
+			if len(filtered) == limit {
+				break
+			}
+		}
+	}
+	return filtered, nil
 }
 
 func (s *Service) Download(ctx context.Context, userID, runID, fileID string) (GeneratedFile, []byte, error) {
@@ -609,6 +855,7 @@ func (s *Service) DownloadWorkspaceFile(ctx context.Context, workspaceID, fileID
 }
 
 func (s *Service) execute(ctx context.Context, run Run, definition Definition) (Run, error) {
+	run.Output = nil
 	if len(run.Steps)+2 > run.MaxSteps {
 		return s.fail(ctx, run, definition.Manifest.ToolName, "step_budget_exceeded", errors.New("skill step budget exceeded"))
 	}
@@ -623,13 +870,36 @@ func (s *Service) execute(ctx context.Context, run Run, definition Definition) (
 	result, executeErr := definition.Handler.Execute(executeCtx, input)
 	if executeErr != nil {
 		if ctx.Err() != nil {
+			if run.WorkerID == "" {
+				code := "tool_cancelled"
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					code = "tool_timeout"
+				}
+				return s.fail(context.Background(), run, definition.Manifest.ToolName, code, executeErr)
+			}
 			return Run{}, ctx.Err()
 		}
 		code := "tool_failed"
 		if errors.Is(executeCtx.Err(), context.DeadlineExceeded) {
 			code = "tool_timeout"
 		}
+		if failure := toolFailureFromError(executeErr, code); failure.Code != "" {
+			code = failure.Code
+		}
 		return s.fail(ctx, run, definition.Manifest.ToolName, code, executeErr)
+	}
+	persistModelAuditOutput(&run, result.Output)
+	if run.MaxCostMicros > 0 {
+		cost, ok := modelCostMicros(result.Output)
+		if !ok {
+			return s.fail(ctx, run, definition.Manifest.ToolName, "invalid_model_usage", errors.New("model usage cost is required by the skill budget"))
+		}
+		if cost > run.MaxCostMicros {
+			return s.fail(ctx, run, definition.Manifest.ToolName, "model_cost_exceeded", fmt.Errorf("model cost %d exceeds skill budget %d", cost, run.MaxCostMicros))
+		}
+	}
+	if code, ok := modelOperationError(result.Output); ok {
+		return s.fail(ctx, run, definition.Manifest.ToolName, "model_operation_failed", errors.New(code))
 	}
 	if err := validateObject(result.Output, definition.Manifest.OutputSchema); err != nil {
 		return s.fail(ctx, run, definition.Manifest.ToolName, "invalid_output", err)
@@ -665,6 +935,7 @@ func (s *Service) execute(ctx context.Context, run Run, definition Definition) (
 	newSteps := []Step{executeStep, deliverStep}
 	run.Steps = append(run.Steps, newSteps...)
 	run.Files = append(run.Files, newFiles...)
+	run.DeliveryContent = retryDeliveryContent(run)
 	run.Revision++
 	if err = s.store.SaveSkillRun(ctx, run, expected, newSteps, newFiles); err != nil {
 		for _, file := range newFiles {
@@ -675,16 +946,73 @@ func (s *Service) execute(ctx context.Context, run Run, definition Definition) (
 	return run, nil
 }
 
+func persistModelAuditOutput(run *Run, output map[string]any) {
+	usage, hasUsage := output["model_usage"]
+	if !hasUsage {
+		return
+	}
+	audit := map[string]any{"model_usage": usage}
+	if operationError, ok := output["operation_error"]; ok {
+		audit["operation_error"] = operationError
+	}
+	encoded, err := json.Marshal(audit)
+	if err == nil {
+		run.Output = encoded
+	}
+}
+
+func modelOperationError(output map[string]any) (string, bool) {
+	operationError, ok := output["operation_error"].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	code, ok := operationError["code"].(string)
+	code = strings.TrimSpace(code)
+	if !ok || code == "" || len(code) > 128 {
+		return "invalid_operation_error", true
+	}
+	return code, true
+}
+
+func modelCostMicros(output map[string]any) (int64, bool) {
+	usage, ok := output["model_usage"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	switch value := usage["cost_micros"].(type) {
+	case int:
+		return int64(value), value >= 0
+	case int64:
+		return value, value >= 0
+	case float64:
+		if value < 0 || value > math.MaxInt64 || value != math.Trunc(value) {
+			return 0, false
+		}
+		return int64(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		return parsed, err == nil && parsed >= 0
+	default:
+		return 0, false
+	}
+}
+
 func (s *Service) fail(ctx context.Context, run Run, toolName, code string, cause error) (Run, error) {
 	expected := run.Revision
 	now := s.now().UTC()
-	run.Status, run.CurrentState, run.ErrorCode, run.ErrorMessage = "failed", "failed", code, cause.Error()
+	failure := toolFailureFromError(cause, code)
+	run.Status, run.CurrentState, run.ErrorCode, run.ErrorMessage = "failed", "failed", failure.Code, failure.Message
+	if strings.TrimSpace(run.ErrorMessage) == "" {
+		run.ErrorMessage = "工具执行失败。"
+	}
+	run.Output = failureOutput(run.Output, failure)
 	run.WorkerID, run.LeaseExpiresAt = "", nil
 	run.UpdatedAt, run.CompletedAt = now, &now
+	run.DeliveryContent = retryDeliveryContent(run)
 	newSteps := make([]Step, 0, 1)
 	if len(run.Steps) < run.MaxSteps {
 		stepID, _ := id.New()
-		step := Step{ID: stepID, Sequence: len(run.Steps) + 1, State: "execute", Status: "failed", ToolName: toolName, Input: run.Input, ErrorCode: code, ErrorMessage: cause.Error(), StartedAt: now, CompletedAt: &now}
+		step := Step{ID: stepID, Sequence: len(run.Steps) + 1, State: "execute", Status: "failed", ToolName: toolName, Input: run.Input, Output: run.Output, ErrorCode: failure.Code, ErrorMessage: run.ErrorMessage, StartedAt: now, CompletedAt: &now}
 		run.Steps = append(run.Steps, step)
 		newSteps = append(newSteps, step)
 	}
@@ -693,6 +1021,54 @@ func (s *Service) fail(ctx context.Context, run Run, toolName, code string, caus
 		return Run{}, err
 	}
 	return run, nil
+}
+
+func retryDeliveryContent(run Run) string {
+	if run.Attempt < 2 || run.ConversationID == "" || run.OriginMessageID == "" {
+		return ""
+	}
+	marker := chatattachment.SkillRunMarker(run.ID, run.Attempt, run.Status)
+	if run.Status == "failed" || run.Status == "cancelled" {
+		message := "任务重试失败：" + run.SkillName
+		if detail := strings.TrimSpace(run.ErrorMessage); detail != "" {
+			message += "\n" + detail
+		}
+		return strings.TrimSpace(message + "\n" + marker)
+	}
+	if run.Status != "succeeded" {
+		return ""
+	}
+	lines := []string{"任务重试已完成：" + run.SkillName}
+	var output map[string]any
+	if len(run.Output) > 0 && json.Unmarshal(run.Output, &output) == nil {
+		switch {
+		case strings.TrimSpace(fmt.Sprint(output["translated_text"])) != "<nil>" && strings.TrimSpace(fmt.Sprint(output["translated_text"])) != "":
+			lines = append(lines, strings.TrimSpace(fmt.Sprint(output["translated_text"])))
+		case strings.TrimSpace(fmt.Sprint(output["body"])) != "<nil>" && strings.TrimSpace(fmt.Sprint(output["body"])) != "":
+			subject := strings.TrimSpace(fmt.Sprint(output["subject"]))
+			if subject != "" && subject != "<nil>" {
+				lines = append(lines, "主题："+subject)
+			}
+			lines = append(lines, strings.TrimSpace(fmt.Sprint(output["body"])))
+		default:
+			if encoded, err := json.MarshalIndent(output, "", "  "); err == nil {
+				lines = append(lines, truncateDelivery(string(encoded), 6000))
+			}
+		}
+	}
+	for _, file := range run.Files {
+		lines = append(lines, chatattachment.GeneratedFileMarker(run.ID, file.ID, file.Name))
+	}
+	lines = append(lines, marker)
+	return strings.TrimSpace(strings.Join(lines, "\n\n"))
+}
+
+func truncateDelivery(value string, limit int) string {
+	characters := []rune(value)
+	if len(characters) <= limit {
+		return value
+	}
+	return string(characters[:limit]) + "\n…"
 }
 
 func completedStep(sequence int, state, tool string, input, output json.RawMessage, now time.Time) (Step, error) {

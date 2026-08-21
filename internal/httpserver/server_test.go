@@ -199,6 +199,17 @@ func TestDocumentUploadDeduplicateOwnershipAndDelete(t *testing.T) {
 func TestAuthCharacterAndPersonaVersionFlow(t *testing.T) {
 	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "a-test-secret-with-enough-entropy", ChatRateLimit: 1, ChatRateWindow: time.Minute}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
+	invalidLogin := performJSON(t, server, http.MethodPost, "/v1/auth/login", "", map[string]any{
+		"email": "missing@example.com", "password": "incorrect-password", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "missing-browser", "name": "Missing Browser", "platform": "web"},
+	})
+	if invalidLogin.Code != http.StatusUnauthorized ||
+		!strings.Contains(invalidLogin.Body.String(), `"code":"invalid_credentials"`) ||
+		!strings.Contains(invalidLogin.Body.String(), "邮箱或密码不正确") ||
+		strings.Contains(invalidLogin.Body.String(), "登录状态无效或已过期") {
+		t.Fatalf("invalid login response = %d %s", invalidLogin.Code, invalidLogin.Body.String())
+	}
+
 	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
 		"email": "lin@example.com", "password": "correct-horse-battery", "display_name": "小林", "timezone": "Asia/Shanghai",
 		"device": map[string]any{"device_key": "test-browser", "name": "Test Browser", "platform": "web"},
@@ -221,7 +232,7 @@ func TestAuthCharacterAndPersonaVersionFlow(t *testing.T) {
 		"name": "小棉", "relationship": "温柔朋友", "personality": "耐心、体贴，不说教", "speech_style": "短句，先共情再回应", "hobbies": []string{"电影"}, "initiative": "balanced", "reply_length": "short",
 	})
 	direct := createCharacter(t, server, tokens.AccessToken, map[string]any{
-		"name": "阿策", "relationship": "行动教练", "personality": "直接、清醒、重视行动", "speech_style": "先给结论，再给三步建议", "hobbies": []string{"效率工具"}, "initiative": "high", "reply_length": "medium",
+		"module": "work", "name": "阿策", "relationship": "行动教练", "personality": "直接、清醒、重视行动", "speech_style": "先给结论，再给三步建议", "hobbies": []string{"效率工具"}, "initiative": "high", "reply_length": "medium",
 	})
 	if gentle.Persona.Compiled["voice"] == nil || direct.Persona.Compiled["voice"] == nil {
 		t.Fatal("compiled personas missing voice")
@@ -245,12 +256,26 @@ func TestAuthCharacterAndPersonaVersionFlow(t *testing.T) {
 	if len(listed.Items) != 2 {
 		t.Fatalf("character count = %d, want 2", len(listed.Items))
 	}
+	if listed.Items[0]["module"] != "companion" || listed.Items[1]["module"] != "work" {
+		t.Fatalf("character modules = %v, want companion/work", listed.Items)
+	}
 
 	updated := performJSON(t, server, http.MethodPut, "/v1/characters/"+gentle.Character.ID, tokens.AccessToken, map[string]any{
 		"name": "小棉", "relationship": "温柔朋友", "personality": "耐心、体贴，也会温和提醒", "speech_style": "短句，先共情再回应", "initiative": "balanced", "reply_length": "short",
 	})
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", updated.Code, updated.Body.String())
+	}
+	var updatedCharacter struct {
+		Character struct {
+			Module string `json:"module"`
+		} `json:"character"`
+	}
+	if err := json.Unmarshal(updated.Body.Bytes(), &updatedCharacter); err != nil {
+		t.Fatal(err)
+	}
+	if updatedCharacter.Character.Module != "companion" {
+		t.Fatalf("module changed during legacy update: %s", updatedCharacter.Character.Module)
 	}
 	versions := performJSON(t, server, http.MethodGet, "/v1/characters/"+gentle.Character.ID+"/persona-versions", tokens.AccessToken, nil)
 	var history struct {
@@ -341,6 +366,28 @@ func TestAuthCharacterAndPersonaVersionFlow(t *testing.T) {
 	stream := performJSON(t, server, http.MethodGet, "/v1/generation-jobs/"+generation.Job.ID+"/events", tokens.AccessToken, nil)
 	if stream.Code != http.StatusOK || !strings.Contains(stream.Body.String(), "event: completed") {
 		t.Fatalf("SSE replay missing completion: %s", stream.Body.String())
+	}
+	deletedConversation := performJSON(t, server, http.MethodDelete, "/v1/conversations/"+conversation.ID, tokens.AccessToken, nil)
+	if deletedConversation.Code != http.StatusNoContent {
+		t.Fatalf("delete conversation status = %d, body = %s", deletedConversation.Code, deletedConversation.Body.String())
+	}
+	deletedMessages := performJSON(t, server, http.MethodGet, "/v1/conversations/"+conversation.ID+"/messages", tokens.AccessToken, nil)
+	if deletedMessages.Code != http.StatusNotFound {
+		t.Fatalf("deleted conversation messages status = %d, want 404", deletedMessages.Code)
+	}
+	deletedCharacter := performJSON(t, server, http.MethodDelete, "/v1/characters/"+direct.Character.ID, tokens.AccessToken, nil)
+	if deletedCharacter.Code != http.StatusNoContent {
+		t.Fatalf("delete character status = %d, body = %s", deletedCharacter.Code, deletedCharacter.Body.String())
+	}
+	remainingCharacters := performJSON(t, server, http.MethodGet, "/v1/characters", tokens.AccessToken, nil)
+	var remainingCharactersPage struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(remainingCharacters.Body.Bytes(), &remainingCharactersPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingCharactersPage.Items) != 1 {
+		t.Fatalf("character count after delete = %d, want 1", len(remainingCharactersPage.Items))
 	}
 
 	refresh := performJSON(t, server, http.MethodPost, "/v1/auth/refresh", "", map[string]string{"refresh_token": tokens.RefreshToken})

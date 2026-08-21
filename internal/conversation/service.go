@@ -26,6 +26,7 @@ type Conversation struct {
 	UserID        string     `json:"-"`
 	CharacterID   string     `json:"character_id"`
 	Title         string     `json:"title"`
+	Status        string     `json:"status"`
 	NextSequence  uint64     `json:"-"`
 	LastMessageAt *time.Time `json:"last_message_at"`
 	CreatedAt     time.Time  `json:"created_at"`
@@ -79,6 +80,7 @@ type Store interface {
 	CreateConversation(context.Context, Conversation) error
 	ListConversations(context.Context, string) ([]Conversation, error)
 	GetConversation(context.Context, string, string) (Conversation, error)
+	DeleteConversation(context.Context, string, string, time.Time) error
 	AcceptMessage(context.Context, string, string, Message, Job) (Message, Job, error)
 	ListMessages(context.Context, string, string, uint64, int, int) ([]Message, error)
 	GetJob(context.Context, string, string) (Job, error)
@@ -96,6 +98,41 @@ type Provider interface {
 	Generate(context.Context, character.Character, []Message) (string, Usage, error)
 }
 
+type ModelToolDefinition struct {
+	Name             string              `json:"name"`
+	Description      string              `json:"description"`
+	Parameters       map[string]any      `json:"parameters"`
+	RequiresPlan     bool                `json:"requires_plan,omitempty"`
+	Repeatable       bool                `json:"repeatable,omitempty"`
+	IdentityFields   []string            `json:"identity_fields,omitempty"`
+	ComposeArguments bool                `json:"compose_arguments,omitempty"`
+	RepairPolicies   []ModelRepairPolicy `json:"repair_policies,omitempty"`
+}
+
+type ModelRepairPolicy struct {
+	OperatorID          string `json:"operator_id"`
+	FieldPath           string `json:"field_path"`
+	Extension           string `json:"extension,omitempty"`
+	SourceField         string `json:"source_field,omitempty"`
+	SemanticsPreserving bool   `json:"semantics_preserving"`
+	Preflight           bool   `json:"preflight"`
+}
+
+type ModelToolCall struct {
+	ID        string
+	Name      string
+	Arguments map[string]any
+}
+
+type ModelToolTurn struct {
+	Text string
+	Call *ModelToolCall
+}
+
+type ToolCallingProvider interface {
+	GenerateWithTools(context.Context, character.Character, []Message, []ModelToolDefinition) (ModelToolTurn, Usage, error)
+}
+
 type PolicySource interface {
 	Policy() reliability.Policy
 }
@@ -109,12 +146,49 @@ type DeferrableJobStore interface {
 	DeferGenerationJob(context.Context, string, string, string, string, time.Time, time.Time) error
 }
 type MemoryContext interface {
-	Observe(context.Context, string, string, string, string) error
 	Recall(context.Context, string, string, int) ([]string, error)
 }
+
+type ToolRequest struct {
+	UserID         string
+	JobID          string
+	MessageID      string
+	ConversationID string
+	CharacterID    string
+	Module         string
+	Text           string
+}
+
+type ToolResult struct {
+	Handled      bool
+	ToolName     string
+	Response     string
+	Data         any
+	Confirmation *ToolConfirmation
+}
+
+type ToolConfirmation struct {
+	Kind        string            `json:"kind"`
+	CandidateID string            `json:"candidate_id"`
+	Summary     string            `json:"summary"`
+	Payload     map[string]string `json:"payload,omitempty"`
+}
+
+type ToolExecutor interface {
+	Execute(context.Context, ToolRequest) (ToolResult, error)
+}
+
+type ModelToolExecutor interface {
+	ModelTools(ToolRequest) []ModelToolDefinition
+	ExecuteModelTool(context.Context, ToolRequest, ModelToolCall) (ToolResult, error)
+}
+
+type ToolContextProvider interface {
+	Context(context.Context, ToolRequest) (string, error)
+}
+
 type noMemoryContext struct{}
 
-func (noMemoryContext) Observe(context.Context, string, string, string, string) error { return nil }
 func (noMemoryContext) Recall(context.Context, string, string, int) ([]string, error) {
 	return nil, nil
 }
@@ -133,6 +207,7 @@ type Service struct {
 	asyncDispatch               bool
 	policySource                PolicySource
 	localProvider               Provider
+	tools                       ToolExecutor
 }
 
 func NewService(store Store, characters *character.Service, provider Provider) *Service {
@@ -148,7 +223,13 @@ func (s *Service) SetContextBudgets(recentTokens, summaryTokens int) {
 	s.contextBuilder = NewContextBuilder(s.store, recentTokens, summaryTokens)
 }
 
-func (s *Service) SetAsyncDispatch(enabled bool) { s.asyncDispatch = enabled }
+func (s *Service) SetAsyncDispatch(enabled bool)         { s.asyncDispatch = enabled }
+func (s *Service) SetToolExecutor(executor ToolExecutor) { s.tools = executor }
+func (s *Service) SetTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		s.timeout = timeout
+	}
+}
 func (s *Service) SetPolicySource(source PolicySource) {
 	if source != nil {
 		s.policySource = source
@@ -164,7 +245,7 @@ func (s *Service) Create(ctx context.Context, userID, characterID string) (Conve
 		return Conversation{}, err
 	}
 	now := s.now().UTC()
-	item := Conversation{ID: conversationID, UserID: userID, CharacterID: characterID, CreatedAt: now, UpdatedAt: now, NextSequence: 1}
+	item := Conversation{ID: conversationID, UserID: userID, CharacterID: characterID, Status: "active", CreatedAt: now, UpdatedAt: now, NextSequence: 1}
 	if err = s.store.CreateConversation(ctx, item); err != nil {
 		return Conversation{}, err
 	}
@@ -172,6 +253,12 @@ func (s *Service) Create(ctx context.Context, userID, characterID string) (Conve
 }
 func (s *Service) List(ctx context.Context, userID string) ([]Conversation, error) {
 	return s.store.ListConversations(ctx, userID)
+}
+func (s *Service) Get(ctx context.Context, userID, conversationID string) (Conversation, error) {
+	return s.store.GetConversation(ctx, userID, conversationID)
+}
+func (s *Service) Delete(ctx context.Context, userID, conversationID string) error {
+	return s.store.DeleteConversation(ctx, userID, conversationID, s.now().UTC())
 }
 func (s *Service) Messages(ctx context.Context, userID, conversationID string, after uint64, afterBubble, limit int) ([]Message, error) {
 	if limit <= 0 || limit > 200 {
@@ -187,13 +274,10 @@ func (s *Service) Events(ctx context.Context, userID, jobID string, after uint64
 }
 
 func (s *Service) Send(ctx context.Context, userID, conversationID, content string) (Message, Job, error) {
+	if err := s.ValidateContent(content); err != nil {
+		return Message{}, Job{}, err
+	}
 	content = strings.TrimSpace(content)
-	if content == "" || len([]rune(content)) > 8000 {
-		return Message{}, Job{}, fmt.Errorf("%w: content must contain 1-8000 characters", ErrValidation)
-	}
-	if err := s.safety.CheckInput(content); err != nil {
-		return Message{}, Job{}, fmt.Errorf("%w: content rejected by safety policy", ErrValidation)
-	}
 	messageID, err := id.New()
 	if err != nil {
 		return Message{}, Job{}, err
@@ -216,16 +300,20 @@ func (s *Service) Send(ctx context.Context, userID, conversationID, content stri
 		return message, job, nil
 	}
 	if !s.asyncDispatch {
-		if policy.ExtractMemory {
-			if err = s.memories.Observe(ctx, userID, conversationID, message.ID, content); err != nil {
-				_, _ = s.store.AppendEvent(ctx, job.ID, "memory_failed", map[string]string{"error": "memory_observation_failed"}, now)
-			}
-		} else {
-			_, _ = s.store.AppendEvent(ctx, job.ID, "memory_skipped", map[string]string{"reason": "degraded_policy"}, now)
-		}
 		s.start(userID, job.ID)
 	}
 	return message, job, nil
+}
+
+func (s *Service) ValidateContent(content string) error {
+	content = strings.TrimSpace(content)
+	if content == "" || len([]rune(content)) > 8000 {
+		return fmt.Errorf("%w: content must contain 1-8000 characters", ErrValidation)
+	}
+	if err := s.safety.CheckInput(content); err != nil {
+		return fmt.Errorf("%w: content rejected by safety policy", ErrValidation)
+	}
+	return nil
 }
 
 func (s *Service) Cancel(ctx context.Context, userID, jobID string) error {
@@ -242,6 +330,12 @@ func (s *Service) Cancel(ctx context.Context, userID, jobID string) error {
 	status := "cancel_requested"
 	if job, err := s.store.GetJob(ctx, userID, jobID); err == nil {
 		status = job.Status
+	}
+	if status == "cancelled" {
+		_, _ = s.store.AppendAssistantBubble(
+			context.Background(), userID, jobID, 1,
+			"这次操作已取消，原对话已保留。需要时可以点击“重试”。\n"+generationJobMarker(jobID, status), now,
+		)
 	}
 	_, _ = s.store.AppendEvent(ctx, jobID, status, map[string]string{"status": status}, now)
 	return nil
@@ -382,10 +476,120 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 		}, s.now().UTC())
 	}
 	query := ""
+	queryIndex := -1
 	for index := len(history) - 1; index >= 0; index-- {
 		if history[index].Role == "user" {
 			query = history[index].Content
+			queryIndex = index
 			break
+		}
+	}
+	provider := s.providerFor(policy)
+	routingUsage := Usage{}
+	modelRouted := false
+	if modelTools, ok := s.tools.(ModelToolExecutor); ok && query != "" {
+		request := ToolRequest{
+			UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
+			Module: persona.Module, Text: query,
+		}
+		definitions := modelTools.ModelTools(request)
+		if len(definitions) > 0 {
+			modelRouted = true
+			toolProvider, supported := provider.(ToolCallingProvider)
+			if !supported {
+				s.fail(userID, jobID, "failed", "tool_calling_unsupported", errors.New("configured model provider does not support tool calling"))
+				return
+			}
+			routingHistory := []Message{
+				{
+					Role:    "system",
+					Content: "你是严格的模块工具路由器，只判断当前用户消息要调用哪个工具。先识别言语行为（查询、新增、完成、调整或普通交流），再识别对象、时态、否定、条件和日期线索；不能只凭关键词或日期选工具。必须且只能调用一个工具；普通聊天或无需工具时调用对应的 no_tool。通常由当前消息决定意图；但若助手上一轮明确追问某个缺失字段，当前消息只提供该字段，则把它视为同一未完成请求的补充，并且只继承最近未完成请求中明确出现的其他字段。不得沿用已完成的旧命令或编造参数。工具调用只表示意图，服务端仍会查询真实数据、校验唯一匹配、检查权限和参数，并要求用户确认写操作。",
+				},
+			}
+			if fewShots := routingFewShotPrompt(persona.Module, definitions); fewShots != "" {
+				routingHistory = append(routingHistory, Message{Role: "system", Content: fewShots})
+			}
+			if references := routingReferenceHistory(history, queryIndex); len(references) > 0 {
+				routingHistory = append(routingHistory, Message{
+					Role:    "system",
+					Content: "以下近期会话仅用于消解当前消息中的明确指代，或识别对助手上一轮所追问缺失字段的直接补充。除仍未完成的最近请求外，当前消息决定本轮言语行为；不得沿用历史中的旧命令，也不得把历史事项当作真实存在，写操作仍须查询业务数据：",
+				})
+				routingHistory = append(routingHistory, references...)
+			}
+			routingHistory = append(routingHistory, Message{Role: "user", Content: query})
+			turn, usage, routeErr := toolProvider.GenerateWithTools(ctx, persona, routingHistory, definitions)
+			routingUsage = usage
+			if routeErr != nil {
+				if errors.Is(routeErr, reliability.ErrCircuitOpen) {
+					s.deferJob(userID, jobID, "model_circuit_open", "tool intent routing deferred because the model circuit is open", s.now().UTC().Add(30*time.Second))
+					return
+				}
+				status, code := "failed", "tool_intent_provider_error"
+				if errors.Is(routeErr, context.DeadlineExceeded) {
+					status, code = "timed_out", "model_timeout"
+				} else if errors.Is(routeErr, context.Canceled) {
+					status, code = "cancelled", "cancelled"
+				}
+				s.fail(userID, jobID, status, code, routeErr)
+				return
+			}
+			eventData := map[string]any{"selected": turn.Call != nil, "provider": usage.Provider, "model": usage.Model}
+			if turn.Call == nil {
+				_, _ = s.store.AppendEvent(ctx, jobID, "model_tool_routed", eventData, s.now().UTC())
+				s.fail(userID, jobID, "failed", "model_tool_selection_missing", errors.New("model did not select a required tool"))
+				return
+			}
+			eventData["tool"] = turn.Call.Name
+			result, toolErr := modelTools.ExecuteModelTool(ctx, request, *turn.Call)
+			if toolErr != nil {
+				_, _ = s.store.AppendEvent(ctx, jobID, "model_tool_failed", map[string]any{"tool": turn.Call.Name, "error": toolErr.Error()}, s.now().UTC())
+				s.fail(userID, jobID, "failed", "model_tool_failed", toolErr)
+				return
+			}
+			_, _ = s.store.AppendEvent(ctx, jobID, "model_tool_routed", eventData, s.now().UTC())
+			if result.Handled {
+				_, _ = s.store.AppendEvent(ctx, jobID, "model_tool_completed", map[string]any{"tool": result.ToolName, "data": result.Data, "confirmation": result.Confirmation}, s.now().UTC())
+				if result.Confirmation != nil {
+					_, _ = s.store.AppendEvent(ctx, jobID, "tool_confirmation_required", map[string]any{"tool": result.ToolName, "data": result.Data, "confirmation": result.Confirmation}, s.now().UTC())
+				}
+				s.completeWithText(ctx, userID, jobID, result.Response, routingUsage)
+				return
+			}
+		}
+	}
+	if !modelRouted {
+		if contextProvider, ok := s.tools.(ToolContextProvider); ok {
+			toolContext, contextErr := contextProvider.Context(ctx, ToolRequest{
+				UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
+				Module: persona.Module, Text: query,
+			})
+			if contextErr == nil && strings.TrimSpace(toolContext) != "" {
+				history = append([]Message{{Role: "system", Content: toolContext}}, history...)
+			}
+		}
+	}
+	if !modelRouted && s.tools != nil && query != "" {
+		toolResult, toolErr := s.tools.Execute(ctx, ToolRequest{
+			UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
+			Module: persona.Module, Text: query,
+		})
+		if toolErr != nil {
+			_, _ = s.store.AppendEvent(ctx, jobID, "tool_failed", map[string]any{"error": toolErr.Error()}, s.now().UTC())
+		} else if toolResult.Handled {
+			eventType := "tool_completed"
+			if toolResult.Confirmation != nil {
+				eventType = "tool_confirmation_required"
+			}
+			_, _ = s.store.AppendEvent(ctx, jobID, eventType, map[string]any{
+				"tool": toolResult.ToolName, "data": toolResult.Data,
+				"confirmation": toolResult.Confirmation,
+			}, s.now().UTC())
+			usage := routingUsage
+			if usage.Provider == "" {
+				usage = Usage{Provider: "internal-tools", Model: "module-tool-router-v1"}
+			}
+			s.completeWithText(ctx, userID, jobID, toolResult.Response, usage)
+			return
 		}
 	}
 	var recalled []string
@@ -397,7 +601,6 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 	if len(recalled) > 0 {
 		history = append([]Message{{Role: "system", Content: "用户已确认的长期记忆：\n- " + strings.Join(recalled, "\n- ")}}, history...)
 	}
-	provider := s.providerFor(policy)
 	_, _ = s.store.AppendEvent(ctx, jobID, "model_policy", map[string]string{"preferred_model_class": policy.PreferredModelClass}, s.now().UTC())
 	text, usage, err := provider.Generate(ctx, persona, history)
 	if err != nil {
@@ -422,6 +625,7 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 		s.fail(userID, jobID, "failed", "safety_blocked", err)
 		return
 	}
+	usage = mergeUsage(routingUsage, usage)
 	for index, bubble := range SplitBubbles(text) {
 		if s.cancelRequested(ctx, userID, jobID) {
 			s.fail(userID, jobID, "cancelled", "cancelled", context.Canceled)
@@ -459,6 +663,107 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 		status = current.Status
 	}
 	_, _ = s.store.AppendEvent(context.Background(), jobID, status, map[string]string{"status": status}, completed)
+}
+
+func mergeUsage(first, second Usage) Usage {
+	if first.Provider == "" {
+		return second
+	}
+	if second.Provider == "" {
+		return first
+	}
+	return Usage{
+		Provider: second.Provider, Model: second.Model,
+		InputTokens: first.InputTokens + second.InputTokens, OutputTokens: first.OutputTokens + second.OutputTokens,
+		EstimatedCostMicros: first.EstimatedCostMicros + second.EstimatedCostMicros,
+		Latency:             first.Latency + second.Latency,
+	}
+}
+
+func routingFewShotPrompt(module string, definitions []ModelToolDefinition) string {
+	if module != "life" {
+		return ""
+	}
+	available := make(map[string]bool, len(definitions))
+	for _, definition := range definitions {
+		available[definition.Name] = true
+	}
+	if !available["life_prepare_task_completion"] {
+		return ""
+	}
+	examples := []string{
+		`用户：“我完成了8月10号的选课” → 完成事实，不是查询；life_prepare_task_completion，参数 {"title":"选课","date_hint":"8月10号"}`,
+		`用户：“选课做完了” → life_prepare_task_completion，参数 {"title":"选课"}`,
+		`用户：“把选课标记为完成” → life_prepare_task_completion，参数 {"title":"选课"}`,
+	}
+	if available["life_query_active_reminders"] {
+		examples = append(examples,
+			`用户：“8月10号有选课提醒吗” → 查询；life_query_active_reminders，参数 {}`,
+			`用户：“我还没完成选课” → 否定完成，不能标记完成；life_query_active_reminders，参数 {}`,
+		)
+	}
+	if available["life_prepare_today_plan"] {
+		examples = append(examples, `用户：“把选课加入今日计划” → life_prepare_today_plan，参数 {"title":"选课"}`)
+	}
+	if available["life_prepare_reminder"] {
+		examples = append(examples,
+			`用户：“提醒我8月10号选课” → 新增未来提醒；life_prepare_reminder，参数 {"title":"选课","date_hint":"8月10号"}`,
+			`最近对话：用户“提醒我提交报销材料” / 助手追问“请补充提醒日期” / 用户：“下周五” → 补充未完成提醒的日期；life_prepare_reminder，参数 {"title":"提交报销材料","date_hint":"下周五"}`,
+			`最近对话：“25号提醒我选课” / 用户：“那天还要提醒查看邮件” → “那天”指向25号；life_prepare_reminder，参数 {"title":"查看邮件","date_hint":"25号"}`,
+		)
+	}
+	if available["life_prepare_task_completion"] {
+		examples = append(examples, `最近对话：助手问“需要我把8月10号选课提醒关掉吗？” / 用户：“需要” → 接受上轮提议；life_prepare_task_completion，参数 {"title":"选课","task_type":"reminder","date_hint":"8月10号"}`)
+	}
+	if available["life_prepare_schedule_change"] {
+		examples = append(examples, `用户：“把选课提醒改到明天下午3点” → 调整已有事项；life_prepare_schedule_change，参数 {}`)
+	}
+	if available["life_no_tool"] {
+		examples = append(examples, `用户：“我准备完成选课” → 将来意愿，不代表已经完成；life_no_tool，参数 {}`)
+	}
+	return "生活助手语义路由对比示例。先区分言语行为，再判断对象；特别检查否定、时态、条件、多轮指代和对上一轮缺失字段的直接补充。只有助手刚刚明确追问且请求仍未完成时，才可继承最近请求中明确出现的日期或事项；不得继承已完成的旧命令。日期只是事项匹配线索，不能据此把完成陈述改判为查询。完成工具只启动‘查询候选→唯一匹配→请求确认’流程，绝不假设事项一定存在：\n" + strings.Join(examples, "\n")
+}
+
+func routingReferenceHistory(history []Message, queryIndex int) []Message {
+	if queryIndex <= 0 || queryIndex >= len(history) {
+		return nil
+	}
+	start := queryIndex - 8
+	if start < 0 {
+		start = 0
+	}
+	references := make([]Message, 0, queryIndex-start)
+	for _, message := range history[start:queryIndex] {
+		if message.Role != "user" && message.Role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		references = append(references, Message{Role: message.Role, Content: content})
+	}
+	return references
+}
+
+func (s *Service) completeWithText(ctx context.Context, userID, jobID, text string, usage Usage) {
+	if err := s.safety.CheckOutput(text); err != nil {
+		s.fail(userID, jobID, "failed", "safety_blocked", err)
+		return
+	}
+	for index, bubble := range SplitBubbles(text) {
+		message, err := s.store.AppendAssistantBubble(ctx, userID, jobID, index+1, bubble, s.now().UTC())
+		if err != nil {
+			s.fail(userID, jobID, "failed", "persist_failed", err)
+			return
+		}
+		_, _ = s.store.AppendEvent(ctx, jobID, "bubble", message, s.now().UTC())
+	}
+	completed := s.now().UTC()
+	if err := s.store.FinishJob(context.Background(), userID, jobID, "completed", "", "", usage, completed); err != nil {
+		return
+	}
+	_, _ = s.store.AppendEvent(context.Background(), jobID, "completed", map[string]string{"status": "completed"}, completed)
 }
 
 func (s *Service) policy() reliability.Policy {
@@ -511,7 +816,21 @@ func (s *Service) fail(userID, jobID, status, code string, cause error) {
 			code = "cancelled"
 		}
 	}
+	feedback := "这次处理没有完成，原对话已保留。你可以点击“重试”再次执行。"
+	if status == "timed_out" {
+		feedback = "这次处理超时，原对话已保留。你可以点击“重试”再次执行。"
+	} else if status == "cancelled" {
+		feedback = "这次操作已取消，原对话已保留。需要时可以点击“重试”。"
+	}
+	_, _ = s.store.AppendAssistantBubble(
+		context.Background(), userID, jobID, 1,
+		feedback+"\n"+generationJobMarker(jobID, status), now,
+	)
 	_, _ = s.store.AppendEvent(context.Background(), jobID, status, map[string]string{"status": status, "error_code": code}, now)
+}
+
+func generationJobMarker(jobID, status string) string {
+	return "<!--ai-generation-job:" + jobID + "|" + status + "-->"
 }
 func IsTerminal(status string) bool {
 	return status == "completed" || status == "cancelled" || status == "failed" || status == "timed_out"

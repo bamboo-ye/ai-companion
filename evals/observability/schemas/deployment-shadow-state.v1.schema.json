@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/deployment-shadow-state.v1.schema.json",
+  "title": "Deployment shadow service runtime state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adapter",
+    "implementation_version",
+    "provider_instance_sha256",
+    "service_started_at",
+    "updated_at",
+    "successful_runs",
+    "failed_runs",
+    "consecutive_failures",
+    "last_success_at",
+    "last_error_at",
+    "last_error_code",
+    "last_run_duration_seconds",
+    "last_report"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-shadow-state-v1"
+    },
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "implementation_version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "provider_instance_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "service_started_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "successful_runs": { "type": "integer", "minimum": 0 },
+    "failed_runs": { "type": "integer", "minimum": 0 },
+    "consecutive_failures": { "type": "integer", "minimum": 0 },
+    "last_success_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_error_at": { "type": ["string", "null"], "format": "date-time" },
+    "last_error_code": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "last_run_duration_seconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "last_report": {
+      "type": ["object", "null"]
+    }
+  }
+}

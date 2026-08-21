@@ -34,3 +34,22 @@ func (p CircuitBreakerProvider) Generate(ctx context.Context, persona character.
 	p.Breaker.RecordSuccess()
 	return text, usage, nil
 }
+
+func (p CircuitBreakerProvider) GenerateWithTools(ctx context.Context, persona character.Character, history []Message, tools []ModelToolDefinition) (ModelToolTurn, Usage, error) {
+	next, ok := p.Next.(ToolCallingProvider)
+	if !ok {
+		return ModelToolTurn{}, Usage{}, errors.New("model provider does not support tool calling")
+	}
+	if !p.Breaker.Allow() {
+		return ModelToolTurn{}, Usage{}, reliability.ErrCircuitOpen
+	}
+	turn, usage, err := next.GenerateWithTools(ctx, persona, history, tools)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			p.Breaker.RecordFailure()
+		}
+		return ModelToolTurn{}, Usage{}, err
+	}
+	p.Breaker.RecordSuccess()
+	return turn, usage, nil
+}

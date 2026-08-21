@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-shadow-attestation.v1.schema.json",
+  "title": "Direct traffic shadow Gate attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "attestation_id", "created_at", "expires_at", "gate_id", "decision", "observer_instance_sha256", "provider_instance_sha256", "environment_sha256", "history_events", "history_chain_sha256", "gate_report_sha256", "key_id", "algorithm", "signature"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-shadow-attestation-v1"},
+    "attestation_id": {"type": "string", "pattern": "^direct-traffic-shadow-attestation-[0-9a-f]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "gate_id": {"type": "string", "pattern": "^direct-traffic-shadow-gate-[0-9a-f]{32}$"},
+    "decision": {"enum": ["pass", "hold"]},
+    "observer_instance_sha256": {"$ref": "#/$defs/digest"},
+    "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "history_events": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "history_chain_sha256": {"$ref": "#/$defs/digest"},
+    "gate_report_sha256": {"$ref": "#/$defs/digest"},
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "algorithm": {"const": "hmac-sha256"},
+    "signature": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

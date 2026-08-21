@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/release-gate-history-report.v1.schema.json",
+  "title": "Observability release Gate history trend report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "environment_sha256", "window", "summary", "runs"],
+  "properties": {
+    "schema_version": {"const": "observability-release-gate-history-report-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "selected", "first_observed_at", "last_observed_at", "history_chain_sha256"],
+      "properties": {
+        "requested": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "selected": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "first_observed_at": {"type": ["string", "null"], "format": "date-time"},
+        "last_observed_at": {"type": ["string", "null"], "format": "date-time"},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promote", "rollback", "concurrent_rejections", "canary_duration_p95_ms", "wake_latency_max_p95_seconds", "python_executions", "model_calls", "direct_canary_runs", "direct_cases", "direct_rate_min", "single_model_call_rate_min", "quality_pass_rate_min", "content_pass_rate_min", "direct_duration_p95_ms", "direct_repair_attempted_runs", "direct_repair_succeeded_runs", "direct_repair_success_rate", "direct_duplicate_violations", "direct_response_quality_failures"],
+      "properties": {
+        "promote": {"type": "integer", "minimum": 0},
+        "rollback": {"type": "integer", "minimum": 0},
+        "concurrent_rejections": {"type": "integer", "minimum": 0},
+        "canary_duration_p95_ms": {"type": "number", "minimum": 0},
+        "wake_latency_max_p95_seconds": {"type": "number", "minimum": 0},
+        "python_executions": {"type": "integer", "minimum": 0},
+        "model_calls": {"type": "integer", "minimum": 0},
+        "direct_canary_runs": {"type": "integer", "minimum": 0},
+        "direct_cases": {"type": "integer", "minimum": 0},
+        "direct_rate_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "single_model_call_rate_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "quality_pass_rate_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "content_pass_rate_min": {"type": "number", "minimum": 0, "maximum": 1},
+        "direct_duration_p95_ms": {"type": "number", "minimum": 0},
+        "direct_repair_attempted_runs": {"type": "integer", "minimum": 0},
+        "direct_repair_succeeded_runs": {"type": "integer", "minimum": 0},
+        "direct_repair_success_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "direct_duplicate_violations": {"type": "integer", "minimum": 0},
+        "direct_response_quality_failures": {"type": "integer", "minimum": 0}
+      }
+    },
+    "runs": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "run_id", "observed_at", "decision", "canary_status", "canary_duration_ms", "violations_count", "chain_sha256"],
+        "properties": {
+          "sequence": {"type": "integer", "minimum": 1},
+          "run_id": {"type": "string", "pattern": "^release-gate-[A-Za-z0-9._-]{1,160}$"},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "decision": {"enum": ["promote", "rollback"]},
+          "canary_status": {"type": "string", "minLength": 1},
+          "canary_duration_ms": {"type": "integer", "minimum": 0},
+          "violations_count": {"type": "integer", "minimum": 0},
+          "chain_sha256": {"$ref": "#/$defs/digest"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

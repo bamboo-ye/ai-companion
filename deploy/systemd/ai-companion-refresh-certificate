@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+source_cert=/root/.acme.sh/o.windcry1.com_ecc/fullchain.cer
+source_key=/root/.acme.sh/o.windcry1.com_ecc/o.windcry1.com.key
+target_dir=/opt/ai-companion/shared/tls
+target_cert=$target_dir/fullchain.pem
+target_key=$target_dir/privkey.pem
+
+test -s "$source_cert"
+test -s "$source_key"
+install -d -m 700 "$target_dir"
+
+if cmp -s "$source_cert" "$target_cert" && cmp -s "$source_key" "$target_key"; then
+    exit 0
+fi
+
+install -m 644 "$source_cert" "$target_cert"
+install -m 600 "$source_key" "$target_key"
+/usr/bin/docker exec ai-companion-caddy-1 \
+    caddy reload --config /etc/caddy/caddy.json

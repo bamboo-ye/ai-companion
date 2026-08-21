@@ -1,0 +1,29 @@
+{
+  "schema_version": "agent-direct-canary-baseline-v1",
+  "version": "agent-direct-canary-baseline-v1",
+  "minimum": {
+    "cases": 5,
+    "completed": 5,
+    "assistant_messages": 5,
+    "direct_rate": 1.0,
+    "single_model_call_rate": 1.0,
+    "quality_pass_rate": 1.0,
+    "content_pass_rate": 1.0,
+    "repair_success_rate": 1.0
+  },
+  "maximum": {
+    "assistant_messages": 5,
+    "assistant_delivery_violations": 0,
+    "response_quality_failures": 0,
+    "duplicate_violations": 0,
+    "planned_runs": 0,
+    "tool_actions": 0,
+    "rewrite_runs": 0,
+    "model_calls": 5,
+    "duration_p95_ms": 15000,
+    "duration_max_ms": 30000
+  },
+  "required": {
+    "repair_probe_passed": true
+  }
+}

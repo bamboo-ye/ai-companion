@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-preproduction-drill.v1.schema.json",
+  "title": "Direct traffic preproduction drill report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "mode", "decision", "contains_live_provider_evidence", "environment_sha256", "provider_instance_sha256", "namespace_sha256", "observer_instance_sha256", "protocol", "scenarios", "checks", "final_state"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-preproduction-drill-v1"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "mode": {"enum": ["local-contract-simulation", "live-read-only-probe"]},
+    "decision": {"const": "pass"},
+    "contains_live_provider_evidence": {"type": "boolean"},
+    "environment_sha256": {"$ref": "#/$defs/digest"},
+    "provider_instance_sha256": {"$ref": "#/$defs/digest"},
+    "namespace_sha256": {"$ref": "#/$defs/digest"},
+    "observer_instance_sha256": {"$ref": "#/$defs/digest"},
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter_contract_version", "adapter", "implementation_version", "methods", "https_only", "redirects_allowed", "production_namespace_supported", "put_retry_limit"],
+      "properties": {
+        "adapter_contract_version": {"type": "string"},
+        "adapter": {"const": "https-direct-traffic-preproduction"},
+        "implementation_version": {"type": "string"},
+        "methods": {"const": ["GET state", "GET change-by-idempotency-key", "PUT change"]},
+        "https_only": {"const": true},
+        "redirects_allowed": {"const": false},
+        "production_namespace_supported": {"const": false},
+        "put_retry_limit": {"const": 0}
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"const": "passed"},
+          "evidence": {"type": "object"}
+        }
+      }
+    },
+    "checks": {"type": "array", "minItems": 3, "items": {"type": "string"}, "uniqueItems": true},
+    "final_state": {"$ref": "#/$defs/state"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_traffic_percent", "revision", "operations", "history_chain_sha256"],
+      "properties": {
+        "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "revision": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "operations": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "history_chain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}

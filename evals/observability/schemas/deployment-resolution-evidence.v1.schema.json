@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-resolution-evidence.v1.schema.json",
+  "title": "Observability deployment manual resolution evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "deployment_id",
+    "proposed_status",
+    "adapter",
+    "external_operation_id",
+    "reason_code",
+    "observed_at",
+    "requested_by",
+    "provider_evidence_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-resolution-evidence-v1"
+    },
+    "deployment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "proposed_status": {"enum": ["completed", "failed"]},
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "external_operation_id": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "reason_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "observed_at": {"type": "string", "format": "date-time"},
+    "requested_by": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "provider_evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

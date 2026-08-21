@@ -33,7 +33,7 @@ func (s *MemoryStore) ListConversations(_ context.Context, userID string) ([]Con
 	defer s.mu.RUnlock()
 	result := []Conversation{}
 	for _, item := range s.conversations {
-		if item.UserID == userID {
+		if item.UserID == userID && item.Status != "deleted" {
 			result = append(result, item)
 		}
 	}
@@ -44,16 +44,37 @@ func (s *MemoryStore) GetConversation(_ context.Context, userID, id string) (Con
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	item, ok := s.conversations[id]
-	if !ok || item.UserID != userID {
+	if !ok || item.UserID != userID || item.Status == "deleted" {
 		return Conversation{}, ErrNotFound
 	}
 	return item, nil
+}
+func (s *MemoryStore) DeleteConversation(_ context.Context, userID, id string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.conversations[id]
+	if !ok || item.UserID != userID || item.Status == "deleted" {
+		return ErrNotFound
+	}
+	item.Status = "deleted"
+	item.UpdatedAt = now
+	s.conversations[id] = item
+	for jobID, job := range s.jobs {
+		if job.ConversationID == id && !IsTerminal(job.Status) {
+			job.Status = "cancelled"
+			job.ErrorCode = "conversation_deleted"
+			job.ErrorMessage = "conversation was deleted"
+			job.CompletedAt = &now
+			s.jobs[jobID] = job
+		}
+	}
+	return nil
 }
 func (s *MemoryStore) AcceptMessage(_ context.Context, userID, conversationID string, message Message, job Job) (Message, Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conv, ok := s.conversations[conversationID]
-	if !ok || conv.UserID != userID {
+	if !ok || conv.UserID != userID || conv.Status == "deleted" {
 		return Message{}, Job{}, ErrNotFound
 	}
 	message.Sequence = conv.NextSequence
@@ -69,7 +90,7 @@ func (s *MemoryStore) ListMessages(_ context.Context, userID, conversationID str
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	conv, ok := s.conversations[conversationID]
-	if !ok || conv.UserID != userID {
+	if !ok || conv.UserID != userID || conv.Status == "deleted" {
 		return nil, ErrNotFound
 	}
 	result := []Message{}
@@ -146,14 +167,14 @@ func (s *MemoryStore) MarkJobRunning(_ context.Context, userID, jobID string, no
 	s.jobs[jobID] = job
 	return nil
 }
-func (s *MemoryStore) AppendAssistantBubble(_ context.Context, userID, jobID string, bubble int, content string, now time.Time) (Message, error) {
+func (s *MemoryStore) AppendAssistantBubble(_ context.Context, userID, jobID string, _ int, content string, now time.Time) (Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job, ok := s.jobs[jobID]
 	if !ok || s.conversations[job.ConversationID].UserID != userID {
 		return Message{}, ErrNotFound
 	}
-	if job.Status != "running" {
+	if job.Status != "running" && job.Status != "failed" && job.Status != "timed_out" && job.Status != "cancelled" {
 		return Message{}, ErrConflict
 	}
 	var source Message
@@ -161,6 +182,12 @@ func (s *MemoryStore) AppendAssistantBubble(_ context.Context, userID, jobID str
 		if item.ID == job.UserMessageID {
 			source = item
 			break
+		}
+	}
+	bubble := 1
+	for _, item := range s.messages[job.ConversationID] {
+		if item.Sequence == source.Sequence+1 && item.Bubble >= bubble {
+			bubble = item.Bubble + 1
 		}
 	}
 	messageID, err := id.New()

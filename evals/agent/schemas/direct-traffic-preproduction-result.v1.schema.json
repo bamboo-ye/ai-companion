@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/direct-traffic-preproduction-result.v1.schema.json",
+  "title": "Direct traffic preproduction result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation_id", "idempotency_key", "request_sha256", "outcome", "current_traffic_percent", "revision", "operations", "history_chain_sha256", "applied_at"],
+  "properties": {
+    "schema_version": {"const": "agent-direct-traffic-preproduction-result-v1"},
+    "operation_id": {"type": "string", "pattern": "^direct-traffic-op-[0-9a-f]{32}$"},
+    "idempotency_key": {"$ref": "#/$defs/digest"},
+    "request_sha256": {"$ref": "#/$defs/digest"},
+    "outcome": {"enum": ["applied", "no_op", "conflict"]},
+    "current_traffic_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+    "revision": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+    "operations": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "history_chain_sha256": {"$ref": "#/$defs/digest"},
+    "applied_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {"digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

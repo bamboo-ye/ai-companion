@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-companion.local/schemas/observability-deployment-resolution-request.v1.schema.json",
+  "title": "Observability deployment manual resolution request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "resolution_id",
+    "scope",
+    "deployment_id",
+    "proposed_status",
+    "adapter",
+    "external_operation_id",
+    "reason_code",
+    "expected_updated_at",
+    "expected_error_code",
+    "evidence_sha256",
+    "provider_evidence_sha256",
+    "requested_by",
+    "requester_key_id",
+    "issued_at",
+    "expires_at",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "observability-deployment-resolution-request-v1"
+    },
+    "resolution_id": {
+      "type": "string",
+      "pattern": "^resolve-[0-9a-f]{32}$"
+    },
+    "scope": {"const": "deployment-manual-resolution"},
+    "deployment_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "proposed_status": {"enum": ["completed", "failed"]},
+    "adapter": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "external_operation_id": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$"
+    },
+    "reason_code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "expected_updated_at": {"type": "string", "format": "date-time"},
+    "expected_error_code": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provider_evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "requested_by": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "requester_key_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

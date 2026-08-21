@@ -53,5 +53,13 @@ mobile/ios/*.xcodeproj/xcuserdata/
 .cache/
 .data/
 .release-evidence/
+artifacts/agent-eval/
+artifacts/observability-eval/
+artifacts/observability-deployment-authorizations/
+artifacts/observability-deployment-controller/
+artifacts/observability-deployment-resolutions/
+artifacts/observability-provider-sandbox/
+artifacts/observability-adapter-certifications/
+artifacts/observability-deployment-shadow/
 tmp/
 dist/

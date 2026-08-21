@@ -7,16 +7,27 @@ export function PWARegistration() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator) || process.env.NODE_ENV !== "production") return;
-    let cancelled = false;
-    window.addEventListener("load", () => {
-      void navigator.serviceWorker.register("/sw.js").then(() => {
-        if (!cancelled) setReady(true);
-      }).catch(() => {
-        if (!cancelled) setReady(false);
-      });
-    }, { once: true });
+
+    let active = true;
+    const register = async () => {
+      try {
+        await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        await navigator.serviceWorker.ready;
+        if (active) setReady(true);
+      } catch {
+        if (active) setReady(false);
+      }
+    };
+
+    if (document.readyState === "complete") {
+      void register();
+    } else {
+      window.addEventListener("load", register, { once: true });
+    }
+
     return () => {
-      cancelled = true;
+      active = false;
+      window.removeEventListener("load", register);
     };
   }, []);
 

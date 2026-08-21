@@ -11,13 +11,15 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/chattool"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
-	"github.com/windcry1/ai-companion/internal/persistence/mysqlstore"
+	"github.com/windcry1/ai-companion/internal/persistence"
+	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 	"github.com/windcry1/ai-companion/internal/reliability"
@@ -37,12 +39,12 @@ func main() {
 	defer stop()
 
 	workerLogger := logger.With("environment", cfg.Environment, "service", cfg.ServiceName)
-	if cfg.MySQLDSN != "" {
+	if cfg.DatabaseDriver != "memory" {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		store, openErr := mysqlstore.Open(connectCtx, cfg.MySQLDSN)
+		store, openErr := persistence.Open(connectCtx, cfg.DatabaseDriver, cfg.MySQLDSN, cfg.PostgresDSN)
 		cancel()
 		if openErr != nil {
-			logger.Error("connect mysql", "error", openErr)
+			logger.Error("connect persistent database", "driver", cfg.DatabaseDriver, "error", openErr)
 			os.Exit(1)
 		}
 		defer store.Close()
@@ -71,7 +73,7 @@ func main() {
 			logger.Error("register built-in skills", "error", registerErr)
 			os.Exit(1)
 		}
-		officeWorker := skill.PythonOfficeWorker{Executable: cfg.PythonExecutable, ModulePath: cfg.PythonWorkerPath, Timeout: 30 * time.Second}
+		officeWorker := skill.PythonOfficeWorker{Executable: cfg.PythonExecutable, ModulePath: cfg.PythonWorkerPath, Timeout: 5 * time.Minute}
 		if registerErr := skill.RegisterOfficeSkills(skillRegistry, officeWorker); registerErr != nil {
 			logger.Error("register office skills", "error", registerErr)
 			os.Exit(1)
@@ -82,12 +84,20 @@ func main() {
 		documentCleaner := document.NewCleaner(store, blobs, index, workerID)
 		memoryService := memory.NewService(store)
 		provider := conversation.Provider(conversation.DevelopmentProvider{})
-		if cfg.ModelProvider == "openai-compatible" {
-			provider = conversation.NewOpenAICompatibleProvider(cfg.ModelBaseURL, cfg.ModelAPIKey, cfg.ModelName, cfg.ModelTimeout, cfg.ModelInputCostMicrosPerMillion, cfg.ModelOutputCostMicrosPerMillion)
+		if cfg.ModelProvider == "openrouter" {
+			models := append([]string{cfg.ModelName}, cfg.ModelFallbackNames...)
+			provider = conversation.NewOpenRouterProvider(conversation.OpenRouterOptions{
+				BaseURL: cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
+				DataCollection: cfg.ModelDataCollection, ZDRRequired: cfg.ModelZDRRequired, ReasoningEffort: cfg.ModelReasoningEffort, ReasoningExclude: cfg.ModelReasoningExclude,
+				ProviderSort: cfg.ModelProviderSort, AllowProviderFallbacks: cfg.ModelAllowProviderFallbacks, RequireParameters: cfg.ModelRequireParameters,
+				MaxPromptPrice: cfg.ModelMaxPromptPrice, MaxCompletionPrice: cfg.ModelMaxCompletionPrice,
+				HTTPReferer: cfg.ModelHTTPReferer, AppTitle: cfg.ModelAppTitle, InputCost: cfg.ModelInputCostMicrosPerMillion, OutputCost: cfg.ModelOutputCostMicrosPerMillion,
+			})
 		}
 		provider = conversation.NewCircuitBreakerProvider(provider, reliability.NewCircuitBreaker(cfg.ModelCircuitFailureThreshold, cfg.ModelCircuitCooldown))
 		reliabilityController := reliability.NewController(reliability.Config{})
 		conversationService := conversation.NewService(store, character.NewService(store), provider)
+		conversationService.SetTimeout(6 * time.Minute)
 		conversationService.SetPolicySource(reliabilityController)
 		conversationService.SetMemoryContext(memoryService)
 		conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
@@ -99,6 +109,10 @@ func main() {
 		ledgerService := ledger.NewService(store)
 		ledgerService.SetExporter(ledger.ArtifactToolExporter{Executable: cfg.SpreadsheetExecutable, ScriptPath: cfg.SpreadsheetWorkerPath, Timeout: 30 * time.Second})
 		ledgerService.SetExportFileStore(ledgerFiles)
+		documentService := document.NewService(store, blobs, cfg.DocumentMaxUploadBytes)
+		documentService.SetVectorIndex(index)
+		plannerService := planner.NewService(store)
+		conversationService.SetToolExecutor(chattool.New(ledgerService, plannerService, documentService, skillService, memoryService))
 		emailSender := email.Sender(email.NoopSender{})
 		if cfg.SMTPAddr != "" && cfg.SMTPFrom != "" {
 			emailSender = email.SMTPSender{Addr: cfg.SMTPAddr, Host: cfg.SMTPHost, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.SMTPFrom, UseTLS: cfg.SMTPUseTLS}
@@ -121,7 +135,7 @@ func main() {
 		go runNamed("document reconciler", func() error { return documentIngestor.Run(runCtx, reconcileInterval) })
 		go runNamed("document cleanup reconciler", func() error { return documentCleaner.Run(runCtx, reconcileInterval) })
 		go runNamed("chat reconciler", func() error {
-			return conversationService.RunReconciler(runCtx, workerID, 2*time.Minute, reconcileInterval)
+			return conversationService.RunReconciler(runCtx, workerID, 7*time.Minute, reconcileInterval)
 		})
 		go runNamed("ledger export reconciler", func() error {
 			return ledgerService.RunExportReconciler(runCtx, workerID, 2*time.Minute, reconcileInterval)
@@ -229,26 +243,13 @@ func main() {
 				if decodeErr := json.Unmarshal(event.Payload, &payload); decodeErr != nil {
 					return decodeErr
 				}
-				_, processErr := conversationService.RunJob(processCtx, payload.JobID, workerID, 2*time.Minute)
+				_, processErr := conversationService.RunJob(processCtx, payload.JobID, workerID, 7*time.Minute)
 				return processErr
 			})
 			memoryProcessor := eventbus.ProcessorFunc(func(processCtx context.Context, event eventbus.Event) error {
-				var payload struct {
-					MessageID      string `json:"message_id"`
-					UserID         string `json:"user_id"`
-					ConversationID string `json:"conversation_id"`
-				}
-				if decodeErr := json.Unmarshal(event.Payload, &payload); decodeErr != nil {
-					return decodeErr
-				}
-				content, loadErr := store.LoadMessageForMemory(processCtx, payload.UserID, payload.ConversationID, payload.MessageID)
-				if loadErr != nil {
-					return loadErr
-				}
-				if !reliabilityController.Policy().ExtractMemory {
-					return nil
-				}
-				return memoryService.Observe(processCtx, payload.UserID, payload.ConversationID, payload.MessageID, content)
+				// Drain legacy v1 events without extracting memory. New memories are
+				// written only after the chat model selects memory_save_explicit.
+				return nil
 			})
 			ledgerProcessor := eventbus.ProcessorFunc(func(processCtx context.Context, event eventbus.Event) error {
 				var payload struct {
@@ -300,7 +301,7 @@ func main() {
 			runnerCount++
 			go runNamed("notification scheduler", func() error { return runNotificationScheduler(runCtx, store, cfg.NotificationSchedulerInterval) })
 		}
-		workerLogger.Info("durable workers ready", "worker_id", workerID, "skill_lease", cfg.SkillWorkerLeaseDuration)
+		workerLogger.Info("durable workers ready", "worker_id", workerID, "database_driver", cfg.DatabaseDriver, "skill_lease", cfg.SkillWorkerLeaseDuration)
 		runErr := <-errCh
 		cancelRun()
 		for runnerIndex := 1; runnerIndex < runnerCount; runnerIndex++ {
@@ -320,7 +321,11 @@ func main() {
 	logger.Info("worker stopped")
 }
 
-func runNotificationScheduler(ctx context.Context, store *mysqlstore.Store, interval time.Duration) error {
+type notificationStore interface {
+	EnqueueDueNotifications(context.Context, time.Time, int) (int, error)
+}
+
+func runNotificationScheduler(ctx context.Context, store notificationStore, interval time.Duration) error {
 	if interval <= 0 {
 		interval = time.Second
 	}
