@@ -31,6 +31,35 @@ func TestParseTaxiCandidateUsesAbsoluteLocalDate(t *testing.T) {
 	}
 }
 
+func TestParseBareAmountOnlyWithExplicitTransactionCue(t *testing.T) {
+	location, _ := time.LoadLocation("Asia/Shanghai")
+	reference := time.Date(2026, 8, 21, 20, 30, 0, 0, location)
+
+	expense, err := Parse("吃饭花了20 今天", "Asia/Shanghai", reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expense.AmountMinor != 2000 || expense.Currency != "CNY" || expense.Direction != "expense" ||
+		expense.Category != "dining" || expense.Status != "pending" || len(expense.NeedsClarification) != 0 {
+		t.Fatalf("bare expense = %#v", expense)
+	}
+
+	income, err := Parse("今天工资到账8000", "Asia/Shanghai", reference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if income.AmountMinor != 800000 || income.Currency != "CNY" || income.Direction != "income" ||
+		income.Category != "salary" || income.Status != "pending" || len(income.NeedsClarification) != 0 {
+		t.Fatalf("bare income = %#v", income)
+	}
+
+	for _, text := range []string{"今天20点吃饭", "提醒我20号吃饭", "吃饭花了20分钟"} {
+		if LooksLikeCandidate(text) {
+			t.Fatalf("non-money number was treated as a ledger candidate: %q", text)
+		}
+	}
+}
+
 func TestAmbiguousCandidateCannotBeConfirmed(t *testing.T) {
 	store := NewMemoryStore()
 	service := NewService(store)
