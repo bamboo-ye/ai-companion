@@ -23,6 +23,24 @@ func (f dispatchQueueFunc) Dispatch(ctx context.Context, runID string) error {
 	return f(ctx, runID)
 }
 
+func TestWarmupBlocksReadinessForRuntimeContractFailure(t *testing.T) {
+	if !warmupBlocksReadiness(&agent.ExecutorError{
+		ErrorCode: "runtime_contract", ErrorMessage: "graph version mismatch",
+		ShouldRetry: false,
+	}) {
+		t.Fatal("runtime contract mismatch must block readiness")
+	}
+	if warmupBlocksReadiness(&agent.ExecutorError{
+		ErrorCode: "runtime_startup", ErrorMessage: "temporary startup failure",
+		ShouldRetry: true,
+	}) {
+		t.Fatal("retryable warmup failure should retain lazy-start recovery")
+	}
+	if warmupBlocksReadiness(errors.New("unclassified warmup failure")) {
+		t.Fatal("unclassified warmup failure should retain existing recovery behavior")
+	}
+}
+
 func TestAgentEventProcessorDispatchesAgentRun(t *testing.T) {
 	dispatched := ""
 	canaryRun := ""
