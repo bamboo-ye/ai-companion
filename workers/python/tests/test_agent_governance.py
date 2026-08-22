@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import re
 import unittest
+from pathlib import Path
 
 from ai_companion_worker.agent_governance import (
+    GRAPH_VERSION,
     BudgetPolicy,
     apply_model_events,
     initial_budget_usage,
@@ -14,6 +18,17 @@ from ai_companion_worker.agent_governance import (
 
 
 class AgentGovernanceTest(unittest.TestCase):
+    def test_go_runtime_and_eval_baseline_use_same_graph_version(self) -> None:
+        repository = Path(__file__).resolve().parents[3]
+        go_source = (repository / "internal/agent/service.go").read_text(encoding="utf-8")
+        match = re.search(r'GraphVersion\s*=\s*"([^"]+)"', go_source)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), GRAPH_VERSION)
+        baseline = json.loads(
+            (repository / "evals/agent/baselines/pr.v1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(baseline["graph_version"], GRAPH_VERSION)
+
     def test_every_graph_node_has_an_executable_contract(self) -> None:
         contracts = node_contract_manifest()
         self.assertEqual(contracts["plan"]["model_role"], "planner")

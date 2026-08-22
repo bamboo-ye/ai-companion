@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -91,6 +92,14 @@ func main() {
 			"success", warmupErr == nil,
 		}
 		if warmupErr != nil {
+			if warmupBlocksReadiness(warmupErr) {
+				logger.Error(
+					"Agent Python pool identity validation",
+					append(warmupValues, "error", warmupErr)...,
+				)
+				pool.Close()
+				os.Exit(1)
+			}
 			logger.Warn("Agent Python pool warmup", append(warmupValues, "error", warmupErr)...)
 		} else {
 			logger.Info("Agent Python pool warmup", warmupValues...)
@@ -245,6 +254,7 @@ func main() {
 	logger.Info(
 		"Agent worker ready",
 		"worker_id", workerID,
+		"graph_version", agent.GraphVersion,
 		"kafka_enabled", cfg.KafkaEnabled,
 		"kafka_group", cfg.AgentKafkaConsumerGroup,
 		"lease", cfg.AgentWorkerLeaseDuration,
@@ -273,6 +283,11 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Agent worker stopped")
+}
+
+func warmupBlocksReadiness(err error) bool {
+	var classified *agent.ExecutorError
+	return errors.As(err, &classified) && !classified.Retryable()
 }
 
 func runNamed(target chan<- error, name string, run func() error) {
