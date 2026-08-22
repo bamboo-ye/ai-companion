@@ -29,7 +29,9 @@ from ai_companion_worker.document_parser import ParseResult, count_tokens, parse
 
 MAX_SOURCE_BYTES = 700 * 1024
 MAX_PDF_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_DOCUMENT_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_DOCUMENT_CONTEXT_TOKENS = 4_000
+MAX_DOCUMENT_CONTEXT_ROUNDS = 4
 MAX_PDF_TRANSLATION_CHARS = 40_000
 MAX_TRANSLATION_COST_MICROS = 60_000
 MAX_MODEL_RESPONSE_BYTES = 4 << 20
@@ -100,16 +102,23 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     audience = _required_text(payload, "audience", 200)
     style = _required_text(payload, "style", 100)
     brief = _required_text(payload, "brief", 10_000)
-    slide_count = payload.get("slide_count")
+    requested_slide_count = payload.get("slide_count")
     if (
-        not isinstance(slide_count, int)
-        or isinstance(slide_count, bool)
-        or not 3 <= slide_count <= 20
+        not isinstance(requested_slide_count, int)
+        or isinstance(requested_slide_count, bool)
+        or not 3 <= requested_slide_count <= 20
     ):
         raise ValueError("slide_count_must_be_between_3_and_20")
-    sections = [part.strip(" -•\t") for part in re.split(r"[\r\n]+", brief) if part.strip()]
-    if not sections:
-        sections = [brief]
+    table = _presentation_table(payload.get("table"))
+    task_contract = payload.get("task_contract")
+    task_contract = dict(task_contract) if isinstance(task_contract, dict) else {}
+    source_coverage = _presentation_source_coverage(payload.get("source_coverage"))
+    if table:
+        required_table_slides = math.ceil(len(table["rows"]) / 6)
+        slide_count = min(20, max(requested_slide_count, required_table_slides + 2))
+    else:
+        slide_count = requested_slide_count
+    sections = _presentation_units(brief)
 
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
@@ -118,35 +127,83 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     title_slide = presentation.slides.add_slide(presentation.slide_layouts[0])
     title_slide.shapes.title.text = title
     subtitle = title_slide.placeholders[1]
-    subtitle.text = f"面向：{audience}\n风格：{style}"
+    subtitle.text = f"面向：{audience}"
     _style_slide(
         title_slide,
         title_color=RGBColor(43, 63, 117),  # type: ignore[no-untyped-call]
     )
-    outline.append({"page": 1, "title": title, "bullets": [f"面向：{audience}", f"风格：{style}"]})
+    outline.append({"page": 1, "title": title, "bullets": [f"面向：{audience}"]})
 
-    for page in range(2, slide_count + 1):
-        is_last = page == slide_count
-        heading = "总结与下一步" if is_last else sections[(page - 2) % len(sections)][:80]
-        bullets = (
-            ["回顾核心信息", "确认关键决策", "明确后续行动"]
-            if is_last
-            else _slide_bullets(sections, page - 2, brief)
-        )
-        slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-        slide.shapes.title.text = heading
-        frame = slide.placeholders[1].text_frame
-        frame.clear()
-        for index, bullet in enumerate(bullets):
-            paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
-            paragraph.text = bullet
-            paragraph.level = 0
-            paragraph.font.size = Pt(24)
-        _style_slide(
-            slide,
-            title_color=RGBColor(72, 104, 183),  # type: ignore[no-untyped-call]
-        )
-        outline.append({"page": page, "title": heading, "bullets": bullets})
+    if table:
+        row_groups = _balanced_groups(table["rows"], slide_count - 2)
+        for index, rows in enumerate(row_groups, start=1):
+            heading = table["title"] or f"课程信息（{index}/{len(row_groups)}）"
+            if len(row_groups) > 1 and table["title"]:
+                heading = f"{table['title']}（{index}/{len(row_groups)}）"
+            slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+            slide.shapes.title.text = heading[:36]
+            _add_table_slide(slide, table["columns"], rows)
+            _style_slide(slide, title_color=RGBColor(72, 104, 183))
+            source_locators = list(
+                dict.fromkeys(row["source_locator"] for row in rows)
+            )
+            outline.append(
+                {
+                    "page": len(outline) + 1,
+                    "title": heading[:36],
+                    "table": {
+                        "columns": table["columns"],
+                        "row_count": len(rows),
+                        "source_locators": source_locators,
+                    },
+                }
+            )
+    else:
+        content_pages = slide_count - 2
+        sections = _ensure_presentation_units(sections, content_pages)
+        groups = _balanced_groups(sections, content_pages)
+        for index, group in enumerate(groups, start=1):
+            heading = _presentation_heading(group[0], index)
+            bullets = [value[:100] for value in group[:5]]
+            slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+            slide.shapes.title.text = heading
+            frame = slide.placeholders[1].text_frame
+            frame.clear()
+            for bullet_index, bullet in enumerate(bullets):
+                paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
+                paragraph.text = bullet
+                paragraph.level = 0
+                paragraph.font.size = Pt(20)
+            _style_slide(slide, title_color=RGBColor(72, 104, 183))
+            outline.append({"page": len(outline) + 1, "title": heading, "bullets": bullets})
+
+    summary_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+    summary_slide.shapes.title.text = "内容概览"
+    summary_bullets = (
+        [
+            f"共整理 {len(table['rows'])} 条记录",
+            f"来源覆盖率：{source_coverage['coverage_ratio']:.0%}",
+            "详细信息见前页表格",
+        ]
+        if table
+        else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
+    )
+    summary_frame = summary_slide.placeholders[1].text_frame
+    summary_frame.clear()
+    for index, bullet in enumerate(summary_bullets):
+        paragraph = summary_frame.paragraphs[0] if index == 0 else summary_frame.add_paragraph()
+        paragraph.text = bullet
+        paragraph.font.size = Pt(22)
+    _style_slide(summary_slide, title_color=RGBColor(43, 63, 117))
+    outline.append({"page": len(outline) + 1, "title": "内容概览", "bullets": summary_bullets})
+
+    quality_report = _presentation_quality_report(
+        outline=outline,
+        style=style,
+        table=table,
+        task_contract=task_contract,
+        source_coverage=source_coverage,
+    )
 
     files: list[dict[str, Any]] = []
     if include_file:
@@ -164,8 +221,11 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             "title": title,
             "audience": audience,
             "style": style,
-            "slide_count": slide_count,
+            "slide_count": len(outline),
+            "requested_slide_count": requested_slide_count,
             "outline": outline,
+            "source_coverage": source_coverage,
+            "quality_report": quality_report,
             "source_overwritten": False,
         },
         "files": files,
@@ -176,11 +236,18 @@ def _extract_document(payload: dict[str, Any]) -> dict[str, Any]:
     source_name, source = _source_file(
         payload,
         {".pdf", ".txt", ".md"},
-        MAX_PDF_SOURCE_BYTES,
+        MAX_DOCUMENT_SOURCE_BYTES,
     )
     media_type = _required_text(payload, "media_type", 200)
+    round_start = payload.get("round_start", 1)
+    if (
+        not isinstance(round_start, int)
+        or isinstance(round_start, bool)
+        or not 1 <= round_start <= 100
+    ):
+        raise ValueError("document_round_start_must_be_between_1_and_100")
     try:
-        parsed = parse_document(source, media_type, max_pages=100)
+        parsed = parse_document(source, media_type)
     except UnicodeDecodeError as exc:
         raise ValueError("text_document_must_be_utf8") from exc
     except ValueError as exc:
@@ -190,10 +257,13 @@ def _extract_document(payload: dict[str, Any]) -> dict[str, Any]:
         if code == "no_extractable_text":
             raise ValueError("document_has_no_extractable_text") from exc
         raise
-    extracted, selected_chunks, context_tokens = _document_context(
+    extracted, manifest, context_tokens, cleaning_report = _document_context_rounds(
         parsed,
         MAX_DOCUMENT_CONTEXT_TOKENS,
+        MAX_DOCUMENT_CONTEXT_ROUNDS,
+        round_start,
     )
+    selected_chunks = sum(int(item["chunk_count"]) for item in manifest["rounds"])
     original_character_count = sum(len(page.text) for page in parsed.pages)
     low_quality_pages = [page.page_no for page in parsed.pages if page.quality < 0.5]
     return {
@@ -209,6 +279,14 @@ def _extract_document(payload: dict[str, Any]) -> dict[str, Any]:
             "total_chunk_count": len(parsed.chunks),
             "text": extracted,
             "truncated": selected_chunks < len(parsed.chunks),
+            "round_count": manifest["round_count"],
+            "completed_rounds": manifest["completed_rounds"],
+            "round_start": manifest["round_start"],
+            "next_round": manifest["next_round"],
+            "has_more": manifest["has_more"],
+            "coverage_ratio": manifest["coverage_ratio"],
+            "rounds": manifest["rounds"],
+            "cleaning_report": cleaning_report,
             "low_quality_pages": low_quality_pages,
             "source_overwritten": False,
         },
@@ -258,6 +336,108 @@ def _document_context(parsed: ParseResult, token_budget: int) -> tuple[str, int,
         blocks.pop()
         context = "\n\n".join(blocks)
     return context, len(selected), count_tokens(context)
+
+
+def _document_context_rounds(
+    parsed: ParseResult,
+    token_budget_per_round: int,
+    max_rounds: int,
+    round_start: int = 1,
+) -> tuple[str, dict[str, Any], int, dict[str, Any]]:
+    if not parsed.chunks:
+        raise ValueError("document_has_no_extractable_text")
+    if token_budget_per_round <= 0:
+        token_budget_per_round = MAX_DOCUMENT_CONTEXT_TOKENS
+    if max_rounds <= 0:
+        max_rounds = MAX_DOCUMENT_CONTEXT_ROUNDS
+
+    rounds: list[list[Any]] = []
+    current: list[Any] = []
+    current_tokens = 0
+    for chunk in parsed.chunks:
+        chunk_tokens = max(1, int(chunk.token_count)) + 16
+        if current and current_tokens + chunk_tokens > token_budget_per_round:
+            rounds.append(current)
+            current = []
+            current_tokens = 0
+        current.append(chunk)
+        current_tokens += chunk_tokens
+    if current:
+        rounds.append(current)
+
+    start_index = min(max(0, round_start - 1), len(rounds))
+    if start_index >= len(rounds):
+        raise ValueError("document_round_start_out_of_range")
+    end_index = min(len(rounds), start_index + max_rounds)
+    completed = rounds[start_index:end_index]
+    blocks: list[str] = []
+    round_manifest: list[dict[str, Any]] = []
+    duplicate_lines_removed = 0
+    blank_lines_collapsed = 0
+    selected_chunks = 0
+    for round_index, chunks in enumerate(completed, start=start_index + 1):
+        round_blocks: list[str] = []
+        round_tokens = 0
+        for chunk in chunks:
+            cleaned, duplicates, blanks = _clean_context_text(chunk.content)
+            duplicate_lines_removed += duplicates
+            blank_lines_collapsed += blanks
+            marker = f"[[PAGE {chunk.page_start}]]"
+            if chunk.page_end > chunk.page_start:
+                marker = f"[[PAGES {chunk.page_start}-{chunk.page_end}]]"
+            section = f"<!-- section: {chunk.section_path} -->\n" if chunk.section_path else ""
+            round_blocks.append(f"{marker}\n{section}{cleaned}".strip())
+            round_tokens += max(1, int(chunk.token_count)) + 16
+            selected_chunks += 1
+        blocks.append("\n\n".join(round_blocks))
+        round_manifest.append(
+            {
+                "round_no": round_index,
+                "chunk_start": int(chunks[0].ordinal),
+                "chunk_end": int(chunks[-1].ordinal),
+                "chunk_count": len(chunks),
+                "token_count": round_tokens,
+            }
+        )
+
+    context = "\n\n".join(blocks)
+    manifest = {
+        "round_count": len(rounds),
+        "completed_rounds": len(completed),
+        "round_start": round_start,
+        "next_round": end_index + 1,
+        "has_more": end_index < len(rounds),
+        "coverage_ratio": selected_chunks / len(parsed.chunks),
+        "rounds": round_manifest,
+    }
+    cleaning_report = {
+        "policy_version": "document-cleaning-v1",
+        "duplicate_lines_removed": duplicate_lines_removed,
+        "blank_lines_collapsed": blank_lines_collapsed,
+    }
+    return context, manifest, count_tokens(context), cleaning_report
+
+
+def _clean_context_text(value: str) -> tuple[str, int, int]:
+    lines = value.replace("\r\n", "\n").split("\n")
+    cleaned: list[str] = []
+    previous = ""
+    previous_blank = False
+    duplicate_lines_removed = 0
+    blank_lines_collapsed = 0
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        blank = not line.strip()
+        if blank and previous_blank:
+            blank_lines_collapsed += 1
+            continue
+        if not blank and line == previous:
+            duplicate_lines_removed += 1
+            continue
+        cleaned.append(line)
+        previous = line
+        previous_blank = blank
+    return "\n".join(cleaned).strip(), duplicate_lines_removed, blank_lines_collapsed
 
 
 def _profile_tabular(payload: dict[str, Any]) -> dict[str, Any]:
@@ -749,6 +929,220 @@ def _slide_bullets(sections: list[str], offset: int, brief: str) -> list[str]:
     if len(candidates) < 2:
         candidates.append(brief[:120])
     return [value[:120] for value in candidates[:4]]
+
+
+def _presentation_units(brief: str) -> list[str]:
+    units: list[str] = []
+    for block in re.split(r"[\r\n]+|(?<=[。；;!?！？])\s*", brief):
+        block = block.strip(" -•\t")
+        if not block:
+            continue
+        if len(block) > 180:
+            parts = [part.strip() for part in re.split(r"[、,，]", block) if part.strip()]
+            if len(parts) > 1:
+                units.extend(parts)
+                continue
+        units.append(block)
+    return units or [brief.strip()]
+
+
+def _ensure_presentation_units(units: list[str], count: int) -> list[str]:
+    result = list(units)
+    if count > len(result):
+        preview = "、".join(value[:24] for value in units[:5])
+        result.insert(0, f"主题概览：{preview}"[:100])
+    fallbacks = ("关键事实与背景", "需要关注的重点", "后续讨论与行动")
+    for value in fallbacks:
+        if len(result) >= count:
+            break
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _balanced_groups(items: list[Any], maximum_groups: int) -> list[list[Any]]:
+    if not items:
+        return []
+    group_count = max(1, min(maximum_groups, len(items)))
+    base, remainder = divmod(len(items), group_count)
+    result: list[list[Any]] = []
+    offset = 0
+    for index in range(group_count):
+        size = base + (1 if index < remainder else 0)
+        result.append(items[offset : offset + size])
+        offset += size
+    return result
+
+
+def _presentation_heading(value: str, index: int) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip("：:。；;，,")
+    if not cleaned:
+        return f"主题 {index}"
+    return cleaned[:28]
+
+
+def _presentation_table(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("presentation_table_must_be_an_object")
+    columns = value.get("columns")
+    rows = value.get("rows")
+    if not isinstance(columns, list) or not 2 <= len(columns) <= 6:
+        raise ValueError("presentation_table_columns_must_be_between_2_and_6")
+    normalized_columns = []
+    for column in columns:
+        if not isinstance(column, str) or not column.strip():
+            raise ValueError("presentation_table_column_is_invalid")
+        normalized_columns.append(column.strip()[:40])
+    if not isinstance(rows, list) or not rows or len(rows) > 120:
+        raise ValueError("presentation_table_rows_must_be_between_1_and_120")
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("presentation_table_row_must_be_an_object")
+        cells = row.get("cells")
+        if not isinstance(cells, list) or len(cells) != len(normalized_columns):
+            raise ValueError("presentation_table_row_cell_count_mismatch")
+        normalized_cells = []
+        for cell in cells:
+            text = str(cell).strip()
+            if not text:
+                raise ValueError("presentation_table_cell_is_empty")
+            if len(text) > 500:
+                raise ValueError("presentation_table_cell_is_too_long")
+            normalized_cells.append(text)
+        source_locator = str(row.get("source_locator") or "").strip()
+        if not source_locator:
+            raise ValueError("presentation_table_source_locator_is_empty")
+        if len(source_locator) > 160:
+            raise ValueError("presentation_table_source_locator_is_too_long")
+        normalized_rows.append({"cells": normalized_cells, "source_locator": source_locator})
+    return {
+        "title": str(value.get("title") or "").strip()[:60],
+        "columns": normalized_columns,
+        "rows": normalized_rows,
+    }
+
+
+def _presentation_source_coverage(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "coverage_ratio": 1.0,
+            "truncated": False,
+            "completed_rounds": 0,
+            "round_count": 0,
+        }
+    ratio = value.get("coverage_ratio", 0)
+    if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
+        ratio = 0
+    return {
+        "coverage_ratio": max(0.0, min(1.0, float(ratio))),
+        "truncated": value.get("truncated") is True,
+        "completed_rounds": _non_negative_int(value.get("completed_rounds")),
+        "round_count": _non_negative_int(value.get("round_count")),
+        "selected_chunk_count": _non_negative_int(value.get("selected_chunk_count")),
+        "total_chunk_count": _non_negative_int(value.get("total_chunk_count")),
+    }
+
+
+def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]]) -> None:
+    shape = slide.shapes.add_table(
+        len(rows) + 1,
+        len(columns),
+        Inches(0.45),
+        Inches(1.45),
+        Inches(12.43),
+        Inches(5.15),
+    )
+    table = shape.table
+    for column_index, column in enumerate(columns):
+        cell = table.cell(0, column_index)
+        cell.text = column
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(43, 63, 117)
+        for paragraph in cell.text_frame.paragraphs:
+            paragraph.font.bold = True
+            paragraph.font.color.rgb = RGBColor(255, 255, 255)
+            paragraph.font.size = Pt(16)
+    for row_index, row in enumerate(rows, start=1):
+        for column_index, value in enumerate(row["cells"]):
+            cell = table.cell(row_index, column_index)
+            cell.text = value
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = (
+                RGBColor(238, 243, 255)
+                if row_index % 2 == 0
+                else RGBColor(255, 255, 255)
+            )
+            for paragraph in cell.text_frame.paragraphs:
+                paragraph.font.size = Pt(14 if len(rows) > 5 else 16)
+                paragraph.font.color.rgb = RGBColor(31, 41, 55)
+    source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
+    footer = slide.shapes.add_textbox(
+        Inches(0.48), Inches(6.72), Inches(12.35), Inches(0.32)
+    )
+    footer_frame = footer.text_frame
+    footer_frame.clear()
+    footer_frame.paragraphs[0].text = (
+        "来源：" + "；".join(source_locators)
+    )[:240]
+    footer_frame.paragraphs[0].font.size = Pt(9)
+    footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+
+
+def _presentation_quality_report(
+    *,
+    outline: list[dict[str, Any]],
+    style: str,
+    table: dict[str, Any] | None,
+    task_contract: dict[str, Any],
+    source_coverage: dict[str, Any],
+) -> dict[str, Any]:
+    violations: list[dict[str, Any]] = []
+    if "表格" in style and not table:
+        violations.append({"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"})
+    signatures = []
+    for slide in outline[1:-1]:
+        signature = json.dumps(slide, ensure_ascii=False, sort_keys=True)
+        if signature in signatures:
+            violations.append({"code": "duplicate_slide_content", "message": "存在重复内容页"})
+            break
+        signatures.append(signature)
+        if len(str(slide.get("title") or "")) > 36:
+            violations.append({"code": "slide_title_too_long", "message": "页面标题过长"})
+            break
+    if task_contract.get("exhaustive") is True:
+        if source_coverage["truncated"] or source_coverage["coverage_ratio"] < 1:
+            violations.append({"code": "source_coverage_incomplete", "message": "来源尚未完整处理"})
+    requested_fields = task_contract.get("requested_fields")
+    if table and isinstance(requested_fields, list):
+        header_text = " ".join(table["columns"]).casefold()
+        aliases = {
+            "code": ("代码", "编号", "code"),
+            "name": ("名称", "课程", "name"),
+            "time": ("时间", "日期", "星期", "时段", "time", "date", "schedule"),
+            "venue": ("地点", "教室", "场地", "venue", "location"),
+        }
+        for field in requested_fields:
+            candidates = aliases.get(str(field), (str(field),))
+            if not any(candidate in header_text for candidate in candidates):
+                violations.append(
+                    {"code": "requested_field_missing", "field": field, "message": f"缺少字段：{field}"}
+                )
+    if table and any(len(cell) > 120 for row in table["rows"] for cell in row["cells"]):
+        violations.append(
+            {"code": "table_cell_too_dense", "message": "表格单元格内容过长，不利于投影阅读"}
+        )
+    return {
+        "policy_version": "pptx-quality-v1",
+        "passed": not violations,
+        "hard_gate": True,
+        "violations": violations,
+        "slide_count": len(outline),
+        "table_row_count": len(table["rows"]) if table else 0,
+        "source_coverage": source_coverage,
+    }
 
 
 def _style_slide(slide: Any, title_color: RGBColor) -> None:

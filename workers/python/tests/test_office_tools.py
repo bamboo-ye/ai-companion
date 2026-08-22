@@ -325,6 +325,7 @@ class OfficeToolsTest(unittest.TestCase):
             ]
         self.assertEqual(len(slides), 5)
         self.assertEqual(len(result["output"]["outline"]), 5)
+        self.assertTrue(result["output"]["quality_report"]["passed"])
 
         outline = execute(
             "pptx_outline",
@@ -358,6 +359,78 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(
             presentation["files"][0]["name"],
             "Important-Dates-Semester-A-2026-27.pptx",
+        )
+
+    def test_pptx_table_preserves_rows_fields_coverage_and_unique_pages(self) -> None:
+        rows = [
+            {
+                "cells": [f"PED{1100 + index}", f"课程 {index}", f"周三 {9 + index:02d}:00"],
+                "source_locator": f"page:{1 + index // 6}",
+            }
+            for index in range(1, 13)
+        ]
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表",
+                "audience": "选课同学",
+                "style": "简洁清晰，表格为主",
+                "brief": "完整展示课程代码、名称和上课时间",
+                "slide_count": 5,
+                "table": {
+                    "title": "课程安排",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": rows,
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                },
+                "source_coverage": {
+                    "coverage_ratio": 1.0,
+                    "truncated": False,
+                    "completed_rounds": 2,
+                    "round_count": 2,
+                },
+            },
+        )
+        output = result["output"]
+        self.assertTrue(output["quality_report"]["passed"], output["quality_report"])
+        self.assertEqual(output["quality_report"]["table_row_count"], 12)
+        self.assertEqual(
+            list(
+                dict.fromkeys(
+                    locator
+                    for slide in output["outline"][1:-1]
+                    for locator in slide["table"]["source_locators"]
+                )
+            ),
+            ["page:1", "page:2", "page:3"],
+        )
+        signatures = [json.dumps(item, sort_keys=True) for item in output["outline"][1:-1]]
+        self.assertEqual(len(signatures), len(set(signatures)))
+
+    def test_pptx_exhaustive_source_rejects_incomplete_coverage(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "所有课程",
+                "slide_count": 4,
+                "table": {
+                    "columns": ["课程代码", "课程名称"],
+                    "rows": [{"cells": ["PED1101", "独木舟"], "source_locator": "page:1"}],
+                },
+                "task_contract": {"exhaustive": True, "requested_fields": ["code", "name"]},
+                "source_coverage": {"coverage_ratio": 0.5, "truncated": True},
+            },
+        )
+        self.assertFalse(result["output"]["quality_report"]["passed"])
+        self.assertIn(
+            "source_coverage_incomplete",
+            {item["code"] for item in result["output"]["quality_report"]["violations"]},
         )
 
     def test_pptx_explicit_filename_still_rejects_paths(self) -> None:
@@ -410,9 +483,12 @@ class OfficeToolsTest(unittest.TestCase):
         )
         output = result["output"]
         self.assertTrue(output["truncated"])
-        self.assertLessEqual(output["token_count"], 4_000)
+        self.assertLessEqual(output["token_count"], 16_000)
         self.assertLess(output["selected_chunk_count"], output["total_chunk_count"])
         self.assertIn("[[PAGE 1]]", output["text"])
+        self.assertGreater(output["round_count"], output["completed_rounds"])
+        self.assertTrue(output["has_more"])
+        self.assertLess(output["coverage_ratio"], 1)
 
     def test_csv_profile_reports_types_missing_duplicates_and_download(self) -> None:
         source = "name,amount,note\nA,10,ok\nB,20,\nB,20,\n".encode()

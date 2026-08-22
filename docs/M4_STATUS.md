@@ -75,8 +75,11 @@ Implemented:
 | Web catalog exposes seven Skills and renders audience/page/style confirmation parameters | Passed |
 | Empty generated-file collections remain JSON arrays after persistence | Passed |
 | Browser regression for null file collections | Caught, fixed, and post-fix flow passed |
+| Exhaustive attachments use ordered rounds, cleaning manifests, continuation cursors, and deduplicated source coverage | Passed |
+| Generated artifacts pass the task-contract gate before the Harness can finalize | Passed |
+| PPTX table rows preserve requested fields and source locators without slide overflow | Passed |
 
-Current slice limits are intentional: DOCX editing appends paragraphs rather than performing tracked arbitrary edits; PPTX uses the built-in deterministic visual theme rather than user templates; XLSX analysis reads the active sheet and does not execute formulas or external links. Larger uploads remain production-hardening work.
+Current slice limits are intentional: DOCX editing appends paragraphs rather than performing tracked arbitrary edits; PPTX uses the built-in deterministic visual theme rather than user templates; XLSX analysis reads the active sheet and does not execute formulas or external links. Ordered fallback extraction now supports files up to the 20MB product upload ceiling; OCR-heavy/scanned documents and files beyond that ceiling remain production-hardening work.
 
 ## Slice 3: intent routing and MCP allowlists
 

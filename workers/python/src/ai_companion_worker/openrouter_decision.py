@@ -557,6 +557,8 @@ class OpenRouterDecisionPort:
                     "未完成请求的补充；只继承最近未完成请求中明确出现的其他字段，不得沿用已"
                     "完成的旧命令。"
                     "若用户要基于附件创建新产物，而观察中还没有附件正文，先调用附件提取工具。"
+                    "附件提取观察若 has_more=true，必须继续调用同一提取工具并把 next_round"
+                    "作为 round_start；完整性任务在 coverage_ratio 达到 1 前不得生成最终文件。"
                     "观察已经满足目标时直接依据观察回答，不得重复调用成功的非 repeatable 工具。"
                     "不得编造参数、项目数据、附件内容或业务结果。"
                 ),
@@ -696,6 +698,14 @@ class OpenRouterDecisionPort:
                         "上一次草稿未通过确定性质量门禁。重新完整生成所有参数并修复这些"
                         f"问题：{encoded_violations}。"
                     )
+        if tool_name in ("work_create_pptx_outline", "work_generate_pptx"):
+            system_prompt += (
+                "当前是演示文稿专用编排：必须逐项满足 task_contract 中的硬要求。"
+                "若来源观察的 truncated 为 true 或 coverage_ratio 小于 1，不得声称内容完整；"
+                "应保留来源覆盖信息。表格型来源必须使用 table.columns 和 table.rows 传递"
+                "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
+                "成为表头或逐页可见字段，所有记录必须保留 source_locator。"
+            )
         payload = self._base_payload("composer")
         payload.update(
             {
@@ -1020,6 +1030,8 @@ class OpenRouterDecisionPort:
                             "若用户只要求邮件草稿，只有观察中的 quality_report.passed 为 true"
                             "且草稿完整时状态才能是 completed；缺失或未通过质量报告时必须 blocked；"
                             "若用户要求生成文件而观察中还没有目标文件，状态必须是 continue；"
+                            "PPTX 文件只有在 output.quality_report.passed 为 true 且完整性任务的"
+                            "source_coverage.coverage_ratio 为 1 时才能 completed；否则必须 continue。"
                             "附件正文提取或 PPT 大纲只是创建最终文件的中间结果。"
                             '只返回 JSON：{"status":"completed|continue|blocked",'
                             '"reason":"简短理由"}。'
@@ -1641,6 +1653,7 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
     state = {
         "user_request": message,
         "agent_plan": context.get("agent_plan", {}),
+        "task_contract": context.get("task_contract", {}),
         "completed_observations": observations[-6:],
         "next_action_number": int(context.get("action_index", 0)) + 1,
         "email_profile": context.get("email_profile", {}),
@@ -2158,7 +2171,12 @@ def _default_assessment(context: Mapping[str, Any]) -> AgentAssessment:
     if isinstance(data, dict):
         files = data.get("files")
         if isinstance(files, list) and files:
-            return AgentAssessment(status="completed", reason="目标文件已经生成")
+            output = data.get("output")
+            if data.get("skill_name") == "office.pptx_generate":
+                quality = output.get("quality_report") if isinstance(output, dict) else None
+                if not isinstance(quality, dict) or quality.get("passed") is not True:
+                    return AgentAssessment(status="continue", reason="PPTX 尚未通过制品质量门禁")
+            return AgentAssessment(status="completed", reason="目标文件已经生成并通过适用门禁")
         output = data.get("output")
         if isinstance(output, dict) and output.get("send_status") == "draft_only":
             quality = output.get("quality_report")
