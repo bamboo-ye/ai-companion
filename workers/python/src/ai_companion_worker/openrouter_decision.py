@@ -70,7 +70,7 @@ class OpenRouterConfig:
     composer_attempt_timeout_seconds: float = 30
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
-    composer_max_tokens: int = 4096
+    composer_max_tokens: int = 8192
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
@@ -130,12 +130,8 @@ class OpenRouterConfig:
             ),
             repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,)),
             timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "30")),
-            attempt_timeout_seconds=float(
-                os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")
-            ),
-            composer_timeout_seconds=float(
-                os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "45")
-            ),
+            attempt_timeout_seconds=float(os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
+            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "45")),
             composer_attempt_timeout_seconds=float(
                 os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "30")
             ),
@@ -143,7 +139,7 @@ class OpenRouterConfig:
                 os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
-            composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "4096")),
+            composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "8192")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -204,9 +200,7 @@ class OpenRouterConfig:
             if not math.isfinite(value) or value <= 0 or value > 120:
                 raise ValueError(f"{name} must be between 0 and 120 seconds")
         if self.attempt_timeout_seconds > self.timeout_seconds:
-            raise ValueError(
-                "MODEL_ATTEMPT_TIMEOUT_SECONDS cannot exceed MODEL_TIMEOUT_SECONDS"
-            )
+            raise ValueError("MODEL_ATTEMPT_TIMEOUT_SECONDS cannot exceed MODEL_TIMEOUT_SECONDS")
         if self.composer_attempt_timeout_seconds > self.composer_timeout_seconds:
             raise ValueError(
                 "MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS cannot exceed "
@@ -233,9 +227,7 @@ class OpenRouterConfig:
             or self.preferred_max_latency_p90 < 0
             or self.preferred_max_latency_p90 > 60
         ):
-            raise ValueError(
-                "MODEL_PREFERRED_MAX_LATENCY_P90_SECONDS must be between 0 and 60"
-            )
+            raise ValueError("MODEL_PREFERRED_MAX_LATENCY_P90_SECONDS must be between 0 and 60")
         if (
             not math.isfinite(self.max_prompt_price)
             or not math.isfinite(self.max_completion_price)
@@ -371,15 +363,11 @@ class OpenRouterDecisionPort:
                 "timeouts": {
                     "fallback_deadline_seconds": self._config.timeout_seconds,
                     "attempt_timeout_seconds": self._config.attempt_timeout_seconds,
-                    "composer_fallback_deadline_seconds": (
-                        self._config.composer_timeout_seconds
-                    ),
+                    "composer_fallback_deadline_seconds": (self._config.composer_timeout_seconds),
                     "composer_attempt_timeout_seconds": (
                         self._config.composer_attempt_timeout_seconds
                     ),
-                    "min_fallback_timeout_seconds": (
-                        self._config.min_fallback_timeout_seconds
-                    ),
+                    "min_fallback_timeout_seconds": (self._config.min_fallback_timeout_seconds),
                 },
             },
             "inference": {
@@ -589,8 +577,7 @@ class OpenRouterDecisionPort:
             (
                 {
                     "role": "system",
-                    "content": "可信执行状态："
-                    + _routing_message(routing_message, context),
+                    "content": "可信执行状态：" + _routing_message(routing_message, context),
                 },
                 {"role": "user", "content": routing_message},
             )
@@ -680,6 +667,7 @@ class OpenRouterDecisionPort:
             "附件内容或业务结果。长文本需保留关键事实并直接满足工具字段用途。"
         )
         email_validation = context.get("email_validation")
+        artifact_validation = context.get("artifact_validation")
         if tool_name == "work_draft_email":
             system_prompt += (
                 "当前是邮件专用编排：用户明确指定的语言优先级最高。英文邮件的主题、"
@@ -712,6 +700,22 @@ class OpenRouterDecisionPort:
                 "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
                 "成为表头或逐页可见字段，所有记录必须保留 source_locator。"
             )
+            if isinstance(artifact_validation, Mapping):
+                violations = artifact_validation.get("violations")
+                if isinstance(violations, list) and violations:
+                    encoded_violations = json.dumps(
+                        [
+                            dict(item) if isinstance(item, Mapping) else {"code": str(item)}
+                            for item in violations[:20]
+                        ],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    system_prompt += (
+                        "上一次演示文稿参数未通过确定性完整性门禁。必须重新生成全部参数，"
+                        "不得复用空泛 brief，并修复这些问题："
+                        f"{encoded_violations}。"
+                    )
         payload = self._base_payload("composer")
         payload.update(
             {
@@ -752,15 +756,19 @@ class OpenRouterDecisionPort:
             "composer",
         )
         model_order = self._config.models_for("composer")
-        if (
+        quality_retry = (
             tool_name == "work_draft_email"
             and isinstance(email_validation, Mapping)
             and email_validation.get("passed") is False
-            and len(model_order) > 1
-        ):
-            # A structurally valid but low-quality primary draft gets one
-            # deliberately diverse quality fallback instead of repeating the
-            # same model. The graph quality gate bounds this path to one retry.
+        ) or (
+            tool_name in ("work_create_pptx_outline", "work_generate_pptx")
+            and isinstance(artifact_validation, Mapping)
+            and artifact_validation.get("passed") is False
+        )
+        if quality_retry and len(model_order) > 1:
+            # A structurally valid but low-quality composed payload gets one
+            # deliberately diverse fallback instead of repeating the same
+            # model. The graph quality gate bounds this path to one retry.
             model_order = (model_order[1],)
         _, arguments = self._select_tool_with_fallback(
             payload,
@@ -1266,11 +1274,7 @@ class OpenRouterDecisionPort:
                     "completion": self._config.max_completion_price,
                 },
                 **(
-                    {
-                        "preferred_max_latency": {
-                            "p90": self._config.preferred_max_latency_p90
-                        }
-                    }
+                    {"preferred_max_latency": {"p90": self._config.preferred_max_latency_p90}}
                     if self._config.preferred_max_latency_p90 > 0
                     else {}
                 ),
@@ -1781,16 +1785,10 @@ def _active_life_clarification_tool(
         tool_name = "life_prepare_task_completion"
         reply_matches = True
     elif "补充" in assistant_text and (
-        "创建提醒" in assistant_text
-        or "提醒日期" in missing_text
-        or "事项名称" in missing_text
+        "创建提醒" in assistant_text or "提醒日期" in missing_text or "事项名称" in missing_text
     ):
         tool_name = "life_prepare_reminder"
-        reply_matches = (
-            _looks_like_temporal_slot(reply)
-            if "提醒日期" in missing_text
-            else True
-        )
+        reply_matches = _looks_like_temporal_slot(reply) if "提醒日期" in missing_text else True
     elif any(
         marker in assistant_text
         for marker in (

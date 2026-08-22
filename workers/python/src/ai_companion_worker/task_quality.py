@@ -25,6 +25,13 @@ _ARTIFACT_SUFFIX_TYPES = {
     ".csv": "csv",
 }
 
+_REQUESTED_FIELD_ALIASES = {
+    "code": ("代码", "编号", "code"),
+    "name": ("名称", "课程", "name"),
+    "time": ("时间", "日期", "星期", "时段", "time", "date", "schedule"),
+    "venue": ("地点", "教室", "场地", "venue", "location"),
+}
+
 
 def compile_task_contract(
     message: str,
@@ -39,7 +46,9 @@ def compile_task_contract(
     artifact_types = _artifact_types(normalized)
 
     exhaustive = bool(
-        re.search(r"(?:所有|全部|完整|逐一|每(?:一|门|项|条)|\ball\b|\bevery\b|\bcomplete\b)", lowered)
+        re.search(
+            r"(?:所有|全部|完整|逐一|每(?:一|门|项|条)|\ball\b|\bevery\b|\bcomplete\b)", lowered
+        )
     )
     requested_fields: list[str] = []
     field_patterns = (
@@ -92,6 +101,99 @@ def task_contract_artifact_satisfied(
     return (
         artifact_validation.get("applicable") is True and artifact_validation.get("passed") is True
     )
+
+
+def validate_presentation_arguments(
+    arguments: Mapping[str, Any],
+    task_contract: Mapping[str, Any],
+    *,
+    expected_record_keys: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Reject structurally valid PPT arguments that cannot satisfy the task."""
+
+    requested_fields = _requested_fields(task_contract)
+    if not requested_fields:
+        return []
+    table = arguments.get("table")
+    if not isinstance(table, Mapping):
+        return [
+            {
+                "code": "structured_table_missing",
+                "message": "结构化字段任务必须提供表格数据，不能只提交内容简报",
+            }
+        ]
+    columns = table.get("columns")
+    rows = table.get("rows")
+    violations = _requested_field_violations(columns, requested_fields)
+    if not isinstance(rows, list) or not rows:
+        violations.append(
+            {"code": "structured_rows_missing", "message": "结构化字段任务没有记录行"}
+        )
+    elif task_contract.get("exhaustive") is True:
+        missing_locators = sum(
+            1
+            for row in rows
+            if not isinstance(row, Mapping)
+            or not isinstance(row.get("source_locator"), str)
+            or not row["source_locator"].strip()
+        )
+        if missing_locators:
+            violations.append(
+                {
+                    "code": "source_locator_missing",
+                    "message": "完整性任务的每条记录都必须保留来源位置",
+                    "missing_rows": missing_locators,
+                }
+            )
+    expected_record_keys = expected_record_keys or []
+    if expected_record_keys and isinstance(columns, list) and isinstance(rows, list):
+        code_column = _requested_field_column(columns, "code")
+        if code_column >= 0:
+            observed = {
+                key
+                for row in rows
+                if isinstance(row, Mapping) and isinstance(row.get("cells"), list)
+                for key in expected_record_keys
+                if code_column < len(row["cells"])
+                and key in _canonical_record_key(row["cells"][code_column])
+            }
+            missing = [key for key in expected_record_keys if key not in observed]
+            if missing:
+                violations.append(
+                    {
+                        "code": "source_records_missing",
+                        "message": "表格没有覆盖来源中识别出的全部记录代码",
+                        "expected_count": len(expected_record_keys),
+                        "observed_count": len(observed),
+                        "missing_keys": missing[:20],
+                    }
+                )
+    return _deduplicate_violations(violations)
+
+
+def presentation_source_record_keys(
+    observations: Any,
+    task_contract: Mapping[str, Any],
+) -> list[str]:
+    """Derive repeated line-leading identifiers for exhaustive code coverage."""
+
+    if "code" not in _requested_fields(task_contract) or not isinstance(observations, list):
+        return []
+    grouped: dict[str, set[str]] = {}
+    pattern = re.compile(r"(?mi)^\s*(?:[|•*-]\s*)?([A-Z]{2,8})\s*[- ]?\s*(\d{3,6}[A-Z]?)\b")
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        text = output.get("text") if isinstance(output, Mapping) else None
+        if not isinstance(text, str):
+            continue
+        for prefix, digits in pattern.findall(text):
+            normalized_prefix = prefix.upper()
+            grouped.setdefault(normalized_prefix, set()).add(normalized_prefix + digits.upper())
+    repeated_groups = [values for values in grouped.values() if len(values) >= 2]
+    return sorted({key for values in repeated_groups for key in values})
 
 
 def _inherited_artifact_request(message: str, history: Any) -> str:
@@ -246,12 +348,7 @@ def validate_artifact_observation(
         violations.append({"code": "artifact_file_missing", "message": "生成文件不存在"})
     for item in files:
         name = item.get("name") if isinstance(item, Mapping) else None
-        if (
-            not isinstance(name, str)
-            or not name.strip()
-            or "/" in name
-            or "\\" in name
-        ):
+        if not isinstance(name, str) or not name.strip() or "/" in name or "\\" in name:
             violations.append(
                 {"code": "artifact_file_metadata_invalid", "message": "生成文件名无效"}
             )
@@ -293,9 +390,7 @@ def validate_artifact_observation(
         )
 
     if isinstance(output, Mapping) and output.get("source_overwritten") is True:
-        violations.append(
-            {"code": "source_overwritten", "message": "生成过程覆盖了来源文件"}
-        )
+        violations.append({"code": "source_overwritten", "message": "生成过程覆盖了来源文件"})
 
     if skill_name == "office.pptx_generate" and not isinstance(quality, Mapping):
         violations.append(
@@ -309,9 +404,10 @@ def validate_artifact_observation(
                 for item in raw_violations
             )
         if quality.get("passed") is not True and not violations:
-            violations.append(
-                {"code": "artifact_quality_failed", "message": "PPTX 未通过质量门禁"}
-            )
+            violations.append({"code": "artifact_quality_failed", "message": "PPTX 未通过质量门禁"})
+
+    if skill_name == "office.pptx_generate" and isinstance(output, Mapping):
+        violations.extend(_presentation_output_violations(output, task_contract))
 
     if isinstance(output, Mapping):
         coverage = output.get("source_coverage")
@@ -337,6 +433,106 @@ def validate_artifact_observation(
     report["violations"] = _deduplicate_violations(violations)
     report["passed"] = not report["violations"]
     return report
+
+
+def _presentation_output_violations(
+    output: Mapping[str, Any],
+    task_contract: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    requested_fields = _requested_fields(task_contract)
+    if not requested_fields:
+        return []
+    outline = output.get("outline")
+    table_slides = []
+    if isinstance(outline, list):
+        table_slides = [
+            slide.get("table")
+            for slide in outline
+            if isinstance(slide, Mapping) and isinstance(slide.get("table"), Mapping)
+        ]
+    if not table_slides:
+        return [
+            {
+                "code": "structured_table_missing",
+                "message": "PPT 未包含用户要求的结构化记录表格",
+            }
+        ]
+    columns = table_slides[0].get("columns")
+    violations = _requested_field_violations(columns, requested_fields)
+    row_count = sum(
+        max(0, int(value))
+        for table in table_slides
+        if isinstance((value := table.get("row_count")), int) and not isinstance(value, bool)
+    )
+    if row_count < 1:
+        violations.append({"code": "structured_rows_missing", "message": "PPT 表格没有任何记录"})
+    quality = output.get("quality_report")
+    reported_count = quality.get("table_row_count") if isinstance(quality, Mapping) else None
+    if (
+        isinstance(reported_count, int)
+        and not isinstance(reported_count, bool)
+        and reported_count != row_count
+    ):
+        violations.append(
+            {
+                "code": "table_row_count_mismatch",
+                "message": "PPT 质量报告与实际表格记录数不一致",
+                "reported": reported_count,
+                "observed": row_count,
+            }
+        )
+    if task_contract.get("exhaustive") is True and any(
+        not isinstance(table.get("source_locators"), list) or not table["source_locators"]
+        for table in table_slides
+    ):
+        violations.append(
+            {
+                "code": "source_locator_missing",
+                "message": "完整性任务的 PPT 表格缺少来源位置",
+            }
+        )
+    return _deduplicate_violations(violations)
+
+
+def _requested_fields(task_contract: Mapping[str, Any]) -> list[str]:
+    values = task_contract.get("requested_fields")
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def _requested_field_violations(
+    columns: Any,
+    requested_fields: list[str],
+) -> list[dict[str, Any]]:
+    if not isinstance(columns, list):
+        return [{"code": "table_columns_missing", "message": "结构化表格缺少表头"}]
+    header_text = " ".join(str(value) for value in columns).casefold()
+    violations: list[dict[str, Any]] = []
+    for field in requested_fields:
+        aliases = _REQUESTED_FIELD_ALIASES.get(field, (field,))
+        if not any(alias in header_text for alias in aliases):
+            violations.append(
+                {
+                    "code": "requested_field_missing",
+                    "field": field,
+                    "message": f"缺少字段：{field}",
+                }
+            )
+    return violations
+
+
+def _requested_field_column(columns: list[Any], field: str) -> int:
+    aliases = _REQUESTED_FIELD_ALIASES.get(field, (field,))
+    for index, value in enumerate(columns):
+        header = str(value).casefold()
+        if any(alias in header for alias in aliases):
+            return index
+    return -1
+
+
+def _canonical_record_key(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value).upper())
 
 
 def artifact_observation_applicable(data: Any) -> bool:

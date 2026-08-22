@@ -26,8 +26,10 @@ from ai_companion_worker.response_quality import inspect_and_repair_response
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
+    presentation_source_record_keys,
     task_contract_artifact_satisfied,
     validate_artifact_observation,
+    validate_presentation_arguments,
 )
 from ai_companion_worker.agent_governance import (
     GRAPH_NAME,
@@ -106,6 +108,8 @@ class AgentState(AgentInput, total=False):
     repair_started_at_ms: int
     email_validation: dict[str, Any]
     email_rewrite_attempts: int
+    presentation_validation: dict[str, Any]
+    presentation_rewrite_attempts: int
     response_validation: dict[str, Any]
     response_rewrite_attempts: int
     execution_mode: ExecutionMode
@@ -696,6 +700,8 @@ def _supervise(
         "repair_started_at_ms": 0,
         "email_validation": {},
         "email_rewrite_attempts": 0,
+        "presentation_validation": {},
+        "presentation_rewrite_attempts": 0,
         "response_validation": {},
         "response_rewrite_attempts": 0,
         "execution_mode": "direct",
@@ -1236,6 +1242,7 @@ def build_graph(
         composition_context["action_index"] = state.get("action_index", 0)
         composition_context["task_contract"] = dict(state.get("task_contract", {}))
         composition_context["email_validation"] = dict(state.get("email_validation", {}))
+        composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         try:
             arguments = composer(
                 module=state["module"],
@@ -1251,7 +1258,9 @@ def build_graph(
                 raise ValueError("argument composition requires a trusted tool definition")
             if tool_name.strip() in ("work_create_pptx_outline", "work_generate_pptx"):
                 parameters = definition.get("parameters")
-                properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
+                properties = (
+                    parameters.get("properties") if isinstance(parameters, Mapping) else None
+                )
                 if isinstance(properties, Mapping) and "task_contract" in properties:
                     normalized_arguments["task_contract"] = dict(state.get("task_contract", {}))
                 if isinstance(properties, Mapping) and "source_coverage" in properties:
@@ -1297,9 +1306,100 @@ def build_graph(
         proposed = state.get("proposed_tool", {})
         tool_name = str(proposed.get("name") or "")
         arguments = proposed.get("arguments")
+        if tool_name in ("work_create_pptx_outline", "work_generate_pptx"):
+            if not isinstance(arguments, Mapping):
+                raise ValueError("presentation quality gate requires composed arguments")
+            violations = validate_presentation_arguments(
+                arguments,
+                state.get("task_contract", {}),
+                expected_record_keys=presentation_source_record_keys(
+                    state.get("observations", []),
+                    state.get("task_contract", {}),
+                ),
+            )
+            attempts = int(state.get("presentation_rewrite_attempts", 0))
+            report = {
+                "policy_version": "presentation-arguments-v1",
+                "applicable": True,
+                "passed": not violations,
+                "violations": violations,
+                "rewrite_attempt": attempts,
+            }
+            if not violations:
+                return {
+                    "email_validation": {},
+                    "presentation_validation": report,
+                    "artifact_validation": {},
+                    "node_trace": [
+                        *state.get("node_trace", []),
+                        _trace_event(
+                            "email_quality_gate",
+                            "succeeded",
+                            started_ns=started_ns,
+                            details={
+                                "policy_version": report["policy_version"],
+                                "presentation": True,
+                                "rewrite_attempt": attempts,
+                            },
+                        ),
+                    ],
+                    "steps": state.get("steps", 0) + 1,
+                }
+            if attempts < 1:
+                report["rewrite_attempt"] = attempts + 1
+                return {
+                    "proposed_tool": {
+                        **dict(proposed),
+                        "compose_arguments": True,
+                    },
+                    "email_validation": {},
+                    "presentation_validation": report,
+                    "presentation_rewrite_attempts": attempts + 1,
+                    "artifact_validation": report,
+                    "node_trace": [
+                        *state.get("node_trace", []),
+                        _trace_event(
+                            "email_quality_gate",
+                            "retrying",
+                            started_ns=started_ns,
+                            details={
+                                "policy_version": report["policy_version"],
+                                "presentation": True,
+                                "violations": violations,
+                                "rewrite_attempt": attempts + 1,
+                            },
+                        ),
+                    ],
+                    "steps": state.get("steps", 0) + 1,
+                }
+            return {
+                "email_validation": {},
+                "presentation_validation": report,
+                "artifact_validation": report,
+                "outcome": "artifact_quality_failed",
+                "response": (
+                    "演示文稿参数连续两次未通过结构化内容检查，已停止生成和交付不完整文件。"
+                ),
+                "node_trace": [
+                    *state.get("node_trace", []),
+                    _trace_event(
+                        "email_quality_gate",
+                        "blocked",
+                        started_ns=started_ns,
+                        details={
+                            "policy_version": report["policy_version"],
+                            "presentation": True,
+                            "violations": violations,
+                            "rewrite_attempt": attempts,
+                        },
+                    ),
+                ],
+                "steps": state.get("steps", 0) + 1,
+            }
         if tool_name != "work_draft_email":
             return {
                 "email_validation": {},
+                "presentation_validation": {},
                 "node_trace": [
                     *state.get("node_trace", []),
                     _trace_event(
@@ -1387,7 +1487,7 @@ def build_graph(
         }
 
     def after_email_quality(state: AgentState) -> str:
-        if state.get("outcome") == "email_quality_failed":
+        if state.get("outcome") in ("email_quality_failed", "artifact_quality_failed"):
             return "finalize"
         proposed = state.get("proposed_tool", {})
         if proposed.get("compose_arguments") is True:
@@ -1946,8 +2046,7 @@ def build_graph(
         elif state.get("action_index", 0) < state.get("action_budget", policy.max_actions):
             outcome = ""
             response = (
-                "生成文件未通过任务完整性或制品质量门禁，"
-                "Harness 将在行动预算内重新整理来源并生成。"
+                "生成文件未通过任务完整性或制品质量门禁，Harness 将在行动预算内重新整理来源并生成。"
             )
             status = "retrying"
         else:
@@ -2663,6 +2762,8 @@ def build_graph(
             "repair_started_at_ms": 0,
             "email_validation": {},
             "email_rewrite_attempts": 0,
+            "presentation_validation": {},
+            "presentation_rewrite_attempts": 0,
             "node_trace": [
                 *state.get("node_trace", []),
                 _trace_event("continue_action", "succeeded"),
@@ -3018,9 +3119,7 @@ def _document_source_coverage(state: AgentState) -> dict[str, Any]:
         if isinstance(output, Mapping):
             arguments = observation.get("arguments")
             attachment_index = (
-                int(arguments.get("attachment_index") or 1)
-                if isinstance(arguments, Mapping)
-                else 1
+                int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
             )
             reports.append((attachment_index, output))
     if not reports:
@@ -3096,13 +3195,9 @@ def _document_source_coverage(state: AgentState) -> dict[str, Any]:
     total_chunks = sum(item["total"] for item in attachments.values())
     chunk_coverage_ratio = selected_chunks / total_chunks if total_chunks else 0.0
     source_document_ids = state.get("task_contract", {}).get("source_document_ids")
-    expected_attachments = (
-        len(source_document_ids) if isinstance(source_document_ids, list) else 0
-    )
+    expected_attachments = len(source_document_ids) if isinstance(source_document_ids, list) else 0
     attachment_coverage_ratio = (
-        min(1.0, len(attachments) / expected_attachments)
-        if expected_attachments > 0
-        else 1.0
+        min(1.0, len(attachments) / expected_attachments) if expected_attachments > 0 else 1.0
     )
     coverage_ratio = chunk_coverage_ratio * attachment_coverage_ratio
     return {
@@ -3111,8 +3206,7 @@ def _document_source_coverage(state: AgentState) -> dict[str, Any]:
         "completed_attachment_count": len(attachments),
         "expected_attachment_count": expected_attachments,
         "completed_rounds": sum(
-            len(item["round_nos"]) + item["fallback_rounds"]
-            for item in attachments.values()
+            len(item["round_nos"]) + item["fallback_rounds"] for item in attachments.values()
         ),
         "round_count": sum(item["round_count"] for item in attachments.values()),
         "selected_chunk_count": selected_chunks,
@@ -3280,9 +3374,7 @@ def _validate_checkpoint_identity(
     ):
         persisted_identity = values.get(identity_field)
         if persisted_identity is not None and persisted_identity != normalized[identity_field]:
-            raise ValueError(
-                f"initial Agent input {identity_field} does not match checkpoint"
-            )
+            raise ValueError(f"initial Agent input {identity_field} does not match checkpoint")
 
 
 class AgentRuntime:

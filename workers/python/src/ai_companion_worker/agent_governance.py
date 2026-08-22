@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.8.0"
+GRAPH_VERSION = "3.9.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -75,6 +75,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "repair_started_at_ms",
             "email_validation",
             "email_rewrite_attempts",
+            "presentation_validation",
+            "presentation_rewrite_attempts",
             "response_validation",
             "response_rewrite_attempts",
             "execution_mode",
@@ -130,8 +132,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     "email_quality_gate": NodeContract(
         responsibility=(
             "Validate language fidelity, polite email structure, introduction, "
-            "sender identity and signature before tool dispatch; request at most "
-            "one bounded rewrite."
+            "sender identity and signature, and validate structured presentation "
+            "arguments before tool dispatch; request at most one bounded rewrite."
         ),
         kind="deterministic",
         recovery="checkpoint_replay",
@@ -139,6 +141,9 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "proposed_tool",
             "email_validation",
             "email_rewrite_attempts",
+            "presentation_validation",
+            "presentation_rewrite_attempts",
+            "artifact_validation",
             "outcome",
             "response",
             "node_trace",
@@ -369,6 +374,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "repair_started_at_ms",
             "email_validation",
             "email_rewrite_attempts",
+            "presentation_validation",
+            "presentation_rewrite_attempts",
             "response_validation",
             "response_rewrite_attempts",
             "node_trace",
