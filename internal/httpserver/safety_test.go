@@ -36,18 +36,24 @@ func TestMinorModeBlocksRiskySkillsButAllowsSafeSkills(t *testing.T) {
 	}
 }
 
-func TestAdultCanDisableRiskySkills(t *testing.T) {
-	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "safety-adult-secret-with-enough-entropy"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func TestAdultRiskSettingStillAllowsSafePPTXGeneration(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "safety-adult-secret-with-enough-entropy", SkillWorkerEnabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	token := registerSkillUser(t, server, "adult-safety@example.com", "adult-safety")
 
 	updated := performJSON(t, server, http.MethodPatch, "/v1/safety/me", token, map[string]any{"risky_skills_allowed": false})
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"minor_mode":false`) || !strings.Contains(updated.Body.String(), `"risky_skills_allowed":false`) {
 		t.Fatalf("updated=%d %s", updated.Code, updated.Body.String())
 	}
-	blocked := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.pptx_generate/runs", token, "adult-risky-ppt", map[string]any{"input": map[string]any{
+	blocked := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.markdown_document/runs", token, "adult-risky-doc", map[string]any{"input": map[string]any{
+		"title": "受限文档", "content": "仍需要执行前确认",
+	}})
+	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), `"skill_name":"office.markdown_document"`) {
+		t.Fatalf("blocked=%d %s", blocked.Code, blocked.Body.String())
+	}
+	allowed := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.pptx_generate/runs", token, "adult-safe-ppt", map[string]any{"input": map[string]any{
 		"title": "季度复盘", "audience": "管理层", "style": "简洁专业", "brief": "风险与机会", "slide_count": 6,
 	}})
-	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), `"skill_name":"office.pptx_generate"`) {
-		t.Fatalf("blocked=%d %s", blocked.Code, blocked.Body.String())
+	if allowed.Code != http.StatusAccepted || !strings.Contains(allowed.Body.String(), `"status":"queued"`) || !strings.Contains(allowed.Body.String(), `"requires_confirmation":false`) {
+		t.Fatalf("allowed=%d %s", allowed.Code, allowed.Body.String())
 	}
 }

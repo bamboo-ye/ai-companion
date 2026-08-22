@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-var documentPattern = regexp.MustCompile(`<!--ai-document:([0-9a-fA-F-]{36})(?:\|([^>]*))?-->`)
+var (
+	documentPattern         = regexp.MustCompile(`<!--ai-document:([0-9a-fA-F-]{36})(?:\|([^>]*))?-->`)
+	internalMetadataPattern = regexp.MustCompile(`(?s)<!--\s*ai-(?:document|generated-file|ledger-export|skill-run|agent-run|generation-job):.*?-->`)
+)
 
 func AppendDocument(content, documentID, name string) string {
 	documentID = strings.TrimSpace(documentID)
@@ -31,7 +34,7 @@ func DocumentIDs(content string) []string {
 }
 
 func VisibleText(content string) string {
-	return strings.TrimSpace(documentPattern.ReplaceAllString(content, ""))
+	return strings.TrimSpace(internalMetadataPattern.ReplaceAllString(content, ""))
 }
 
 func GeneratedFileMarker(runID, fileID, name string) string {

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { confirmationPrompt, executionResultNotice, visibleChatText } from "./chat-content";
 import { isActiveRun, listSkillRuns } from "./skill-run-client";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
@@ -27,7 +28,7 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
 
   async function downloadGeneratedFile(file:GeneratedFileLink){const response=await fetch(`${apiBase}/v1/skill-runs/${file.runID}/files/${file.fileID}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok){setError("文件下载失败");return}const blob=await response.blob();const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=file.name;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url)}
   async function downloadLedgerExport(file:LedgerExportLink){const response=await fetch(`${apiBase}/v1/ledger/exports/${file.exportID}/file`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok){setError("账单文件下载失败");return}const blob=await response.blob();const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=file.name;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url)}
-  async function confirmTool(payload:ToolConfirmationEvent){const confirmation=payload.confirmation;if(!confirmation||handledConfirmationsRef.current.has(confirmation.candidate_id))return;if(!["ledger","reminder","today_plan","reminder_reschedule","today_plan_schedule","task_complete"].includes(confirmation.kind))return;handledConfirmationsRef.current.add(confirmation.candidate_id);const approved=window.confirm(`确认执行以下更新吗？\n\n${confirmation.summary}`);if(!approved){setToolNotice("已取消，本次更新未写入。");return}
+  async function confirmTool(payload:ToolConfirmationEvent){const confirmation=payload.confirmation;if(!confirmation||handledConfirmationsRef.current.has(confirmation.candidate_id))return;if(!["ledger","reminder","today_plan","reminder_reschedule","today_plan_schedule","task_complete"].includes(confirmation.kind))return;handledConfirmationsRef.current.add(confirmation.candidate_id);const approved=window.confirm(confirmationPrompt(confirmation.summary));if(!approved){setToolNotice("已取消，本次更新未写入。");return}
     try{let response:Response;
       if(confirmation.kind==="ledger"){response=await fetch(`${apiBase}/v1/ledger/candidates/${confirmation.candidate_id}/confirm`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":`chat-ledger-confirm:${confirmation.candidate_id}`,Authorization:`Bearer ${token}`},body:JSON.stringify({note:"由角色聊天确认写入"})})}
       else if(confirmation.kind==="reminder"){response=await fetch(`${apiBase}/v1/reminders/${confirmation.candidate_id}/confirm`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":`chat-reminder-confirm:${confirmation.candidate_id}`,Authorization:`Bearer ${token}`},body:"{}"})}
@@ -53,8 +54,8 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
 
   async function consumeAgentRun(id:string){let failures=0;
     while(true){try{const response=await fetch(`${apiBase}/v1/agent-runs/${id}`,{headers:{Authorization:`Bearer ${token}`}});const run=await response.json() as AgentRun&{message?:string};if(!response.ok)throw new Error(run.message??"无法读取 Agent 状态");failures=0;
-      if(run.status==="waiting_approval"){const interrupt=run.output?.interrupts?.[0];if(!interrupt)throw new Error("确认信息不完整，请稍后重试");const resolutionKey=`${id}:${run.revision}`;if(!handledAgentResolutionsRef.current.has(resolutionKey)){handledAgentResolutionsRef.current.add(resolutionKey);const approved=window.confirm(`确认执行以下更新吗？\n\n${interrupt.summary}`);const resolved=await fetch(`${apiBase}/v1/agent-runs/${id}/resolve`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":resolutionKey,Authorization:`Bearer ${token}`},body:JSON.stringify({approved})});if(!resolved.ok){handledAgentResolutionsRef.current.delete(resolutionKey);const body=await resolved.json().catch(()=>({message:"提交确认失败"})) as {message?:string};throw new Error(body.message??"提交确认失败")}setToolNotice(approved?"已确认，正在执行更新…":"已取消，本次更新不会写入。")}setStatus("正在恢复任务…")}
-      else if(run.status==="completed"){const latest=await loadMessages(token,conversationID);setMessages(current=>mergeMessages(current,latest));setStatus("");setAgentRunID("");setToolNotice(executionResultNotice(run.output));return}
+      if(run.status==="waiting_approval"){const interrupt=run.output?.interrupts?.[0];if(!interrupt)throw new Error("确认信息不完整，请稍后重试");const resolutionKey=`${id}:${run.revision}`;if(!handledAgentResolutionsRef.current.has(resolutionKey)){handledAgentResolutionsRef.current.add(resolutionKey);const approved=window.confirm(confirmationPrompt(interrupt.summary));const resolved=await fetch(`${apiBase}/v1/agent-runs/${id}/resolve`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":resolutionKey,Authorization:`Bearer ${token}`},body:JSON.stringify({approved})});if(!resolved.ok){handledAgentResolutionsRef.current.delete(resolutionKey);const body=await resolved.json().catch(()=>({message:"提交确认失败"})) as {message?:string};throw new Error(body.message??"提交确认失败")}setToolNotice(approved?"已确认，正在执行更新…":"已取消，本次更新不会写入。")}setStatus("正在恢复任务…")}
+      else if(run.status==="completed"){const latest=await loadMessages(token,conversationID);setMessages(current=>mergeMessages(current,latest));setStatus("");setAgentRunID("");setToolNotice(executionResultNotice(run.output?.tool_result?.response));return}
       else if(run.status==="cancelled"){const latest=await loadMessages(token,conversationID);setMessages(current=>mergeMessages(current,latest));setStatus("已停止生成");setAgentRunID("");setToolNotice("操作已取消，原对话已保留。");return}
       else if(run.status==="timed_out"){const latest=await loadMessages(token,conversationID);setMessages(current=>mergeMessages(current,latest));setError("这次处理超时，原对话已保留，可在对应消息下重试。");setStatus("");setAgentRunID("");return}
       else if(run.status==="failed"){const latest=await loadMessages(token,conversationID);setMessages(current=>mergeMessages(current,latest));setError("这次处理没有完成，原对话已保留，可在对应消息下重试。");setStatus("");setAgentRunID("");return}
@@ -86,7 +87,7 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
           const canRetry=Boolean(failure&&item.reply_to_id&&latestAssistantByReply.get(item.reply_to_id)===item.id);
           return <div className={`messageBubble ${item.role}`} key={item.id}>
             <small>{item.role==="user"?"你":character.name}</small>
-            {visibleContent(item.content)&&<p>{visibleContent(item.content)}</p>}
+            {visibleChatText(item.content)&&<p>{visibleChatText(item.content)}</p>}
             {attached.length>0&&<div className="messageFiles">{attached.map(file=><span key={file}>📎 {file}</span>)}</div>}
             {files.length>0&&<div className="messageFiles">{files.map(file=><button key={file.fileID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadGeneratedFile(file)}>⬇ {file.name}</button>)}</div>}
             {ledgerFiles.length>0&&<div className="messageFiles">{ledgerFiles.map(file=><button key={file.exportID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadLedgerExport(file)}>⬇ {file.name}</button>)}</div>}
@@ -115,10 +116,8 @@ async function loadMessages(token:string,conversationID:string){const items:Mess
 async function loadGenerationJob(token:string,jobID:string){const response=await fetch(`${apiBase}/v1/generation-jobs/${jobID}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok)throw new Error("无法读取任务状态");return await response.json() as {status:string}}
 function mergeMessage(current:Message[],incoming:Message){if(current.some(item=>item.id===incoming.id))return current;return [...current,incoming].sort((a,b)=>a.sequence-b.sequence||a.bubble-b.bubble)}
 function mergeMessages(current:Message[],incoming:Message[]){return incoming.reduce(mergeMessage,current)}
-function visibleContent(content:string){return content.replace(/<!--ai-document:[^>]+-->/g,"").replace(/<!--ai-generated-file:[^>]+-->/g,"").replace(/<!--ai-ledger-export:[^>]+-->/g,"").replace(/<!--ai-skill-run:[^>]+-->/g,"").replace(/<!--ai-(?:agent-run|generation-job):[^>]+-->/g,"").trim()}
 function attachedDocuments(content:string){return Array.from(content.matchAll(/<!--ai-document:[^|>]+(?:\|([^>]*))?-->/g),match=>match[1]||"附件")}
 function generatedFiles(content:string):GeneratedFileLink[]{return Array.from(content.matchAll(/<!--ai-generated-file:([^|>]+)\|([^|>]+)\|([^>]*)-->/g),match=>({runID:match[1],fileID:match[2],name:match[3]||"下载文件"}))}
 function ledgerExportFiles(content:string):LedgerExportLink[]{return Array.from(content.matchAll(/<!--ai-ledger-export:([^|>]+)\|([^>]*)-->/g),match=>({exportID:match[1],name:match[2]||"账单.xlsx"}))}
 function runtimeFailure(content:string){const match=content.match(/<!--ai-(agent-run|generation-job):([^|>]+)\|(failed|timed_out|cancelled)(?:\|[^>]*)?-->/);return match?{runtime:match[1],id:match[2]}:null}
-function executionResultNotice(output?:AgentRunOutput){const response=output?.tool_result?.response?.trim();return response?`执行结果：${response}`:""}
 function delay(milliseconds:number){return new Promise(resolve=>setTimeout(resolve,milliseconds))}

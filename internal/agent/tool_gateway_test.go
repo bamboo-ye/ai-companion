@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/chattool"
+	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/skill"
@@ -256,6 +257,30 @@ func TestToolGatewayRejectsExpiredTokenAndMalformedRunInput(t *testing.T) {
 		CallKey: "run-2:prepare", ToolName: "life_query_today_plan", ExpectedRevision: 1,
 	}); !errors.Is(err, ErrValidation) {
 		t.Fatalf("malformed Prepare() error = %v, want ErrValidation", err)
+	}
+}
+
+func TestConfirmationSummaryOmitsInternalMetadata(t *testing.T) {
+	gateway, _ := newLedgerGateway(t)
+	prepared, err := gateway.prepareConfirmation(
+		Run{ID: "run-1", UserID: "user-1"},
+		ToolPrepareInput{CallKey: "prepare-1", ToolName: "work_create_markdown_document"},
+		conversation.ToolResult{Response: "等待确认"},
+		conversation.ToolConfirmation{
+			Kind: "skill_run", CandidateID: "skill-run-1",
+			Summary: "工具：office.markdown_document\n操作：等待确认\n<!--ai-skill-run:skill-run-1|1|waiting_confirmation-->",
+		},
+		"medium",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prepared.Summary, "<!--ai-") || prepared.Summary != "工具：office.markdown_document\n操作：等待确认" {
+		t.Fatalf("confirmation summary = %q", prepared.Summary)
+	}
+	claims, err := gateway.verifyToken(prepared.ConfirmationToken)
+	if err != nil || claims.Summary != prepared.Summary {
+		t.Fatalf("confirmation claims = %#v err=%v", claims, err)
 	}
 }
 

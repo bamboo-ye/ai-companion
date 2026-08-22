@@ -18,7 +18,7 @@ func TestIntentRouteAndMCPConfiguredCatalog(t *testing.T) {
 	token := registerSkillUser(t, server, "router-mcp@example.com", "router-mcp")
 
 	routed := performJSON(t, server, http.MethodPost, "/v1/intent/route", token, map[string]any{"text": "生成 8 页 PPT 给管理层", "page": "work"})
-	if routed.Code != http.StatusOK || !strings.Contains(routed.Body.String(), `"intent":"office"`) || !strings.Contains(routed.Body.String(), `"suggested_skill":"office.pptx_generate"`) || !strings.Contains(routed.Body.String(), `"risk_level":"medium"`) || !strings.Contains(routed.Body.String(), `"slide_count":8`) {
+	if routed.Code != http.StatusOK || !strings.Contains(routed.Body.String(), `"intent":"office"`) || !strings.Contains(routed.Body.String(), `"suggested_skill":"office.pptx_generate"`) || !strings.Contains(routed.Body.String(), `"risk_level":"none"`) || !strings.Contains(routed.Body.String(), `"slide_count":8`) {
 		t.Fatalf("route=%d %s", routed.Code, routed.Body.String())
 	}
 	invalid := performJSON(t, server, http.MethodPost, "/v1/intent/route", token, map[string]any{"text": ""})
