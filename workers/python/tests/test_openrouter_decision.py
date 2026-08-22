@@ -462,9 +462,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(port.requests[0]["tool_choice"], "required")
 
     def test_required_continuation_arguments_are_pinned_to_one_tool(self) -> None:
-        port = StubOpenRouter(
-            [tool_response("life_prepare_today_plan", '{"title":"查看邮件"}')]
-        )
+        port = StubOpenRouter([tool_response("life_prepare_today_plan", '{"title":"查看邮件"}')])
         life_context = {
             "history": [
                 {"role": "user", "content": "加入今日计划"},
@@ -574,7 +572,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "function": {"name": "work_create_markdown_document"},
             },
         )
-        self.assertEqual(port.requests[1]["max_tokens"], 4096)
+        self.assertEqual(port.requests[1]["max_tokens"], 8192)
 
     def test_email_composer_uses_profile_language_contract_and_quality_fallback(self) -> None:
         arguments = {
@@ -644,6 +642,58 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn(
             "english_language_contamination",
             port.requests[1]["messages"][0]["content"],
+        )
+
+    def test_presentation_composer_uses_quality_feedback_and_diverse_fallback(self) -> None:
+        arguments = {
+            "title": "体育课课程安排总览",
+            "audience": "学生",
+            "style": "表格",
+            "brief": "完整课程安排",
+            "slide_count": 5,
+            "table": {
+                "columns": ["课程代码", "课程名称", "上课时间"],
+                "rows": [
+                    {
+                        "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                        "source_locator": "page:1",
+                    }
+                ],
+            },
+        }
+        port = StubOpenRouter([tool_response("work_generate_pptx", json.dumps(arguments))])
+        presentation_context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            "artifact_validation": {
+                "passed": False,
+                "violations": [
+                    {
+                        "code": "structured_table_missing",
+                        "message": "必须提供表格",
+                    }
+                ],
+            },
+        }
+
+        composed = port.compose_arguments(
+            module="work",
+            message="整理所有体育课并生成中文 PPT",
+            tool_name="work_generate_pptx",
+            context=presentation_context,
+        )
+
+        self.assertIn("table", composed)
+        self.assertEqual(port.requests[0]["model"], "free/fallback")
+        self.assertIn(
+            "structured_table_missing",
+            port.requests[0]["messages"][0]["content"],
         )
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
@@ -944,9 +994,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(port.requests, [])
 
     def test_response_revision_only_includes_three_latest_observations(self) -> None:
-        port = StubOpenRouter(
-            [{"choices": [{"message": {"content": "已去除重复内容。"}}]}]
-        )
+        port = StubOpenRouter([{"choices": [{"message": {"content": "已去除重复内容。"}}]}])
         observations = [{"sequence": sequence} for sequence in range(5)]
 
         revised = port.revise_response(

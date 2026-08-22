@@ -237,8 +237,7 @@ class AgentRuntimeTest(unittest.TestCase):
         graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
         payload = agent_input("run-pptx-quality-failed", "work")
         payload["user_message"] = (
-            "整理所有课程代码和时间并生成中文PPT"
-            "\n<!--ai-document:doc-1|courses.pdf-->"
+            "整理所有课程代码和时间并生成中文PPT\n<!--ai-document:doc-1|courses.pdf-->"
         )
         result = AgentRuntime(graph).start(payload)
         self.assertEqual(result["outcome"], "artifact_quality_failed")
@@ -362,9 +361,7 @@ class AgentRuntimeTest(unittest.TestCase):
                 }
             },
         }
-        coverage = _document_source_coverage(
-            {"observations": [observation, dict(observation)]}
-        )
+        coverage = _document_source_coverage({"observations": [observation, dict(observation)]})
         self.assertEqual(coverage["selected_chunk_count"], 5)
         self.assertEqual(coverage["completed_rounds"], 1)
         self.assertEqual(coverage["coverage_ratio"], 0.5)
@@ -694,6 +691,129 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(decisions.compositions, 2)
         self.assertEqual(tools.prepared, [])
         self.assertIn("未通过", result["response"])
+
+    def test_presentation_quality_gate_rewrites_brief_only_payload_before_dispatch(
+        self,
+    ) -> None:
+        class PresentationDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(
+                    ModelDecision(
+                        intent="work_generate_pptx",
+                        tool_name="work_generate_pptx",
+                        requires_argument_composition=True,
+                    )
+                )
+                self.compositions = 0
+                self.validation_contexts: list[dict[str, Any]] = []
+
+            def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
+                self.compositions += 1
+                self.validation_contexts.append(
+                    dict(values["context"].get("artifact_validation", {}))
+                )
+                base = {
+                    "title": "体育课课程安排总览",
+                    "audience": "学生",
+                    "style": "清晰、规范",
+                    "brief": "整理课程代码、名称和上课时间",
+                    "slide_count": 5,
+                }
+                if self.compositions == 1:
+                    return base
+                return {
+                    **base,
+                    "table": {
+                        "columns": ["课程代码", "课程名称", "上课时间"],
+                        "rows": [
+                            {
+                                "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                                "source_locator": "page:1",
+                            }
+                        ],
+                    },
+                }
+
+        decisions = PresentationDecisions()
+        tools = FakeTools(
+            ToolPreparation(
+                status="completed",
+                tool_name="work_generate_pptx",
+                response="工作任务已执行完成。",
+                data={
+                    "kind": "skill_run",
+                    "id": "pptx-structured",
+                    "skill_name": "office.pptx_generate",
+                    "status": "succeeded",
+                    "output": {
+                        "outline": [
+                            {"page": 1, "title": "体育课课程安排总览"},
+                            {
+                                "page": 2,
+                                "title": "课程安排",
+                                "table": {
+                                    "columns": ["课程代码", "课程名称", "上课时间"],
+                                    "row_count": 1,
+                                    "source_locators": ["page:1"],
+                                },
+                            },
+                            {"page": 3, "title": "内容概览"},
+                        ],
+                        "quality_report": {
+                            "passed": True,
+                            "violations": [],
+                            "table_row_count": 1,
+                        },
+                        "source_coverage": {
+                            "coverage_ratio": 1.0,
+                            "truncated": False,
+                        },
+                    },
+                    "files": [{"name": "courses.pptx"}],
+                },
+            )
+        )
+        graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
+        payload = agent_input("run-presentation-quality-rewrite", "work")
+        payload["user_message"] = (
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        payload["context"]["tools"] = [
+            {
+                "name": "work_generate_pptx",
+                "description": "生成 PPTX",
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "required": ["title", "audience", "style", "brief", "slide_count"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                        "table": {"type": "object"},
+                        "task_contract": {"type": "object"},
+                        "source_coverage": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+
+        result = AgentRuntime(graph).start(payload)
+
+        self.assertEqual(result["outcome"], "completed")
+        self.assertEqual(decisions.compositions, 2)
+        self.assertEqual(len(tools.prepared), 1)
+        self.assertIn("table", tools.prepared[0]["arguments"])
+        self.assertEqual(result["presentation_rewrite_attempts"], 1)
+        self.assertTrue(result["presentation_validation"]["passed"])
+        self.assertIn(
+            "structured_table_missing",
+            {item["code"] for item in decisions.validation_contexts[1]["violations"]},
+        )
 
     def test_filename_failure_is_repaired_without_an_extra_model_call(self) -> None:
         class PresentationDecisions(FakeDecisions):

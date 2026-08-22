@@ -351,9 +351,7 @@ class OfficeToolsTest(unittest.TestCase):
 
         outline = execute("pptx_outline", payload)
         self.assertEqual(outline["files"], [])
-        self.assertEqual(
-            outline["output"]["title"], "Important Dates - Semester A 2026/27"
-        )
+        self.assertEqual(outline["output"]["title"], "Important Dates - Semester A 2026/27")
 
         presentation = execute("pptx_generate", payload)
         self.assertEqual(
@@ -409,6 +407,30 @@ class OfficeToolsTest(unittest.TestCase):
         )
         signatures = [json.dumps(item, sort_keys=True) for item in output["outline"][1:-1]]
         self.assertEqual(len(signatures), len(set(signatures)))
+
+    def test_pptx_structured_contract_rejects_brief_only_content(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课课程安排总览",
+                "audience": "学生",
+                "style": "清晰、规范",
+                "brief": "提取自课程表 PDF",
+                "slide_count": 10,
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "structured_table_missing",
+            {item["code"] for item in report["violations"]},
+        )
+        self.assertEqual(report["table_row_count"], 0)
 
     def test_pptx_exhaustive_source_rejects_incomplete_coverage(self) -> None:
         result = execute(
@@ -470,9 +492,7 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertFalse(result["output"]["source_overwritten"])
 
     def test_document_extract_limits_large_attachment_context_by_tokens(self) -> None:
-        text = "\n\n".join(
-            f"## Section {index}\n" + "证据" * 500 for index in range(20)
-        )
+        text = "\n\n".join(f"## Section {index}\n" + "证据" * 500 for index in range(20))
         result = execute(
             "document_extract",
             {

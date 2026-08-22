@@ -144,9 +144,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             slide.shapes.title.text = heading[:36]
             _add_table_slide(slide, table["columns"], rows)
             _style_slide(slide, title_color=RGBColor(72, 104, 183))
-            source_locators = list(
-                dict.fromkeys(row["source_locator"] for row in rows)
-            )
+            source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
             outline.append(
                 {
                     "page": len(outline) + 1,
@@ -306,8 +304,7 @@ def _document_context(parsed: ParseResult, token_budget: int) -> tuple[str, int,
         slots = max(2, min(len(chunks), content_budget // 600))
         indices = [0, len(chunks) - 1]
         indices.extend(
-            round(index * (len(chunks) - 1) / (slots - 1))
-            for index in range(1, slots - 1)
+            round(index * (len(chunks) - 1) / (slots - 1)) for index in range(1, slots - 1)
         )
         selected = []
         selected_tokens = 0
@@ -525,9 +522,7 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
     if base_url != "https://openrouter.ai/api/v1":
         raise ValueError("MODEL_BASE_URL_must_use_canonical_openrouter_endpoint")
     api_key = os.environ.get("MODEL_API_KEY", "").strip()
-    model = os.environ.get(
-        "MODEL_TRANSLATION_NAME", "openai/gpt-5-mini"
-    ).strip()
+    model = os.environ.get("MODEL_TRANSLATION_NAME", "openai/gpt-5-mini").strip()
     if not api_key or not model:
         raise ValueError("translation_model_is_not_configured")
     if _dynamic_model(model):
@@ -608,9 +603,7 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
     latency_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
     model_usage = {
         "provider": "openrouter",
-        "config_version": os.environ.get(
-            "MODEL_CONFIG_VERSION", "2026-08-bounded-fallback-v1"
-        ),
+        "config_version": os.environ.get("MODEL_CONFIG_VERSION", "2026-08-bounded-fallback-v1"),
         "requested_model": model,
         "returned_model": "",
         "upstream_provider": "",
@@ -1071,22 +1064,16 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
             cell.text = value
             cell.fill.solid()
             cell.fill.fore_color.rgb = (
-                RGBColor(238, 243, 255)
-                if row_index % 2 == 0
-                else RGBColor(255, 255, 255)
+                RGBColor(238, 243, 255) if row_index % 2 == 0 else RGBColor(255, 255, 255)
             )
             for paragraph in cell.text_frame.paragraphs:
                 paragraph.font.size = Pt(14 if len(rows) > 5 else 16)
                 paragraph.font.color.rgb = RGBColor(31, 41, 55)
     source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
-    footer = slide.shapes.add_textbox(
-        Inches(0.48), Inches(6.72), Inches(12.35), Inches(0.32)
-    )
+    footer = slide.shapes.add_textbox(Inches(0.48), Inches(6.72), Inches(12.35), Inches(0.32))
     footer_frame = footer.text_frame
     footer_frame.clear()
-    footer_frame.paragraphs[0].text = (
-        "来源：" + "；".join(source_locators)
-    )[:240]
+    footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:240]
     footer_frame.paragraphs[0].font.size = Pt(9)
     footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
 
@@ -1101,7 +1088,9 @@ def _presentation_quality_report(
 ) -> dict[str, Any]:
     violations: list[dict[str, Any]] = []
     if "表格" in style and not table:
-        violations.append({"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"})
+        violations.append(
+            {"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"}
+        )
     signatures = []
     for slide in outline[1:-1]:
         signature = json.dumps(slide, ensure_ascii=False, sort_keys=True)
@@ -1116,6 +1105,13 @@ def _presentation_quality_report(
         if source_coverage["truncated"] or source_coverage["coverage_ratio"] < 1:
             violations.append({"code": "source_coverage_incomplete", "message": "来源尚未完整处理"})
     requested_fields = task_contract.get("requested_fields")
+    if isinstance(requested_fields, list) and requested_fields and not table:
+        violations.append(
+            {
+                "code": "structured_table_missing",
+                "message": "结构化字段任务必须提供表格数据，不能只生成通用内容页",
+            }
+        )
     if table and isinstance(requested_fields, list):
         header_text = " ".join(table["columns"]).casefold()
         aliases = {
@@ -1128,7 +1124,11 @@ def _presentation_quality_report(
             candidates = aliases.get(str(field), (str(field),))
             if not any(candidate in header_text for candidate in candidates):
                 violations.append(
-                    {"code": "requested_field_missing", "field": field, "message": f"缺少字段：{field}"}
+                    {
+                        "code": "requested_field_missing",
+                        "field": field,
+                        "message": f"缺少字段：{field}",
+                    }
                 )
     if table and any(len(cell) > 120 for row in table["rows"] for cell in row["cells"]):
         violations.append(
@@ -1293,7 +1293,9 @@ def _tool_failure_for_exception(exc: Exception) -> dict[str, Any]:
         "code": code if len(code) <= 128 else "office_worker_failed",
         "category": "argument_validation" if isinstance(exc, ValueError) else "execution",
         "phase": "pre_execution" if isinstance(exc, ValueError) else "execution",
-        "message": "Office 工具参数无效。" if isinstance(exc, ValueError) else "Office 工具执行失败。",
+        "message": "Office 工具参数无效。"
+        if isinstance(exc, ValueError)
+        else "Office 工具执行失败。",
         "retry_same_input": False,
         "repairable": False,
         "side_effect_state": "none" if isinstance(exc, ValueError) else "unknown",

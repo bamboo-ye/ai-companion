@@ -5,7 +5,9 @@ import unittest
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
+    presentation_source_record_keys,
     validate_artifact_observation,
+    validate_presentation_arguments,
 )
 
 
@@ -21,6 +23,93 @@ class TaskQualityTests(unittest.TestCase):
         self.assertEqual(contract["artifact_types"], ["pptx"])
         self.assertEqual(contract["requested_fields"], ["code", "name", "time"])
         self.assertEqual(contract["output_language"], "zh-CN")
+
+    def test_structured_presentation_arguments_cannot_fall_back_to_brief_only(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "title": "体育课课程安排总览",
+                "audience": "学生",
+                "style": "清晰、规范",
+                "brief": "提取自课程表 PDF",
+                "slide_count": 10,
+            },
+            contract,
+        )
+        self.assertEqual(
+            {item["code"] for item in violations},
+            {"structured_table_missing"},
+        )
+
+    def test_structured_presentation_arguments_accept_grounded_rows(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        self.assertEqual(violations, [])
+
+    def test_exhaustive_code_table_must_cover_repeated_source_record_keys(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        observations = [
+            {
+                "tool_name": "work_extract_attached_document",
+                "data": {
+                    "output": {
+                        "text": (
+                            "PED1101 Canoeing T01 1000-1150\n"
+                            "PED 1204 Hip Hop T01 1500-1650\n"
+                            "PED1305 Physical Fitness T01 0900-0950\n"
+                            "LG3009 is a venue reference, not a repeated course family\n"
+                        )
+                    }
+                },
+            }
+        ]
+        expected = presentation_source_record_keys(observations, contract)
+        self.assertEqual(expected, ["PED1101", "PED1204", "PED1305"])
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        },
+                        {
+                            "cells": ["PED1204", "Hip Hop", "周一 15:00-16:50"],
+                            "source_locator": "page:1",
+                        },
+                    ],
+                }
+            },
+            contract,
+            expected_record_keys=expected,
+        )
+        missing = next(item for item in violations if item["code"] == "source_records_missing")
+        self.assertEqual(missing["expected_count"], 3)
+        self.assertEqual(missing["observed_count"], 2)
+        self.assertEqual(missing["missing_keys"], ["PED1305"])
 
     def test_generic_follow_up_inherits_artifact_goal_for_same_attachment(self) -> None:
         original = (
@@ -136,6 +225,36 @@ class TaskQualityTests(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertIn(
             "artifact_quality_report_missing",
+            {item["code"] for item in report["violations"]},
+        )
+
+    def test_pptx_quality_claim_cannot_hide_zero_structured_rows(self) -> None:
+        report = validate_artifact_observation(
+            {
+                "status": "succeeded",
+                "skill_name": "office.pptx_generate",
+                "files": [{"name": "courses.pptx"}],
+                "output": {
+                    "outline": [
+                        {"page": 1, "title": "课程总览"},
+                        {"page": 2, "title": "内容概览"},
+                    ],
+                    "quality_report": {
+                        "passed": True,
+                        "violations": [],
+                        "table_row_count": 0,
+                    },
+                    "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+                },
+            },
+            compile_task_contract(
+                "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+                "work",
+            ),
+        )
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "structured_table_missing",
             {item["code"] for item in report["violations"]},
         )
 
