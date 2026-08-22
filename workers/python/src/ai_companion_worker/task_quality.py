@@ -26,21 +26,17 @@ _ARTIFACT_SUFFIX_TYPES = {
 }
 
 
-def compile_task_contract(message: str, module: str) -> dict[str, Any]:
-    normalized = message.strip()
+def compile_task_contract(
+    message: str,
+    module: str,
+    history: Any = None,
+) -> dict[str, Any]:
+    current = message.strip()
+    normalized = _inherited_artifact_request(current, history)
+    source_document_ids = _document_ids(current) or _document_ids(normalized)
     visible = re.sub(r"<!--ai-document:[^>]+-->", "", normalized)
     lowered = visible.casefold()
-    artifact_types: list[str] = []
-    if re.search(r"(?:(?<![a-z0-9])pptx?(?![a-z0-9])|演示文稿|幻灯片)", lowered):
-        artifact_types.append("pptx")
-    if re.search(r"(?:(?<![a-z0-9])docx?(?![a-z0-9])|word\s*文档)", lowered):
-        artifact_types.append("docx")
-    if re.search(r"(?:(?<![a-z0-9])xlsx?(?![a-z0-9])|excel|电子表格)", lowered):
-        artifact_types.append("xlsx")
-    if re.search(r"(?<![a-z0-9])pdf(?![a-z0-9])", lowered):
-        artifact_types.append("pdf")
-    if re.search(r"(?:(?<![a-z0-9])markdown(?![a-z0-9])|(?<![a-z0-9])md(?![a-z0-9]))", lowered):
-        artifact_types.append("markdown")
+    artifact_types = _artifact_types(normalized)
 
     exhaustive = bool(
         re.search(r"(?:所有|全部|完整|逐一|每(?:一|门|项|条)|\ball\b|\bevery\b|\bcomplete\b)", lowered)
@@ -69,13 +65,112 @@ def compile_task_contract(message: str, module: str) -> dict[str, Any]:
         "module": module,
         "objective": normalized,
         "artifact_types": artifact_types,
-        "source_required": "<!--ai-document:" in normalized,
+        "source_document_ids": list(dict.fromkeys(source_document_ids)),
+        "source_required": "<!--ai-document:" in current or "<!--ai-document:" in normalized,
         "exhaustive": exhaustive,
         "requested_fields": requested_fields,
         "output_language": "zh-CN" if re.search(r"(?:中文|汉语|chinese)", lowered) else "",
         "hard_requirements": hard_requirements,
         "completion_policy": "all_hard_requirements_pass",
+        "inherited_from_history": normalized != current,
     }
+
+
+def task_contract_requires_artifact(task_contract: Mapping[str, Any]) -> bool:
+    artifact_types = task_contract.get("artifact_types")
+    return isinstance(artifact_types, list) and any(
+        isinstance(value, str) and bool(value.strip()) for value in artifact_types
+    )
+
+
+def task_contract_artifact_satisfied(
+    task_contract: Mapping[str, Any],
+    artifact_validation: Mapping[str, Any],
+) -> bool:
+    if not task_contract_requires_artifact(task_contract):
+        return True
+    return (
+        artifact_validation.get("applicable") is True and artifact_validation.get("passed") is True
+    )
+
+
+def _inherited_artifact_request(message: str, history: Any) -> str:
+    """Continue only an explicit artifact request bound to the same attachment.
+
+    This is deliberately narrower than general conversational goal inheritance:
+    a generic follow-up may recover requirements only from a prior user turn that
+    contains one of the exact trusted document markers present on the new turn.
+    """
+    if _artifact_types(message):
+        return message
+    document_ids = set(_document_ids(message))
+    if not isinstance(history, list):
+        return message
+    if not document_ids:
+        pending = _confirmed_pending_artifact_request(message, history)
+        return pending or message
+    for item in reversed(history):
+        if not isinstance(item, Mapping) or item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if not isinstance(content, str) or not document_ids.intersection(_document_ids(content)):
+            continue
+        if _artifact_types(content):
+            return content.strip()
+    return message
+
+
+def _confirmed_pending_artifact_request(message: str, history: list[Any]) -> str:
+    confirmation = re.sub(r"[\s，。！？!?.]", "", message)
+    if confirmation not in {"确认", "好的", "好", "开始", "继续", "可以"}:
+        return ""
+    if len(history) < 2:
+        return ""
+    assistant = history[-1]
+    user = history[-2]
+    if not isinstance(assistant, Mapping) or not isinstance(user, Mapping):
+        return ""
+    assistant_text = assistant.get("content")
+    user_text = user.get("content")
+    if (
+        assistant.get("role") != "assistant"
+        or user.get("role") != "user"
+        or not isinstance(assistant_text, str)
+        or not isinstance(user_text, str)
+        or "请确认" not in assistant_text
+        or "确认后" not in assistant_text
+        or not re.search(r"(?:附件|提取|文件)", assistant_text)
+        or not re.search(r"(?:生成|pptx?|演示文稿|幻灯片)", assistant_text, re.IGNORECASE)
+        or not _document_ids(user_text)
+        or not _artifact_types(user_text)
+    ):
+        return ""
+    return user_text.strip()
+
+
+def _document_ids(message: str) -> list[str]:
+    return [
+        value.strip()
+        for value in re.findall(r"<!--ai-document:([^|>]+)(?:\|[^>]*)?-->", message)
+        if value.strip()
+    ]
+
+
+def _artifact_types(message: str) -> list[str]:
+    visible = re.sub(r"<!--ai-document:[^>]+-->", "", message)
+    lowered = visible.casefold()
+    result: list[str] = []
+    patterns = (
+        ("pptx", r"(?:(?<![a-z0-9])pptx?(?![a-z0-9])|演示文稿|幻灯片)"),
+        ("docx", r"(?:(?<![a-z0-9])docx?(?![a-z0-9])|word\s*文档)"),
+        ("xlsx", r"(?:(?<![a-z0-9])xlsx?(?![a-z0-9])|excel|电子表格)"),
+        ("pdf", r"(?<![a-z0-9])pdf(?![a-z0-9])"),
+        ("markdown", r"(?:(?<![a-z0-9])markdown(?![a-z0-9])|(?<![a-z0-9])md(?![a-z0-9]))"),
+    )
+    for artifact_type, pattern in patterns:
+        if re.search(pattern, lowered):
+            result.append(artifact_type)
+    return result
 
 
 def validate_artifact_observation(

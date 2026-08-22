@@ -583,7 +583,7 @@ func (e *Executor) translatePDF(ctx context.Context, request conversation.ToolRe
 }
 
 func (e *Executor) extractAttachedDocument(ctx context.Context, request conversation.ToolRequest, arguments map[string]any) (conversation.ToolResult, error) {
-	documentIDs := chatattachment.DocumentIDs(request.Text)
+	documentIDs := attachmentDocumentIDs(request)
 	if len(documentIDs) == 0 {
 		return handled("work.document.extract", "请先上传一个需要读取的附件。", nil), nil
 	}
@@ -660,6 +660,38 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 		input["round_start"] = float64(roundStart)
 	}
 	return e.runSkillWithInput(ctx, request, "office.document_extract", input)
+}
+
+func attachmentDocumentIDs(request conversation.ToolRequest) []string {
+	documentIDs := chatattachment.DocumentIDs(request.Text)
+	if len(documentIDs) > 0 || !isExplicitWorkflowConfirmation(request.Text) || len(request.History) < 2 {
+		return documentIDs
+	}
+	assistant := request.History[len(request.History)-1]
+	user := request.History[len(request.History)-2]
+	if assistant.Role != "assistant" || user.Role != "user" ||
+		!isAttachmentWorkflowConfirmation(assistant.Content) {
+		return nil
+	}
+	return chatattachment.DocumentIDs(user.Content)
+}
+
+func isExplicitWorkflowConfirmation(text string) bool {
+	normalized := strings.TrimSpace(strings.NewReplacer(
+		"，", "", "。", "", "！", "", "？", "", "!", "", "?", "", ".", "",
+	).Replace(text))
+	switch normalized {
+	case "确认", "好的", "好", "开始", "继续", "可以":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAttachmentWorkflowConfirmation(text string) bool {
+	return strings.Contains(text, "请确认") && strings.Contains(text, "确认后") &&
+		containsAny(text, "附件", "提取", "文件") &&
+		containsAny(strings.ToLower(text), "生成", "ppt", "演示文稿", "幻灯片")
 }
 
 func (e *Executor) recordLedger(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {

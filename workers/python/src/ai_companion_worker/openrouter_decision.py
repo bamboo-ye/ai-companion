@@ -496,13 +496,15 @@ class OpenRouterDecisionPort:
         )
         actionable = [item for item in definitions if not _is_no_tool(item["name"])]
         no_tool_definitions = [item for item in definitions if _is_no_tool(item["name"])]
+        artifact_pending = _artifact_goal_pending(context)
+        forced_artifact_tool = _required_artifact_tool(context, actionable)
         observed_response = _latest_observation_response(context)
         if module == "life" and observed_response:
             return ModelDecision(
                 intent="life_no_tool",
                 response=observed_response,
             )
-        if not actionable and observed_response:
+        if not actionable and observed_response and not artifact_pending:
             return ModelDecision(
                 intent=f"{module}_no_tool",
                 response=observed_response,
@@ -536,7 +538,9 @@ class OpenRouterDecisionPort:
                     tool_arguments={},
                 )
         routing_definitions = (
-            [item for item in actionable if item["name"] == continuation_tool]
+            [item for item in actionable if item["name"] == forced_artifact_tool]
+            if forced_artifact_tool
+            else [item for item in actionable if item["name"] == continuation_tool]
             if continuation_tool
             else [*actionable, *no_tool_definitions]
             if structured_life_routing
@@ -559,6 +563,8 @@ class OpenRouterDecisionPort:
                     "若用户要基于附件创建新产物，而观察中还没有附件正文，先调用附件提取工具。"
                     "附件提取观察若 has_more=true，必须继续调用同一提取工具并把 next_round"
                     "作为 round_start；完整性任务在 coverage_ratio 达到 1 前不得生成最终文件。"
+                    "用户已经明确要求生成风险为 none 的文件时，不得再次询问语言、风格或"
+                    "版式确认；使用用户指定值或安全默认值直接完成。"
                     "观察已经满足目标时直接依据观察回答，不得重复调用成功的非 repeatable 工具。"
                     "不得编造参数、项目数据、附件内容或业务结果。"
                 ),
@@ -606,11 +612,11 @@ class OpenRouterDecisionPort:
                 "tool_choice": (
                     {
                         "type": "function",
-                        "function": {"name": continuation_tool},
+                        "function": {"name": forced_artifact_tool or continuation_tool},
                     }
-                    if continuation_tool
+                    if forced_artifact_tool or continuation_tool
                     else "required"
-                    if structured_life_routing
+                    if structured_life_routing or artifact_pending
                     else "auto"
                 ),
                 "max_tokens": self._config.max_tokens,
@@ -624,7 +630,7 @@ class OpenRouterDecisionPort:
             max_attempts=max_attempts,
             allow_direct=(
                 False
-                if structured_life_routing
+                if structured_life_routing or artifact_pending
                 else _direct_response_allowed(module, routing_message, context)
             ),
         )
@@ -945,7 +951,7 @@ class OpenRouterDecisionPort:
     ) -> str:
         role = "companion_responder" if module == "companion" else "responder"
         observations = context.get("observations", [])
-        trusted_observations = observations[-3:] if isinstance(observations, list) else []
+        trusted_observations = _compact_revision_observations(observations)
         payload = self._base_payload(role)
         payload.update(
             {
@@ -1654,6 +1660,8 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
         "user_request": message,
         "agent_plan": context.get("agent_plan", {}),
         "task_contract": context.get("task_contract", {}),
+        "artifact_validation": context.get("artifact_validation", {}),
+        "source_coverage": context.get("source_coverage", {}),
         "completed_observations": observations[-6:],
         "next_action_number": int(context.get("action_index", 0)) + 1,
         "email_profile": context.get("email_profile", {}),
@@ -2203,11 +2211,93 @@ def _latest_email_quality(context: Mapping[str, Any]) -> bool | None:
     return isinstance(quality, dict) and quality.get("passed") is True
 
 
+def _artifact_goal_pending(context: Mapping[str, Any]) -> bool:
+    task_contract = context.get("task_contract")
+    if not isinstance(task_contract, Mapping):
+        return False
+    artifact_types = task_contract.get("artifact_types")
+    requires_artifact = isinstance(artifact_types, list) and any(
+        isinstance(value, str) and bool(value.strip()) for value in artifact_types
+    )
+    if not requires_artifact:
+        return False
+    validation = context.get("artifact_validation")
+    return not (
+        isinstance(validation, Mapping)
+        and validation.get("applicable") is True
+        and validation.get("passed") is True
+    )
+
+
+def _required_artifact_tool(
+    context: Mapping[str, Any],
+    actionable: list[dict[str, Any]],
+) -> str:
+    if not _artifact_goal_pending(context):
+        return ""
+    names = {str(item.get("name") or "") for item in actionable}
+    contract = context.get("task_contract")
+    if not isinstance(contract, Mapping):
+        return ""
+    if contract.get("source_required") is True:
+        coverage = context.get("source_coverage")
+        source_complete = (
+            isinstance(coverage, Mapping)
+            and coverage.get("coverage_ratio") == 1
+            and coverage.get("truncated") is False
+        )
+        if not source_complete and "work_extract_attached_document" in names:
+            return "work_extract_attached_document"
+    artifact_types = contract.get("artifact_types")
+    requested = (
+        {
+            str(value).strip().casefold()
+            for value in artifact_types
+            if isinstance(value, str) and value.strip()
+        }
+        if isinstance(artifact_types, list)
+        else set()
+    )
+    for artifact_type, tool_name in (
+        ("pptx", "work_generate_pptx"),
+        ("markdown", "work_create_markdown_document"),
+    ):
+        if artifact_type in requested and tool_name in names:
+            return tool_name
+    return ""
+
+
+def _compact_revision_observations(observations: Any) -> list[Any]:
+    if not isinstance(observations, list):
+        return []
+    result: list[Any] = []
+    for item in observations[-3:]:
+        if not isinstance(item, Mapping):
+            result.append(item)
+            continue
+        compact = dict(item)
+        data = compact.get("data")
+        if isinstance(data, Mapping):
+            compact_data = dict(data)
+            output = compact_data.get("output")
+            if isinstance(output, Mapping):
+                compact_output = dict(output)
+                text = compact_output.get("text")
+                if isinstance(text, str) and len(text) > 8_000:
+                    compact_output["text"] = text[:8_000] + "\n[[CONTEXT_TRUNCATED]]"
+                compact_data["output"] = compact_output
+            compact["data"] = compact_data
+        result.append(compact)
+    return result
+
+
 def _direct_response_allowed(
     module: ModuleKey,
     message: str,
     context: Mapping[str, Any],
 ) -> bool:
+    if _artifact_goal_pending(context):
+        return False
     if _latest_observation_response(context):
         return True
     lowered = message.casefold()
