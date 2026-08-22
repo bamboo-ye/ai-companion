@@ -965,6 +965,33 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(port.requests[0]["temperature"], 0)
 
+    def test_empty_response_revision_uses_bounded_fallback(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": ""}}]},
+                {"choices": [{"message": {"content": "已由备用模型完成修复。"}}]},
+            ]
+        )
+        revised = port.revise_response(
+            module="work",
+            message="修复重复内容",
+            response="重复内容",
+            violations=[{"code": "near_duplicate_paragraph"}],
+            context={
+                "model_allowance": {
+                    "remaining_calls": 2,
+                    "remaining_prompt_tokens": 100_000,
+                    "remaining_completion_tokens": 4_096,
+                    "remaining_cost_micros": 1_000_000,
+                }
+            },
+        )
+        self.assertEqual(revised, "已由备用模型完成修复。")
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback"],
+        )
+
     def test_config_rejects_non_finite_price_ceiling(self) -> None:
         with self.assertRaisesRegex(ValueError, "max prices"):
             OpenRouterConfig(
@@ -1174,6 +1201,89 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             offered["properties"]["attachment_index"]["enum"],
             [2],
         )
+
+    def test_pending_ppt_goal_forces_extract_then_generate(self) -> None:
+        port = StubOpenRouter(
+            [
+                tool_response(
+                    "work_extract_attached_document",
+                    '{"attachment_index":1,"round_start":1}',
+                ),
+                tool_response("work_generate_pptx"),
+            ]
+        )
+        tools = [
+            {
+                "name": "work_extract_attached_document",
+                "description": "提取附件",
+                "parameters": {
+                    "type": "object",
+                    "required": ["attachment_index", "round_start"],
+                    "properties": {
+                        "attachment_index": {"type": "integer", "minimum": 1, "maximum": 1},
+                        "round_start": {"type": "integer", "minimum": 1, "maximum": 100},
+                    },
+                },
+                "repeatable": True,
+                "identity_fields": ["attachment_index", "round_start"],
+            },
+            {
+                "name": "work_generate_pptx",
+                "description": "生成 PPTX",
+                "compose_arguments": True,
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "work_no_tool",
+                "description": "结束",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+        task_contract = {
+            "artifact_types": ["pptx"],
+            "source_required": True,
+        }
+        first = port.decide(
+            module="work",
+            message="确认",
+            context={
+                "tools": tools,
+                "task_contract": task_contract,
+                "artifact_validation": {},
+                "source_coverage": {"coverage_ratio": 0.0, "truncated": True},
+            },
+        )
+        self.assertEqual(first.tool_name, "work_extract_attached_document")
+        self.assertEqual(
+            port.requests[0]["tool_choice"]["function"]["name"],
+            "work_extract_attached_document",
+        )
+        self.assertEqual(len(port.requests[0]["tools"]), 1)
+
+        second = port.decide(
+            module="work",
+            message="确认",
+            context={
+                "tools": tools,
+                "task_contract": task_contract,
+                "artifact_validation": {},
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+                "observations": [
+                    {
+                        "tool_name": "work_extract_attached_document",
+                        "arguments": {"attachment_index": 1, "round_start": 1},
+                        "status": "succeeded",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(second.tool_name, "work_generate_pptx")
+        self.assertTrue(second.requires_argument_composition)
+        self.assertEqual(
+            port.requests[1]["tool_choice"]["function"]["name"],
+            "work_generate_pptx",
+        )
+        self.assertEqual(len(port.requests[1]["tools"]), 1)
 
     def test_goal_assessment_marks_completed_email_draft_terminal(self) -> None:
         port = StubOpenRouter(

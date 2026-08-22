@@ -270,6 +270,75 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(result["outcome"], "completed")
         self.assertTrue(result["artifact_validation"]["passed"])
 
+    def test_text_response_cannot_complete_an_explicit_artifact_goal(self) -> None:
+        graph = build_graph(
+            checkpointer=InMemorySaver(),
+            decisions=FakeDecisions(
+                ModelDecision(intent="work_no_tool", response="课程已经整理完成。")
+            ),
+            tools=FakeTools(ToolPreparation(status="completed", tool_name="", response="")),
+        )
+        payload = agent_input("run-artifact-missing", "work")
+        payload["user_message"] = "整理全部体育课并生成中文 PPT"
+        result = AgentRuntime(graph).start(payload)
+        self.assertEqual(result["outcome"], "artifact_missing")
+        self.assertIn("尚未产出", result["response"])
+
+    def test_response_revision_failure_remains_terminal(self) -> None:
+        class FailedRevisionDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(
+                    ModelDecision(
+                        intent="work_no_tool",
+                        response=(
+                            "体育课程已经完成整理，包含课程名称、上课时间和课程代码。\n\n"
+                            "体育课程已经完成整理，包含课程名称、上课时间以及课程代码。"
+                        ),
+                    )
+                )
+                self.events: list[dict[str, Any]] = []
+
+            def consume_observability(self) -> list[dict[str, Any]]:
+                events, self.events = self.events, []
+                return events
+
+            def revise_response(self, **_values: Any) -> str:
+                self.events.append(
+                    {
+                        "kind": "model_call",
+                        "role": "responder",
+                        "status": "succeeded",
+                        "prompt_tokens": 100,
+                        "completion_tokens": 1024,
+                        "reasoning_tokens": 1024,
+                        "cost_micros": 5,
+                        "error_status": 0,
+                        "retryable": False,
+                    }
+                )
+                raise RuntimeError("empty revised response")
+
+        decisions = FailedRevisionDecisions()
+        graph = build_graph(
+            checkpointer=InMemorySaver(),
+            decisions=decisions,
+            tools=FakeTools(ToolPreparation(status="completed", tool_name="", response="")),
+        )
+        payload = agent_input("run-revision-terminal", "work")
+        payload["user_message"] = "请总结课程信息"
+        result = AgentRuntime(graph).start(payload)
+        self.assertEqual(result["outcome"], "model_invalid_response")
+        self.assertIn("未通过节点契约", result["response"])
+        revise_index = next(
+            index
+            for index, item in enumerate(result["node_trace"])
+            if item["node"] == "revise_response"
+        )
+        self.assertNotIn(
+            "response_quality_gate",
+            [item["node"] for item in result["node_trace"][revise_index + 1 :]],
+        )
+
     def test_document_coverage_deduplicates_retried_round_windows(self) -> None:
         observation = {
             "tool_name": "work_extract_attached_document",
@@ -299,6 +368,36 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(coverage["selected_chunk_count"], 5)
         self.assertEqual(coverage["completed_rounds"], 1)
         self.assertEqual(coverage["coverage_ratio"], 0.5)
+
+    def test_document_coverage_waits_for_every_bound_attachment(self) -> None:
+        coverage = _document_source_coverage(
+            {
+                "task_contract": {
+                    "source_required": True,
+                    "source_document_ids": ["doc-1", "doc-2"],
+                },
+                "observations": [
+                    {
+                        "tool_name": "work_extract_attached_document",
+                        "arguments": {"attachment_index": 1},
+                        "data": {
+                            "output": {
+                                "selected_chunk_count": 4,
+                                "total_chunk_count": 4,
+                                "completed_rounds": 1,
+                                "round_count": 1,
+                                "round_start": 1,
+                                "next_round": 0,
+                            }
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertEqual(coverage["coverage_ratio"], 0.5)
+        self.assertTrue(coverage["truncated"])
+        self.assertEqual(coverage["completed_attachment_count"], 1)
+        self.assertEqual(coverage["expected_attachment_count"], 2)
         self.assertTrue(coverage["truncated"])
 
     def test_tool_schema_rejects_non_finite_values_and_unsupported_keywords(self) -> None:

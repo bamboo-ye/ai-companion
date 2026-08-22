@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.7.0"
+GRAPH_VERSION = "3.8.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -180,7 +180,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         kind="model",
         model_role="responder",
         recovery="checkpoint_replay",
-        max_model_calls=1,
+        max_model_calls=2,
         allowed_writes=(
             *_MODEL_CONTROL_WRITES,
             "response_validation",

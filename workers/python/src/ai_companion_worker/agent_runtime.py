@@ -26,6 +26,7 @@ from ai_companion_worker.response_quality import inspect_and_repair_response
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
+    task_contract_artifact_satisfied,
     validate_artifact_observation,
 )
 from ai_companion_worker.agent_governance import (
@@ -673,7 +674,11 @@ def _supervise(
         "pending_task_id": "",
         "task_polls": 0,
         "assessment": {},
-        "task_contract": compile_task_contract(state["user_message"], state["module"]),
+        "task_contract": compile_task_contract(
+            state["user_message"],
+            state["module"],
+            context.get("history") if isinstance(context, dict) else None,
+        ),
         "artifact_validation": {},
         "needs_response": False,
         "node_contracts": node_contract_manifest(),
@@ -1093,6 +1098,8 @@ def build_graph(
         decision_context["observations"] = list(state.get("observations", []))
         decision_context["action_index"] = state.get("action_index", 0)
         decision_context["task_contract"] = dict(state.get("task_contract", {}))
+        decision_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
+        decision_context["source_coverage"] = _document_source_coverage(state)
         try:
             decision = decisions.decide(
                 module=state["module"],
@@ -1524,6 +1531,26 @@ def build_graph(
         report = dict(inspected.report)
         attempts = int(state.get("response_rewrite_attempts", 0))
         report["rewrite_attempt"] = attempts
+        prior_outcome = str(state.get("outcome") or "")
+        if prior_outcome and prior_outcome != "completed":
+            return {
+                "response": inspected.response,
+                "response_validation": report,
+                "outcome": prior_outcome,
+                "node_trace": [
+                    *state.get("node_trace", []),
+                    _trace_event(
+                        "response_quality_gate",
+                        "skipped",
+                        started_ns=started_ns,
+                        details={
+                            "reason": "terminal_outcome_preserved",
+                            "outcome": prior_outcome,
+                        },
+                    ),
+                ],
+                "steps": state.get("steps", 0) + 1,
+            }
         if report.get("passed") is True:
             return {
                 "response": inspected.response,
@@ -1600,6 +1627,12 @@ def build_graph(
         ):
             return "revise_response"
         return "finalize"
+
+    def after_response_revision(state: AgentState) -> str:
+        outcome = str(state.get("outcome") or "")
+        if outcome and outcome != "completed":
+            return "finalize"
+        return "response_quality_gate"
 
     def revise_response(state: AgentState) -> dict[str, Any]:
         node = "revise_response"
@@ -2510,6 +2543,15 @@ def build_graph(
 
     def after_assessment(state: AgentState) -> str:
         status = state.get("assessment", {}).get("status")
+        if (
+            status in ("completed", "continue")
+            and not task_contract_artifact_satisfied(
+                state.get("task_contract", {}),
+                state.get("artifact_validation", {}),
+            )
+            and state.get("action_index", 0) < state.get("action_budget", policy.max_actions)
+        ):
+            return "continue_action"
         return "continue_action" if status == "continue" else "finalize"
 
     def wait_task(state: AgentState) -> dict[str, Any]:
@@ -2640,6 +2682,11 @@ def build_graph(
         ):
             outcome = "artifact_quality_failed"
             response = "生成文件未通过任务完整性与制品质量门禁，已停止交付不合格结果。"
+        elif outcome in ("", "completed") and not task_contract_artifact_satisfied(
+            state.get("task_contract", {}), artifact_validation
+        ):
+            outcome = "artifact_missing"
+            response = "任务要求的生成文件尚未产出并通过质量门禁，已停止文字结果提前收尾。"
         return {
             "outcome": outcome,
             "response": response,
@@ -2758,7 +2805,14 @@ def build_graph(
             "finalize": "finalize",
         },
     )
-    builder.add_edge("revise_response", "response_quality_gate")
+    builder.add_conditional_edges(
+        "revise_response",
+        after_response_revision,
+        {
+            "response_quality_gate": "response_quality_gate",
+            "finalize": "finalize",
+        },
+    )
     builder.add_conditional_edges(
         "prepare_tool",
         after_prepare,
@@ -2970,10 +3024,17 @@ def _document_source_coverage(state: AgentState) -> dict[str, Any]:
             )
             reports.append((attachment_index, output))
     if not reports:
-        source_required = state.get("task_contract", {}).get("source_required") is True
+        task_contract = state.get("task_contract", {})
+        source_required = task_contract.get("source_required") is True
+        source_document_ids = task_contract.get("source_document_ids")
+        expected_attachments = (
+            len(source_document_ids) if isinstance(source_document_ids, list) else 0
+        )
         return {
             "coverage_ratio": 0.0 if source_required else 1.0,
             "truncated": source_required,
+            "completed_attachment_count": 0,
+            "expected_attachment_count": expected_attachments,
             "completed_rounds": 0,
             "round_count": 0,
             "selected_chunk_count": 0,
@@ -3033,10 +3094,22 @@ def _document_source_coverage(state: AgentState) -> dict[str, Any]:
         for item in attachments.values()
     )
     total_chunks = sum(item["total"] for item in attachments.values())
-    coverage_ratio = selected_chunks / total_chunks if total_chunks else 0.0
+    chunk_coverage_ratio = selected_chunks / total_chunks if total_chunks else 0.0
+    source_document_ids = state.get("task_contract", {}).get("source_document_ids")
+    expected_attachments = (
+        len(source_document_ids) if isinstance(source_document_ids, list) else 0
+    )
+    attachment_coverage_ratio = (
+        min(1.0, len(attachments) / expected_attachments)
+        if expected_attachments > 0
+        else 1.0
+    )
+    coverage_ratio = chunk_coverage_ratio * attachment_coverage_ratio
     return {
         "coverage_ratio": coverage_ratio,
-        "truncated": selected_chunks < total_chunks,
+        "truncated": selected_chunks < total_chunks or attachment_coverage_ratio < 1,
+        "completed_attachment_count": len(attachments),
+        "expected_attachment_count": expected_attachments,
         "completed_rounds": sum(
             len(item["round_nos"]) + item["fallback_rounds"]
             for item in attachments.values()

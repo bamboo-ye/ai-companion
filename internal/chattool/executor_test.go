@@ -1155,6 +1155,25 @@ func TestWorkAttachmentExtractionCreatesIndependentTaskPerAttachment(t *testing.
 	}
 }
 
+func TestAttachmentConfirmationReusesOnlyImmediatePendingDocument(t *testing.T) {
+	documentID := "00000000-0000-0000-0000-000000000091"
+	original := chatattachment.AppendDocument("请整理课程并生成 PPT", documentID, "courses.pdf")
+	request := conversation.ToolRequest{
+		Text: "确认",
+		History: []conversation.Message{
+			{Role: "user", Content: original},
+			{Role: "assistant", Content: "请确认附件提取和 PPT 生成范围，确认后我就开始。"},
+		},
+	}
+	if ids := attachmentDocumentIDs(request); len(ids) != 1 || ids[0] != documentID {
+		t.Fatalf("pending attachment IDs = %#v", ids)
+	}
+	request.History[1].Content = "请确认是否继续聊天。"
+	if ids := attachmentDocumentIDs(request); len(ids) != 0 {
+		t.Fatalf("unrelated confirmation reused attachments: %#v", ids)
+	}
+}
+
 func TestWorkAttachmentExtractionReusesReadyParsedChunks(t *testing.T) {
 	ctx := context.Background()
 	documentStore := document.NewMemoryStore()

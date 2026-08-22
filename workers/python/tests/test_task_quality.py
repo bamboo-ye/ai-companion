@@ -22,6 +22,49 @@ class TaskQualityTests(unittest.TestCase):
         self.assertEqual(contract["requested_fields"], ["code", "name", "time"])
         self.assertEqual(contract["output_language"], "zh-CN")
 
+    def test_generic_follow_up_inherits_artifact_goal_for_same_attachment(self) -> None:
+        original = (
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        contract = compile_task_contract(
+            "请处理这个文件\n<!--ai-document:doc-1|courses.pdf-->",
+            "work",
+            [{"role": "user", "content": original}],
+        )
+        self.assertTrue(contract["inherited_from_history"])
+        self.assertEqual(contract["artifact_types"], ["pptx"])
+        self.assertEqual(contract["requested_fields"], ["code", "name", "time"])
+        self.assertTrue(contract["exhaustive"])
+
+    def test_explicit_confirmation_inherits_only_immediate_pending_attachment_goal(self) -> None:
+        original = "整理所有体育课并用中文PPT展示\n<!--ai-document:doc-1|courses.pdf-->"
+        contract = compile_task_contract(
+            "确认",
+            "work",
+            [
+                {"role": "user", "content": original},
+                {
+                    "role": "assistant",
+                    "content": "请确认以上附件提取和 PPT 生成范围，确认后我就开始。",
+                },
+            ],
+        )
+        self.assertTrue(contract["inherited_from_history"])
+        self.assertTrue(contract["source_required"])
+        self.assertEqual(contract["artifact_types"], ["pptx"])
+
+        unrelated = compile_task_contract(
+            "确认",
+            "work",
+            [
+                {"role": "user", "content": original},
+                {"role": "assistant", "content": "请确认是否继续聊天。"},
+            ],
+        )
+        self.assertFalse(unrelated["inherited_from_history"])
+        self.assertEqual(unrelated["artifact_types"], [])
+
     def test_pptx_file_without_quality_report_is_not_complete(self) -> None:
         report = validate_artifact_observation(
             {
