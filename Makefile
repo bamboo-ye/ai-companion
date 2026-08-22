@@ -862,16 +862,16 @@ infra-config: ## Validate the Compose model
 	docker compose --env-file .env.example -f deploy/compose/compose.yml config --quiet
 
 docker-up: ## Build and start the complete Docker application stack
-	docker compose --profile app --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
+	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
 
 docker-down: ## Stop the complete Docker application stack
-	docker compose --profile app --env-file $(ENV_FILE) -f deploy/compose/compose.yml down
+	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml down
 
-docker-logs: ## Follow API, Worker and Web container logs
-	docker compose --profile app --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f api worker web
+docker-logs: ## Follow API, Worker, Agent Worker and Web container logs
+	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f api worker agent-worker web
 
 docker-ps: ## Show complete Docker application status
-	docker compose --profile app --env-file $(ENV_FILE) -f deploy/compose/compose.yml ps
+	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml ps
 
 release-check: ## Run backend release-readiness static gates
 	GOCACHE=$(GOCACHE) go test ./...

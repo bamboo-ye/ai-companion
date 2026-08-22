@@ -107,7 +107,7 @@ def _inherited_artifact_request(message: str, history: Any) -> str:
     if not isinstance(history, list):
         return message
     if not document_ids:
-        pending = _confirmed_pending_artifact_request(message, history)
+        pending = _pending_artifact_request(message, history)
         return pending or message
     for item in reversed(history):
         if not isinstance(item, Mapping) or item.get("role") != "user":
@@ -120,9 +120,8 @@ def _inherited_artifact_request(message: str, history: Any) -> str:
     return message
 
 
-def _confirmed_pending_artifact_request(message: str, history: list[Any]) -> str:
-    confirmation = re.sub(r"[\s，。！？!?.]", "", message)
-    if confirmation not in {"确认", "好的", "好", "开始", "继续", "可以"}:
+def _pending_artifact_request(message: str, history: list[Any]) -> str:
+    if not _is_artifact_workflow_followup(message):
         return ""
     if len(history) < 2:
         return ""
@@ -145,7 +144,24 @@ def _confirmed_pending_artifact_request(message: str, history: list[Any]) -> str
         or not _artifact_types(user_text)
     ):
         return ""
-    return user_text.strip()
+    supplement = message.strip()
+    return user_text.strip() + (f"\n补充要求：{supplement}" if supplement else "")
+
+
+def _is_artifact_workflow_followup(message: str) -> bool:
+    normalized = re.sub(r"[\s，。！？!?.]", "", message)
+    if not normalized or len(normalized) > 200:
+        return False
+    if re.search(r"(?:取消|停止|不用|不做|算了|换个|另外|无关)", normalized):
+        return False
+    if normalized in {"确认", "好的", "好", "开始", "继续", "可以"}:
+        return True
+    return bool(
+        re.search(
+            r"(?:表格|逐条|合并|简洁|图标|分组|分类|排序|每页|中文|英文|动画|版式|样式|横版|竖版)",
+            normalized,
+        )
+    )
 
 
 def _document_ids(message: str) -> list[str]:

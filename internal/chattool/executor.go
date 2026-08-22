@@ -664,7 +664,7 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 
 func attachmentDocumentIDs(request conversation.ToolRequest) []string {
 	documentIDs := chatattachment.DocumentIDs(request.Text)
-	if len(documentIDs) > 0 || !isExplicitWorkflowConfirmation(request.Text) || len(request.History) < 2 {
+	if len(documentIDs) > 0 || !isArtifactWorkflowContinuation(request.Text) || len(request.History) < 2 {
 		return documentIDs
 	}
 	assistant := request.History[len(request.History)-1]
@@ -674,6 +674,19 @@ func attachmentDocumentIDs(request conversation.ToolRequest) []string {
 		return nil
 	}
 	return chatattachment.DocumentIDs(user.Content)
+}
+
+func isArtifactWorkflowContinuation(text string) bool {
+	normalized := strings.TrimSpace(text)
+	if normalized == "" || len([]rune(normalized)) > 200 ||
+		containsAny(normalized, "取消", "停止", "不用", "不做", "算了", "换个", "另外", "无关") {
+		return false
+	}
+	return isExplicitWorkflowConfirmation(normalized) || containsAny(
+		strings.ToLower(normalized),
+		"表格", "逐条", "合并", "简洁", "图标", "分组", "分类", "排序", "每页",
+		"中文", "英文", "动画", "版式", "样式", "横版", "竖版",
+	)
 }
 
 func isExplicitWorkflowConfirmation(text string) bool {
