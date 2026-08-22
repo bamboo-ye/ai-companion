@@ -667,13 +667,29 @@ func attachmentDocumentIDs(request conversation.ToolRequest) []string {
 	if len(documentIDs) > 0 || !isArtifactWorkflowContinuation(request.Text) || len(request.History) < 2 {
 		return documentIDs
 	}
-	assistant := request.History[len(request.History)-1]
-	user := request.History[len(request.History)-2]
-	if assistant.Role != "assistant" || user.Role != "user" ||
-		!isAttachmentWorkflowConfirmation(assistant.Content) {
+	user, ok := pendingAttachmentRequest(request.History)
+	if !ok {
 		return nil
 	}
 	return chatattachment.DocumentIDs(user.Content)
+}
+
+func pendingAttachmentRequest(history []conversation.Message) (conversation.Message, bool) {
+	if len(history) < 2 {
+		return conversation.Message{}, false
+	}
+	assistant := history[len(history)-1]
+	user := history[len(history)-2]
+	if assistant.Role == "assistant" && strings.Contains(assistant.Content, "请先上传一个需要读取的附件") &&
+		user.Role == "user" && isArtifactWorkflowContinuation(user.Content) && len(history) >= 4 {
+		assistant = history[len(history)-3]
+		user = history[len(history)-4]
+	}
+	if assistant.Role != "assistant" || user.Role != "user" ||
+		!isAttachmentWorkflowConfirmation(assistant.Content) {
+		return conversation.Message{}, false
+	}
+	return user, true
 }
 
 func isArtifactWorkflowContinuation(text string) bool {

@@ -127,6 +127,18 @@ def _pending_artifact_request(message: str, history: list[Any]) -> str:
         return ""
     assistant = history[-1]
     user = history[-2]
+    inherited_supplements: list[str] = []
+    if (
+        _is_missing_attachment_reply(assistant)
+        and isinstance(user, Mapping)
+        and user.get("role") == "user"
+        and isinstance(user.get("content"), str)
+        and _is_artifact_workflow_followup(str(user["content"]))
+        and len(history) >= 4
+    ):
+        inherited_supplements.append(str(user["content"]).strip())
+        assistant = history[-3]
+        user = history[-4]
     if not isinstance(assistant, Mapping) or not isinstance(user, Mapping):
         return ""
     assistant_text = assistant.get("content")
@@ -136,16 +148,35 @@ def _pending_artifact_request(message: str, history: list[Any]) -> str:
         or user.get("role") != "user"
         or not isinstance(assistant_text, str)
         or not isinstance(user_text, str)
-        or "请确认" not in assistant_text
-        or "确认后" not in assistant_text
-        or not re.search(r"(?:附件|提取|文件)", assistant_text)
-        or not re.search(r"(?:生成|pptx?|演示文稿|幻灯片)", assistant_text, re.IGNORECASE)
+        or not _is_attachment_workflow_confirmation(assistant_text)
         or not _document_ids(user_text)
         or not _artifact_types(user_text)
     ):
         return ""
     supplement = message.strip()
-    return user_text.strip() + (f"\n补充要求：{supplement}" if supplement else "")
+    if supplement and supplement not in inherited_supplements:
+        inherited_supplements.append(supplement)
+    return user_text.strip() + "".join(
+        f"\n补充要求：{value}" for value in inherited_supplements if value
+    )
+
+
+def _is_attachment_workflow_confirmation(text: str) -> bool:
+    return (
+        "请确认" in text
+        and "确认后" in text
+        and bool(re.search(r"(?:附件|提取|文件)", text))
+        and bool(re.search(r"(?:生成|pptx?|演示文稿|幻灯片)", text, re.IGNORECASE))
+    )
+
+
+def _is_missing_attachment_reply(item: Any) -> bool:
+    return (
+        isinstance(item, Mapping)
+        and item.get("role") == "assistant"
+        and isinstance(item.get("content"), str)
+        and "请先上传一个需要读取的附件" in str(item["content"])
+    )
 
 
 def _is_artifact_workflow_followup(message: str) -> bool:

@@ -101,6 +101,28 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertFalse(cancelled["inherited_from_history"])
 
+    def test_known_missing_attachment_reply_can_recover_original_bound_file(self) -> None:
+        original = (
+            "整理所有体育课的名称、上课时间和课程代码，并用中文ppt展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        contract = compile_task_contract(
+            "继续",
+            "work",
+            [
+                {"role": "user", "content": original},
+                {
+                    "role": "assistant",
+                    "content": "请确认附件提取和 PPT 生成范围，确认后我就开始。",
+                },
+                {"role": "user", "content": "合并成表格形式展示"},
+                {"role": "assistant", "content": "请先上传一个需要读取的附件。"},
+            ],
+        )
+        self.assertTrue(contract["inherited_from_history"])
+        self.assertEqual(contract["artifact_types"], ["pptx"])
+        self.assertIn("补充要求：合并成表格形式展示", contract["objective"])
+
     def test_pptx_file_without_quality_report_is_not_complete(self) -> None:
         report = validate_artifact_observation(
             {
