@@ -971,7 +971,7 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 			t.Fatalf("missing work model tool %q", expected)
 		}
 	}
-	if !extractor.Repeatable || len(extractor.IdentityFields) != 1 || extractor.IdentityFields[0] != "attachment_index" {
+	if !extractor.Repeatable || len(extractor.IdentityFields) != 2 || extractor.IdentityFields[0] != "attachment_index" || extractor.IdentityFields[1] != "round_start" {
 		t.Fatalf("attachment extractor identity metadata=%#v", extractor)
 	}
 	properties, ok := extractor.Parameters["properties"].(map[string]any)
@@ -981,6 +981,9 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 	attachmentIndex, ok := properties["attachment_index"].(map[string]any)
 	if !ok || attachmentIndex["maximum"] != 1 {
 		t.Fatalf("single-attachment index schema=%#v", attachmentIndex)
+	}
+	if _, ok = properties["round_start"].(map[string]any); !ok {
+		t.Fatalf("attachment extractor round schema=%#v", properties["round_start"])
 	}
 	result, err := executor.ExecuteModelTool(context.Background(), conversation.ToolRequest{
 		UserID: "user-1", MessageID: "model-text-translation", Module: "work", Text: "自然表达不依赖翻译关键词模板",

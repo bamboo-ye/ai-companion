@@ -198,6 +198,23 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			"brief":       map[string]any{"type": "string", "description": "供 PPT 独立生成使用的完整内容简报；若来自前序观察，应先整理主题和要点，不得超过 10000 字符", "maxLength": 10000},
 			"slide_count": map[string]any{"type": "integer", "description": "页数，3 到 20", "minimum": 3, "maximum": 20},
 			"filename":    filenameField(".pptx"),
+			"table": map[string]any{
+				"type": "object", "description": "表格型内容必须使用此结构，禁止压缩为单段 brief",
+				"required": []string{"columns", "rows"}, "additionalProperties": false,
+				"properties": map[string]any{
+					"title":   map[string]any{"type": "string", "maxLength": 60},
+					"columns": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 40}},
+					"rows": map[string]any{"type": "array", "minItems": 1, "maxItems": 120, "items": map[string]any{
+						"type": "object", "required": []string{"cells", "source_locator"}, "additionalProperties": false,
+						"properties": map[string]any{
+							"cells":          map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 500}},
+							"source_locator": map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+						},
+					}},
+				},
+			},
+			"task_contract":   map[string]any{"type": "object", "description": "Harness 注入的可信任务契约"},
+			"source_coverage": map[string]any{"type": "object", "description": "Harness 注入的可信来源覆盖率"},
 		}
 	}
 	if attachmentCount < 1 {
@@ -212,12 +229,13 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 		{Name: "work_list_skills", Description: "用户询问当前有哪些工作台工具、Skill 或可用能力时调用。", Parameters: emptyObject()},
 		{Name: "work_query_documents", Description: "用户要求根据文档库或已上传附件回答具体问题、查找事实或只返回文字摘要时调用。创建 PPT/PPTX、翻译 PDF 或生成其他文件时绝对不要调用。", Parameters: emptyObject()},
 		{
-			Name: "work_extract_attached_document", Description: "通用附件内容提取工具。用户要求基于聊天附件继续创建新内容且 Agent 尚未获得该附件正文时调用。每次只读取一个可信附件并返回结构化文本，不回答问题，也不调用下游工具；存在多个附件时，为每个附件分别调用一次并使用不同 attachment_index。",
+			Name: "work_extract_attached_document", Description: "通用附件内容提取工具。自动按顺序轮次清洗并合并大文件。若输出 has_more=true，必须使用 next_round 作为 round_start 继续读取同一附件；完整性任务在所有轮次完成前不得生成最终制品。存在多个附件时分别处理。",
 			Parameters: object([]string{"attachment_index"}, map[string]any{
 				"attachment_index": map[string]any{"type": "integer", "description": fmt.Sprintf("附件在当前消息中的序号，从 1 开始；当前共有 %d 个附件", attachmentCount), "minimum": 1, "maximum": attachmentCount},
+				"round_start":      map[string]any{"type": "integer", "description": "从第几个提取轮次开始；首次为 1，后续必须使用上次输出的 next_round", "minimum": 1, "maximum": 100},
 			}),
 			Repeatable:     true,
-			IdentityFields: []string{"attachment_index"},
+			IdentityFields: []string{"attachment_index", "round_start"},
 		},
 		{
 			Name: "work_translate_attached_pdf", Description: "用户上传了一个 PDF 并要求翻译该文件、读取后生成翻译版 PDF 时调用。只翻译聊天中的可信附件，不接受模型生成的文件 ID。",
@@ -591,13 +609,30 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 			"document_count": len(documentIDs), "attachment_index": attachmentIndex,
 		}), nil
 	}
+	roundStart := 1
+	if raw, ok := arguments["round_start"]; ok {
+		switch value := raw.(type) {
+		case int:
+			roundStart = value
+		case float64:
+			if value != float64(int(value)) {
+				return handled("work.document.extract", "提取轮次必须是整数。", nil), nil
+			}
+			roundStart = int(value)
+		default:
+			return handled("work.document.extract", "提取轮次格式不正确。", nil), nil
+		}
+	}
+	if roundStart < 1 || roundStart > 100 {
+		return handled("work.document.extract", "提取轮次必须在 1 到 100 之间。", nil), nil
+	}
 	item, err := e.documents.Get(ctx, request.UserID, documentIDs[attachmentIndex-1])
 	if err != nil {
 		return conversation.ToolResult{}, err
 	}
 	if item.Status == "ready" {
-		parsed, parsedErr := e.documents.ReadParsedContext(
-			ctx, request.UserID, item.ID, 4_000,
+		parsed, parsedErr := e.documents.ReadParsedContextRoundWindow(
+			ctx, request.UserID, item.ID, 4_000, roundStart, 4,
 		)
 		if parsedErr == nil {
 			return handled(
@@ -614,14 +649,17 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 	if err != nil {
 		return conversation.ToolResult{}, err
 	}
-	if len(data) > 8<<20 {
-		return handled("work.document.extract", "这个附件超过 8MB，暂时无法在聊天任务中直接提取。", item), nil
-	}
-	return e.runSkillWithInput(ctx, request, "office.document_extract", map[string]any{
+	input := map[string]any{
 		"source_filename": item.Name,
 		"source_base64":   base64.StdEncoding.EncodeToString(data),
 		"media_type":      item.MediaType,
-	})
+	}
+	// Keep the first extraction request backward-compatible. The worker defaults
+	// to round 1, while continuation requests carry the explicit cursor.
+	if roundStart > 1 {
+		input["round_start"] = float64(roundStart)
+	}
+	return e.runSkillWithInput(ctx, request, "office.document_extract", input)
 }
 
 func (e *Executor) recordLedger(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {

@@ -42,7 +42,8 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 	case "pptx_generate":
 		return ToolResult{Output: map[string]any{
 			"title": "课程介绍", "audience": "学生", "style": "简洁", "slide_count": float64(4),
-			"outline": []any{}, "source_overwritten": false,
+			"outline": []any{}, "source_coverage": map[string]any{"coverage_ratio": float64(1), "truncated": false},
+			"quality_report": map[string]any{"passed": true, "violations": []any{}}, "source_overwritten": false,
 		}, Files: []FileOutput{{Name: "课程介绍.pptx", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")}}}, nil
 	default:
 		return ToolResult{}, ErrNotFound

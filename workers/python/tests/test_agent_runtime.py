@@ -15,6 +15,7 @@ from ai_companion_worker.agent_runtime import (
     RepairDecision,
     ToolOutcome,
     ToolPreparation,
+    _document_source_coverage,
     _validate_checkpoint_identity,
     _validate_tool_arguments,
     build_graph,
@@ -115,6 +116,23 @@ class FakeTools:
         raise AssertionError("unexpected task retry")
 
 
+class PresentationGateDecisions(FakeDecisions):
+    def __init__(self) -> None:
+        super().__init__(
+            ModelDecision(
+                intent="work_generate_pptx",
+                tool_name="work_generate_pptx",
+                tool_arguments={
+                    "title": "课程表",
+                    "audience": "学生",
+                    "style": "表格",
+                    "brief": "所有课程",
+                    "slide_count": 4,
+                },
+            )
+        )
+
+
 def agent_input(run_id: str, module: ModuleKey = "life") -> dict[str, Any]:
     return {
         "run_id": run_id,
@@ -198,6 +216,90 @@ class AgentRuntimeTest(unittest.TestCase):
             runtime_config("run-123")["configurable"]["thread_id"],
             "run-123",
         )
+
+    def test_generated_pptx_is_not_terminal_without_quality_evidence(self) -> None:
+        decisions = PresentationGateDecisions()
+        tools = FakeTools(
+            ToolPreparation(
+                status="completed",
+                tool_name="work_generate_pptx",
+                response="工作任务已执行完成。",
+                data={
+                    "kind": "skill_run",
+                    "id": "pptx-low-quality",
+                    "skill_name": "office.pptx_generate",
+                    "status": "succeeded",
+                    "output": {"source_coverage": {"coverage_ratio": 0.5, "truncated": True}},
+                    "files": [{"name": "partial.pptx"}],
+                },
+            )
+        )
+        graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
+        payload = agent_input("run-pptx-quality-failed", "work")
+        payload["user_message"] = (
+            "整理所有课程代码和时间并生成中文PPT"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        result = AgentRuntime(graph).start(payload)
+        self.assertEqual(result["outcome"], "artifact_quality_failed")
+        self.assertFalse(result["artifact_validation"]["passed"])
+        self.assertIn("未通过", result["response"])
+
+    def test_generated_pptx_with_quality_evidence_can_complete(self) -> None:
+        decisions = PresentationGateDecisions()
+        tools = FakeTools(
+            ToolPreparation(
+                status="completed",
+                tool_name="work_generate_pptx",
+                response="工作任务已执行完成。",
+                data={
+                    "kind": "skill_run",
+                    "id": "pptx-verified",
+                    "skill_name": "office.pptx_generate",
+                    "status": "succeeded",
+                    "output": {
+                        "quality_report": {"passed": True, "violations": []},
+                        "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+                    },
+                    "files": [{"name": "verified.pptx"}],
+                },
+            )
+        )
+        graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
+        result = AgentRuntime(graph).start(agent_input("run-pptx-quality-passed", "work"))
+        self.assertEqual(result["outcome"], "completed")
+        self.assertTrue(result["artifact_validation"]["passed"])
+
+    def test_document_coverage_deduplicates_retried_round_windows(self) -> None:
+        observation = {
+            "tool_name": "work_extract_attached_document",
+            "arguments": {"attachment_index": 1, "round_start": 1},
+            "data": {
+                "output": {
+                    "selected_chunk_count": 5,
+                    "total_chunk_count": 10,
+                    "completed_rounds": 1,
+                    "round_count": 2,
+                    "round_start": 1,
+                    "next_round": 2,
+                    "rounds": [
+                        {
+                            "round_no": 1,
+                            "chunk_start": 0,
+                            "chunk_end": 4,
+                            "chunk_count": 5,
+                        }
+                    ],
+                }
+            },
+        }
+        coverage = _document_source_coverage(
+            {"observations": [observation, dict(observation)]}
+        )
+        self.assertEqual(coverage["selected_chunk_count"], 5)
+        self.assertEqual(coverage["completed_rounds"], 1)
+        self.assertEqual(coverage["coverage_ratio"], 0.5)
+        self.assertTrue(coverage["truncated"])
 
     def test_tool_schema_rejects_non_finite_values_and_unsupported_keywords(self) -> None:
         with self.assertRaisesRegex(ValueError, "finite"):
@@ -525,6 +627,7 @@ class AgentRuntimeTest(unittest.TestCase):
                         "skill_name": "office.pptx_generate",
                         "status": "succeeded",
                         "attempt": 2,
+                        "output": {"quality_report": {"passed": True, "violations": []}},
                         "files": [{"name": "Important-Dates-Semester-A-2026-27.pptx"}],
                     },
                 )
@@ -652,6 +755,7 @@ class AgentRuntimeTest(unittest.TestCase):
                         "skill_name": "office.pptx_generate",
                         "status": "succeeded",
                         "attempt": 2,
+                        "output": {"quality_report": {"passed": True, "violations": []}},
                         "files": [{"name": "safe.pptx"}],
                     },
                 )

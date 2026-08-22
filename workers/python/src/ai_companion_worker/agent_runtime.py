@@ -23,6 +23,11 @@ from ai_companion_worker.email_quality import (
     validate_email_arguments,
 )
 from ai_companion_worker.response_quality import inspect_and_repair_response
+from ai_companion_worker.task_quality import (
+    artifact_observation_applicable,
+    compile_task_contract,
+    validate_artifact_observation,
+)
 from ai_companion_worker.agent_governance import (
     GRAPH_NAME,
     GRAPH_VERSION,
@@ -104,6 +109,8 @@ class AgentState(AgentInput, total=False):
     response_rewrite_attempts: int
     execution_mode: ExecutionMode
     execution_mode_reason: str
+    task_contract: dict[str, Any]
+    artifact_validation: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -666,6 +673,8 @@ def _supervise(
         "pending_task_id": "",
         "task_polls": 0,
         "assessment": {},
+        "task_contract": compile_task_contract(state["user_message"], state["module"]),
+        "artifact_validation": {},
         "needs_response": False,
         "node_contracts": node_contract_manifest(),
         "budget_limits": limits,
@@ -1083,6 +1092,7 @@ def build_graph(
         decision_context["agent_plan"] = dict(state.get("plan", {}))
         decision_context["observations"] = list(state.get("observations", []))
         decision_context["action_index"] = state.get("action_index", 0)
+        decision_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             decision = decisions.decide(
                 module=state["module"],
@@ -1217,6 +1227,7 @@ def build_graph(
         composition_context["agent_plan"] = dict(state.get("plan", {}))
         composition_context["observations"] = list(state.get("observations", []))
         composition_context["action_index"] = state.get("action_index", 0)
+        composition_context["task_contract"] = dict(state.get("task_contract", {}))
         composition_context["email_validation"] = dict(state.get("email_validation", {}))
         try:
             arguments = composer(
@@ -1231,6 +1242,13 @@ def build_graph(
             definition = _trusted_tool_definition(state, tool_name.strip())
             if definition is None:
                 raise ValueError("argument composition requires a trusted tool definition")
+            if tool_name.strip() in ("work_create_pptx_outline", "work_generate_pptx"):
+                parameters = definition.get("parameters")
+                properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
+                if isinstance(properties, Mapping) and "task_contract" in properties:
+                    normalized_arguments["task_contract"] = dict(state.get("task_contract", {}))
+                if isinstance(properties, Mapping) and "source_coverage" in properties:
+                    normalized_arguments["source_coverage"] = _document_source_coverage(state)
         except ModelBudgetExceeded as exc:
             return model_terminal_update(state, node=node, reason=str(exc))
         except Exception as exc:
@@ -1468,6 +1486,7 @@ def build_graph(
         )
         response_context["agent_plan"] = dict(state.get("plan", {}))
         response_context["observations"] = list(state.get("observations", []))
+        response_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             response = responder(
                 module=state["module"],
@@ -1600,6 +1619,7 @@ def build_graph(
         )
         revision_context["agent_plan"] = dict(state.get("plan", {}))
         revision_context["observations"] = list(state.get("observations", []))
+        revision_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             response = reviser(
                 module=state["module"],
@@ -1863,18 +1883,74 @@ def build_graph(
             return "wait_task"
         if state.get("outcome") == "tool_failed":
             return "classify_tool_failure"
-        # A generated file is an objective terminal signal, and a confirmed
-        # write has completed the user-approved mutation. Every other
-        # successful independent tool result goes back through model routing:
-        # the model can finish from the observation or choose the next tool.
-        if _latest_observation_has_files(state):
-            return "finalize"
+        # A generated file is evidence, not proof that the user objective was
+        # satisfied. Artifact-producing skills pass through a deterministic
+        # contract gate before the Harness may finalize the run.
+        if _latest_observation_requires_artifact_gate(state):
+            return "artifact_quality_gate"
         preparation = state.get("preparation", {})
         if preparation.get("status") == "requires_confirmation":
             return "finalize"
         if state.get("execution_mode") != "agentic":
             return "finalize"
         return "assess_progress"
+
+    def artifact_quality_gate(state: AgentState) -> dict[str, Any]:
+        started_ns = time.perf_counter_ns()
+        observations = state.get("observations", [])
+        latest = observations[-1] if observations else {}
+        data = latest.get("data") if isinstance(latest, dict) else None
+        report = validate_artifact_observation(
+            data,
+            state.get("task_contract", {}),
+        )
+        applicable = report.get("applicable") is True
+        passed = report.get("passed") is True
+        if not applicable or passed:
+            outcome = "completed"
+            response = state.get("response", "")
+            status = "succeeded"
+        elif state.get("action_index", 0) < state.get("action_budget", policy.max_actions):
+            outcome = ""
+            response = (
+                "生成文件未通过任务完整性或制品质量门禁，"
+                "Harness 将在行动预算内重新整理来源并生成。"
+            )
+            status = "retrying"
+        else:
+            outcome = "artifact_quality_failed"
+            response = "生成文件未通过质量门禁，且自动修复预算已用完。"
+            status = "blocked"
+        return {
+            "artifact_validation": report,
+            "outcome": outcome,
+            "response": response,
+            "node_trace": [
+                *state.get("node_trace", []),
+                _trace_event(
+                    "artifact_quality_gate",
+                    status,
+                    started_ns=started_ns,
+                    details={
+                        "applicable": applicable,
+                        "passed": passed,
+                        "violation_codes": [
+                            str(item.get("code") or "")
+                            for item in report.get("violations", [])
+                            if isinstance(item, Mapping)
+                        ],
+                    },
+                ),
+            ],
+            "steps": state.get("steps", 0) + 1,
+        }
+
+    def after_artifact_quality(state: AgentState) -> str:
+        if state.get("artifact_validation", {}).get("passed") is True:
+            return "finalize"
+        if state.get("outcome") == "artifact_quality_failed":
+            return "finalize"
+        return "continue_action"
 
     def classify_tool_failure(state: AgentState) -> dict[str, Any]:
         started_ns = time.perf_counter_ns()
@@ -2378,6 +2454,7 @@ def build_graph(
         assessment_context["agent_plan"] = dict(state.get("plan", {}))
         assessment_context["observations"] = list(state.get("observations", []))
         assessment_context["action_index"] = state.get("action_index", 0)
+        assessment_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             assessment = decisions.assess(
                 module=state["module"],
@@ -2554,14 +2631,24 @@ def build_graph(
     def finalize(state: AgentState) -> dict[str, Any]:
         if not state.get("response", "").strip():
             raise ValueError("final response is required")
+        outcome = state.get("outcome", "completed")
+        response = state.get("response", "")
+        artifact_validation = state.get("artifact_validation", {})
+        if (
+            artifact_validation.get("applicable") is True
+            and artifact_validation.get("passed") is not True
+        ):
+            outcome = "artifact_quality_failed"
+            response = "生成文件未通过任务完整性与制品质量门禁，已停止交付不合格结果。"
         return {
-            "outcome": state.get("outcome", "completed"),
+            "outcome": outcome,
+            "response": response,
             "node_trace": [
                 *state.get("node_trace", []),
                 _trace_event(
                     "finalize",
                     "succeeded",
-                    details={"outcome": state.get("outcome", "completed")},
+                    details={"outcome": outcome},
                 ),
             ],
             "steps": state.get("steps", 0) + 1,
@@ -2594,6 +2681,7 @@ def build_graph(
     register("commit_tool", commit_tool)
     register("reject_tool", reject_tool)
     register("observe_result", observe_result)
+    register("artifact_quality_gate", artifact_quality_gate)
     register("classify_tool_failure", classify_tool_failure)
     register("apply_known_repair", apply_known_repair_node)
     register("plan_repair_llm", plan_repair_llm)
@@ -2688,8 +2776,14 @@ def build_graph(
             "wait_task": "wait_task",
             "assess_progress": "assess_progress",
             "classify_tool_failure": "classify_tool_failure",
+            "artifact_quality_gate": "artifact_quality_gate",
             "finalize": "finalize",
         },
+    )
+    builder.add_conditional_edges(
+        "artifact_quality_gate",
+        after_artifact_quality,
+        {"continue_action": "continue_action", "finalize": "finalize"},
     )
     builder.add_conditional_edges(
         "classify_tool_failure",
@@ -2849,15 +2943,108 @@ def _observation(state: AgentState, source: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
-def _latest_observation_has_files(state: AgentState) -> bool:
+def _latest_observation_requires_artifact_gate(state: AgentState) -> bool:
     observations = state.get("observations", [])
     if not observations:
         return False
     data = observations[-1].get("data")
-    if not isinstance(data, dict):
-        return False
-    files = data.get("files")
-    return data.get("status") == "succeeded" and isinstance(files, list) and bool(files)
+    return artifact_observation_applicable(data)
+
+
+def _document_source_coverage(state: AgentState) -> dict[str, Any]:
+    observations = state.get("observations", [])
+    reports: list[tuple[int, Mapping[str, Any]]] = []
+    for observation in observations:
+        if not isinstance(observation, Mapping):
+            continue
+        if observation.get("tool_name") != "work_extract_attached_document":
+            continue
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        if isinstance(output, Mapping):
+            arguments = observation.get("arguments")
+            attachment_index = (
+                int(arguments.get("attachment_index") or 1)
+                if isinstance(arguments, Mapping)
+                else 1
+            )
+            reports.append((attachment_index, output))
+    if not reports:
+        source_required = state.get("task_contract", {}).get("source_required") is True
+        return {
+            "coverage_ratio": 0.0 if source_required else 1.0,
+            "truncated": source_required,
+            "completed_rounds": 0,
+            "round_count": 0,
+            "selected_chunk_count": 0,
+            "total_chunk_count": 0,
+        }
+    attachments: dict[int, dict[str, Any]] = {}
+    for attachment_index, report in reports:
+        current = attachments.setdefault(
+            attachment_index,
+            {
+                "selected_ordinals": set(),
+                "round_nos": set(),
+                "fallback_windows": set(),
+                "fallback_selected": 0,
+                "fallback_rounds": 0,
+                "total": 0,
+                "round_count": 0,
+            },
+        )
+        current["total"] = max(current["total"], int(report.get("total_chunk_count") or 0))
+        current["round_count"] = max(current["round_count"], int(report.get("round_count") or 0))
+        manifest = report.get("rounds")
+        valid_manifest = False
+        if isinstance(manifest, list):
+            for item in manifest:
+                if not isinstance(item, Mapping):
+                    continue
+                start = item.get("chunk_start")
+                end = item.get("chunk_end")
+                round_no = item.get("round_no")
+                if (
+                    isinstance(start, int)
+                    and not isinstance(start, bool)
+                    and isinstance(end, int)
+                    and not isinstance(end, bool)
+                    and 0 <= start <= end
+                ):
+                    current["selected_ordinals"].update(range(start, end + 1))
+                    valid_manifest = True
+                if isinstance(round_no, int) and not isinstance(round_no, bool):
+                    current["round_nos"].add(round_no)
+        if not valid_manifest:
+            window = (
+                int(report.get("round_start") or 1),
+                int(report.get("next_round") or 0),
+                int(report.get("selected_chunk_count") or 0),
+            )
+            if window not in current["fallback_windows"]:
+                current["fallback_windows"].add(window)
+                current["fallback_selected"] += window[2]
+                current["fallback_rounds"] += int(report.get("completed_rounds") or 0)
+    selected_chunks = sum(
+        min(
+            len(item["selected_ordinals"]) + item["fallback_selected"],
+            item["total"],
+        )
+        for item in attachments.values()
+    )
+    total_chunks = sum(item["total"] for item in attachments.values())
+    coverage_ratio = selected_chunks / total_chunks if total_chunks else 0.0
+    return {
+        "coverage_ratio": coverage_ratio,
+        "truncated": selected_chunks < total_chunks,
+        "completed_rounds": sum(
+            len(item["round_nos"]) + item["fallback_rounds"]
+            for item in attachments.values()
+        ),
+        "round_count": sum(item["round_count"] for item in attachments.values()),
+        "selected_chunk_count": selected_chunks,
+        "total_chunk_count": total_chunks,
+    }
 
 
 def _decision_manifest(decisions: DecisionPort) -> dict[str, Any]:

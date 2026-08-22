@@ -71,18 +71,36 @@ func RegisterBuiltins(registry *Registry) error {
 }
 
 func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
+	presentationTableSchema := map[string]any{
+		"type": "object", "required": []string{"columns", "rows"},
+		"properties": map[string]any{
+			"title":   map[string]any{"type": "string"},
+			"columns": map[string]any{"type": "array"},
+			"rows":    map[string]any{"type": "array"},
+		},
+	}
+	presentationInput := map[string]any{
+		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
+		"style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"},
+		"slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},
+		"table": presentationTableSchema, "task_contract": map[string]any{"type": "object"},
+		"source_coverage": map[string]any{"type": "object"},
+	}
+	presentationOutput := map[string]any{
+		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
+		"style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"},
+		"requested_slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"},
+		"source_coverage": map[string]any{"type": "object"}, "quality_report": map[string]any{"type": "object"},
+		"source_overwritten": map[string]any{"type": "boolean"},
+	}
 	definitions := []Definition{
 		{
 			Manifest: Manifest{
 				Name: "office.pptx_outline", Version: "1.1.0", DisplayName: "PPTX 大纲", Category: "office",
 				Description: "根据受众、页数、风格和简报预览逐页大纲，不创建文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, ExecutionMode: "worker",
-				InputSchema: objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, map[string]any{
-					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},
-				}),
-				OutputSchema: objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_overwritten"}, map[string]any{
-					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"}, "source_overwritten": map[string]any{"type": "boolean"},
-				}),
+				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
+				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_outline"),
@@ -106,12 +124,8 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 				Name: "office.pptx_generate", Version: "1.2.0", DisplayName: "PPTX 生成", Category: "office",
 				Description: "根据受众、页数、风格和简报直接生成新的演示文稿，不覆盖已有文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, ExecutionMode: "worker",
-				InputSchema: objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, map[string]any{
-					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},
-				}),
-				OutputSchema: objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_overwritten"}, map[string]any{
-					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"}, "source_overwritten": map[string]any{"type": "boolean"},
-				}),
+				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
+				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_generate"),
@@ -122,12 +136,15 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 				Description: "从受支持的文本或 PDF 附件中提取结构化正文，供 Agent 独立规划后续任务。", RiskLevel: "none", Enabled: true,
 				ToolName: "document.extract_text", TimeoutMS: 120_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"source_filename", "source_base64", "media_type"}, map[string]any{
-					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
+					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"}, "round_start": map[string]any{"type": "integer"},
 				}),
-				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "source_overwritten"}, map[string]any{
+				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "round_count", "completed_rounds", "coverage_ratio", "rounds", "cleaning_report", "source_overwritten"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
 					"page_count": map[string]any{"type": "integer"}, "character_count": map[string]any{"type": "integer"},
-					"text": map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"}, "source_overwritten": map[string]any{"type": "boolean"},
+					"text": map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"},
+					"round_count": map[string]any{"type": "integer"}, "completed_rounds": map[string]any{"type": "integer"},
+					"coverage_ratio": map[string]any{"type": "number"}, "rounds": map[string]any{"type": "array"},
+					"cleaning_report": map[string]any{"type": "object"}, "source_overwritten": map[string]any{"type": "boolean"},
 				}),
 			},
 			Handler: officeWorkerHandler(worker, "document_extract"),

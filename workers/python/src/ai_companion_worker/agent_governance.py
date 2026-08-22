@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.6.0"
+GRAPH_VERSION = "3.7.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -79,6 +79,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "response_rewrite_attempts",
             "execution_mode",
             "execution_mode_reason",
+            "task_contract",
+            "artifact_validation",
             "steps",
         ),
     ),
@@ -248,6 +250,21 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "steps",
         ),
     ),
+    "artifact_quality_gate": NodeContract(
+        responsibility=(
+            "Treat generated files as evidence and verify the task contract, "
+            "source coverage and artifact-specific quality before completion."
+        ),
+        kind="deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(
+            "artifact_validation",
+            "outcome",
+            "response",
+            "node_trace",
+            "steps",
+        ),
+    ),
     "classify_tool_failure": NodeContract(
         responsibility="Classify a trusted tool failure and select one bounded recovery strategy.",
         kind="deterministic",
@@ -361,7 +378,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     "finalize": NodeContract(
         responsibility="Return a non-empty response and the terminal governance summary.",
         kind="deterministic",
-        allowed_writes=("outcome", "node_trace", "steps"),
+        allowed_writes=("outcome", "response", "node_trace", "steps"),
     ),
 }
 
