@@ -103,8 +103,8 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.1.0", DisplayName: "PPTX 生成", Category: "office",
-				Description: "根据已确认的受众、页数、风格和简报生成演示文稿。", RiskLevel: "medium", RequiresConfirmation: true, Enabled: true,
+				Name: "office.pptx_generate", Version: "1.2.0", DisplayName: "PPTX 生成", Category: "office",
+				Description: "根据受众、页数、风格和简报直接生成新的演示文稿，不覆盖已有文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, map[string]any{
 					"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"}, "style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},

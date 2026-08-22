@@ -379,7 +379,8 @@ func (g *ToolGateway) prepareConfirmation(
 	confirmation conversation.ToolConfirmation,
 	riskLevel string,
 ) (ToolPreparation, error) {
-	if confirmation.Kind == "" || confirmation.CandidateID == "" || strings.TrimSpace(confirmation.Summary) == "" {
+	confirmation.Summary = chatattachment.VisibleText(confirmation.Summary)
+	if confirmation.Kind == "" || confirmation.CandidateID == "" || confirmation.Summary == "" {
 		return ToolPreparation{}, ErrConfirmationState
 	}
 	if riskLevel != "low" && riskLevel != "medium" && riskLevel != "high" {

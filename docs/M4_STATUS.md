@@ -55,7 +55,7 @@ Implemented:
 - An isolated, timeout-bounded Python Office process with a strict JSON/base64 contract and bounded stdout/stderr.
 - `office.docx_edit`: accepts a small macro-free DOCX, shows a confirmation card, and appends paragraphs only to a newly generated copy with a change summary.
 - `office.pptx_outline`: produces a side-effect-free per-slide outline from explicit title, audience, slide count, style, and brief.
-- `office.pptx_generate`: repeats those parameters on the confirmation card and creates a new `.pptx` only after confirmation.
+- `office.pptx_generate`: creates a new `.pptx` directly once the required parameters are complete; generated files never overwrite an existing source.
 - `office.tabular_profile`: profiles UTF-8 CSV and macro-free XLSX headers, inferred types, missing values, unique values, duplicate rows, and numeric min/max/mean, with a versioned downloadable JSON report.
 - Web file pickers and Office forms, redacted confirmation previews for inline file data, task history, and download actions.
 - API container support for the pinned Office worker dependencies and OpenAPI 0.8 documentation.

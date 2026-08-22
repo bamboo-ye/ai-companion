@@ -271,7 +271,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_pptx", Description: "用户明确要求创建或生成 PPT/PPTX 文件时调用。生成文件前需要确认。",
+			Name: "work_generate_pptx", Description: "用户明确要求创建或生成 PPT/PPTX 文件时调用。参数完整后直接生成新文件，不需要二次确认，也不会覆盖已有文件。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),

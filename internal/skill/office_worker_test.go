@@ -39,8 +39,28 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 			"analysis_version": "office-tools-tabular-v1", "source_filename": "sample.csv", "sheet_name": "CSV", "row_count": float64(2), "column_count": float64(2),
 			"duplicate_rows": float64(0), "truncated": false, "columns": []any{}, "source_overwritten": false,
 		}, Files: []FileOutput{{Name: "sample-analysis.json", MediaType: "application/json", Data: []byte(`{"row_count":2}`)}}}, nil
+	case "pptx_generate":
+		return ToolResult{Output: map[string]any{
+			"title": "课程介绍", "audience": "学生", "style": "简洁", "slide_count": float64(4),
+			"outline": []any{}, "source_overwritten": false,
+		}, Files: []FileOutput{{Name: "课程介绍.pptx", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")}}}, nil
 	default:
 		return ToolResult{}, ErrNotFound
+	}
+}
+
+func TestPPTXGenerationRunsWithoutConfirmation(t *testing.T) {
+	worker := &fakeOfficeWorker{}
+	registry := NewRegistry()
+	if err := RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	run, _, err := service.Start(context.Background(), "u1", "office.pptx_generate", "pptx-create", map[string]any{
+		"title": "课程介绍", "audience": "学生", "style": "简洁", "brief": "课程目标与安排", "slide_count": float64(4),
+	})
+	if err != nil || run.Status != "succeeded" || run.RequiresConfirmation || run.RiskLevel != "none" || len(run.Files) != 1 || len(worker.calls) != 1 {
+		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
 	}
 }
 

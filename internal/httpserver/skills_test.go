@@ -14,7 +14,7 @@ import (
 )
 
 func TestSkillRuntimeAPIConfirmationIdempotencyAndDownload(t *testing.T) {
-	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "skill-api-test-secret-with-enough-entropy"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "skill-api-test-secret-with-enough-entropy", SkillWorkerEnabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
 		"email": "skill@example.com", "password": "correct-horse-battery", "display_name": "Skill 用户", "timezone": "Asia/Shanghai",
 		"device": map[string]any{"device_key": "skill-web", "name": "Skill Web", "platform": "web"},
@@ -44,11 +44,11 @@ func TestSkillRuntimeAPIConfirmationIdempotencyAndDownload(t *testing.T) {
 	if invalidSetting.Code != http.StatusUnprocessableEntity || !strings.Contains(invalidSetting.Body.String(), `"validation_error"`) {
 		t.Fatalf("invalid setting=%d %s", invalidSetting.Code, invalidSetting.Body.String())
 	}
-	presentationCandidate := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.pptx_generate/runs", tokens.AccessToken, "pptx-http-1", map[string]any{"input": map[string]any{
+	presentationRun := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.pptx_generate/runs", tokens.AccessToken, "pptx-http-1", map[string]any{"input": map[string]any{
 		"title": "季度复盘", "audience": "管理层", "style": "简洁专业", "brief": "业绩亮点\n风险与机会", "slide_count": 6,
 	}})
-	if presentationCandidate.Code != http.StatusAccepted || !strings.Contains(presentationCandidate.Body.String(), `"status":"waiting_confirmation"`) || !strings.Contains(presentationCandidate.Body.String(), `"audience":"管理层"`) || !strings.Contains(presentationCandidate.Body.String(), `"files":[]`) {
-		t.Fatalf("pptx candidate=%d %s", presentationCandidate.Code, presentationCandidate.Body.String())
+	if presentationRun.Code != http.StatusAccepted || !strings.Contains(presentationRun.Body.String(), `"status":"queued"`) || !strings.Contains(presentationRun.Body.String(), `"requires_confirmation":false`) || !strings.Contains(presentationRun.Body.String(), `"audience":"管理层"`) || !strings.Contains(presentationRun.Body.String(), `"files":[]`) {
+		t.Fatalf("pptx run=%d %s", presentationRun.Code, presentationRun.Body.String())
 	}
 
 	translated := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.translate/runs", tokens.AccessToken, "translate-http-1", map[string]any{"input": map[string]any{"text": "项目已经完成", "target_language": "English"}})

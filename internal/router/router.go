@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const Version = "intent-rules-2026-07-04.v1"
+const Version = "intent-rules-2026-08-22.v2"
 
 type Input struct {
 	Text string `json:"text"`
@@ -75,7 +75,7 @@ func (r *Router) Route(input Input) (Result, error) {
 		return result, nil
 	}
 	if containsAny(lower, "ppt", "pptx", "演示文稿", "幻灯片") {
-		skill, risk := "office.pptx_generate", "medium"
+		skill, risk := "office.pptx_generate", "none"
 		if strings.Contains(lower, "大纲") {
 			skill, risk = "office.pptx_outline", "none"
 		}
