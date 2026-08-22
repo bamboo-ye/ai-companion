@@ -65,6 +65,42 @@ class TaskQualityTests(unittest.TestCase):
         self.assertFalse(unrelated["inherited_from_history"])
         self.assertEqual(unrelated["artifact_types"], [])
 
+    def test_style_answer_inherits_immediate_pending_attachment_goal(self) -> None:
+        original = (
+            "重新帮我整理所有体育课的名称、上课时间和课程代码，并用中文ppt展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        contract = compile_task_contract(
+            "合并成表格形式展示",
+            "work",
+            [
+                {"role": "user", "content": original},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "请确认附件提取和 PPT 生成范围，确认后我就开始。"
+                        "是否需要将同一课程的所有上课时间合并成表格形式展示？"
+                    ),
+                },
+            ],
+        )
+        self.assertTrue(contract["inherited_from_history"])
+        self.assertEqual(contract["artifact_types"], ["pptx"])
+        self.assertIn("补充要求：合并成表格形式展示", contract["objective"])
+
+        cancelled = compile_task_contract(
+            "算了，不做了",
+            "work",
+            [
+                {"role": "user", "content": original},
+                {
+                    "role": "assistant",
+                    "content": "请确认附件提取和 PPT 生成范围，确认后我就开始。",
+                },
+            ],
+        )
+        self.assertFalse(cancelled["inherited_from_history"])
+
     def test_pptx_file_without_quality_report_is_not_complete(self) -> None:
         report = validate_artifact_observation(
             {

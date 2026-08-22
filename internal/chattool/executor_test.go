@@ -1168,6 +1168,15 @@ func TestAttachmentConfirmationReusesOnlyImmediatePendingDocument(t *testing.T) 
 	if ids := attachmentDocumentIDs(request); len(ids) != 1 || ids[0] != documentID {
 		t.Fatalf("pending attachment IDs = %#v", ids)
 	}
+	request.Text = "合并成表格形式展示"
+	if ids := attachmentDocumentIDs(request); len(ids) != 1 || ids[0] != documentID {
+		t.Fatalf("pending style attachment IDs = %#v", ids)
+	}
+	request.Text = "算了，不做了"
+	if ids := attachmentDocumentIDs(request); len(ids) != 0 {
+		t.Fatalf("cancelled workflow reused attachments: %#v", ids)
+	}
+	request.Text = "确认"
 	request.History[1].Content = "请确认是否继续聊天。"
 	if ids := attachmentDocumentIDs(request); len(ids) != 0 {
 		t.Fatalf("unrelated confirmation reused attachments: %#v", ids)
