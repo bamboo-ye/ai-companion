@@ -1181,6 +1181,16 @@ func TestAttachmentConfirmationReusesOnlyImmediatePendingDocument(t *testing.T) 
 	if ids := attachmentDocumentIDs(request); len(ids) != 0 {
 		t.Fatalf("unrelated confirmation reused attachments: %#v", ids)
 	}
+	request.History = []conversation.Message{
+		{Role: "user", Content: original},
+		{Role: "assistant", Content: "请确认附件提取和 PPT 生成范围，确认后我就开始。"},
+		{Role: "user", Content: "合并成表格形式展示"},
+		{Role: "assistant", Content: "请先上传一个需要读取的附件。"},
+	}
+	request.Text = "继续"
+	if ids := attachmentDocumentIDs(request); len(ids) != 1 || ids[0] != documentID {
+		t.Fatalf("known missing-attachment bridge IDs = %#v", ids)
+	}
 }
 
 func TestWorkAttachmentExtractionReusesReadyParsedChunks(t *testing.T) {
