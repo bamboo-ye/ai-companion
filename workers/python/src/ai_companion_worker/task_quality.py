@@ -145,6 +145,31 @@ def validate_presentation_arguments(
                     "missing_rows": missing_locators,
                 }
             )
+        time_column = _requested_field_column(columns, "time")
+        if time_column >= 0:
+            vague_rows: list[int] = []
+            vague_pattern = re.compile(
+                r"(?:详见|(?:\betc\.?\b)|\.{3}|…|\bvarious\b|\bmultiple\b|"
+                r"times?\s+vary|不同时段|多(?:个|组|种)(?:时段|时间|组次))",
+                re.IGNORECASE,
+            )
+            for index, row in enumerate(rows):
+                cells = row.get("cells") if isinstance(row, Mapping) else None
+                if (
+                    not isinstance(cells, list)
+                    or time_column >= len(cells)
+                    or vague_pattern.search(str(cells[time_column] or ""))
+                ):
+                    vague_rows.append(index + 1)
+            if vague_rows:
+                violations.append(
+                    {
+                        "code": "requested_time_values_incomplete",
+                        "message": "完整性任务中的时间字段不得使用省略或“详见原表”占位",
+                        "affected_rows": vague_rows[:20],
+                        "affected_count": len(vague_rows),
+                    }
+                )
     expected_record_keys = expected_record_keys or []
     if expected_record_keys and isinstance(columns, list) and isinstance(rows, list):
         code_column = _requested_field_column(columns, "code")
@@ -231,6 +256,15 @@ def _pending_artifact_request(message: str, history: list[Any]) -> str:
     user = history[-2]
     inherited_supplements: list[str] = []
     if (
+        _is_failed_runtime_reply(assistant)
+        and isinstance(user, Mapping)
+        and user.get("role") == "user"
+        and isinstance(user.get("content"), str)
+        and _document_ids(str(user["content"]))
+        and _artifact_types(str(user["content"]))
+    ):
+        return str(user["content"]).strip()
+    if (
         _is_missing_attachment_reply(assistant)
         and isinstance(user, Mapping)
         and user.get("role") == "user"
@@ -281,13 +315,27 @@ def _is_missing_attachment_reply(item: Any) -> bool:
     )
 
 
+def _is_failed_runtime_reply(item: Any) -> bool:
+    if not isinstance(item, Mapping) or item.get("role") != "assistant":
+        return False
+    content = item.get("content")
+    if not isinstance(content, str):
+        return False
+    return bool(
+        re.search(
+            r"<!--ai-(?:agent-run|generation-job):[^>]+\|(?:failed|timed_out)(?:\||-->)",
+            content,
+        )
+    )
+
+
 def _is_artifact_workflow_followup(message: str) -> bool:
     normalized = re.sub(r"[\s，。！？!?.]", "", message)
     if not normalized or len(normalized) > 200:
         return False
     if re.search(r"(?:取消|停止|不用|不做|算了|换个|另外|无关)", normalized):
         return False
-    if normalized in {"确认", "好的", "好", "开始", "继续", "可以"}:
+    if normalized in {"确认", "好的", "好", "开始", "继续", "可以", "重试", "再试", "重新执行", "重新开始"}:
         return True
     return bool(
         re.search(

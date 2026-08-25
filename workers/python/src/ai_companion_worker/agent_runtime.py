@@ -354,6 +354,57 @@ def _validate_tool_arguments(
     _validate_schema_value(dict(arguments), schema, path="arguments", depth=0)
 
 
+def _normalize_presentation_arguments(
+    arguments: Mapping[str, Any],
+    state: AgentState,
+) -> dict[str, Any]:
+    """Apply semantics-preserving defaults before any presentation gate.
+
+    Tool-calling providers may omit a required title even when the supplied
+    schema marks it required. The title is identity metadata, so it is safe to
+    derive it from the already-composed table title or trusted plan objective.
+    Visible table headings are also localized deterministically when the task
+    contract explicitly requires Chinese output.
+    """
+
+    normalized = dict(arguments)
+    table = normalized.get("table")
+    table_copy = dict(table) if isinstance(table, Mapping) else None
+    title = normalized.get("title")
+    if not isinstance(title, str) or not title.strip():
+        table_title = table_copy.get("title") if table_copy is not None else None
+        plan = state.get("plan", {})
+        objective = plan.get("objective") if isinstance(plan, Mapping) else None
+        fallback = table_title if isinstance(table_title, str) and table_title.strip() else objective
+        normalized["title"] = (
+            fallback.strip() if isinstance(fallback, str) and fallback.strip() else "演示文稿"
+        )
+
+    task_contract = state.get("task_contract", {})
+    if (
+        table_copy is not None
+        and isinstance(task_contract, Mapping)
+        and str(task_contract.get("output_language") or "").casefold().startswith("zh")
+    ):
+        columns = table_copy.get("columns")
+        if isinstance(columns, list):
+            aliases = {
+                "code": "课程代码",
+                "name": "课程名称",
+                "time": "上课时间",
+                "date": "上课时间",
+                "schedule": "上课时间",
+                "venue": "上课地点",
+                "location": "上课地点",
+                "source_locator": "来源位置",
+            }
+            table_copy["columns"] = [
+                aliases.get(str(column).strip().casefold(), column) for column in columns
+            ]
+        normalized["table"] = table_copy
+    return normalized
+
+
 def _validate_schema_value(
     value: Any,
     schema: Mapping[str, Any],
@@ -1265,6 +1316,10 @@ def build_graph(
                     normalized_arguments["task_contract"] = dict(state.get("task_contract", {}))
                 if isinstance(properties, Mapping) and "source_coverage" in properties:
                     normalized_arguments["source_coverage"] = _document_source_coverage(state)
+                normalized_arguments = _normalize_presentation_arguments(
+                    normalized_arguments,
+                    state,
+                )
         except ModelBudgetExceeded as exc:
             return model_terminal_update(state, node=node, reason=str(exc))
         except Exception as exc:
@@ -1309,14 +1364,27 @@ def build_graph(
         if tool_name in ("work_create_pptx_outline", "work_generate_pptx"):
             if not isinstance(arguments, Mapping):
                 raise ValueError("presentation quality gate requires composed arguments")
-            violations = validate_presentation_arguments(
+            definition = _trusted_tool_definition(state, tool_name)
+            schema_violations: list[dict[str, Any]] = []
+            if definition is not None:
+                try:
+                    _validate_tool_arguments(arguments, definition)
+                except Exception as exc:
+                    schema_violations.append(
+                        {
+                            "code": "trusted_schema_invalid",
+                            "message": "演示文稿参数未通过可信 Schema 校验",
+                            "validator": type(exc).__name__,
+                        }
+                    )
+            violations = [*schema_violations, *validate_presentation_arguments(
                 arguments,
                 state.get("task_contract", {}),
                 expected_record_keys=presentation_source_record_keys(
                     state.get("observations", []),
                     state.get("task_contract", {}),
                 ),
-            )
+            )]
             attempts = int(state.get("presentation_rewrite_attempts", 0))
             report = {
                 "policy_version": "presentation-arguments-v1",
@@ -1345,7 +1413,7 @@ def build_graph(
                     ],
                     "steps": state.get("steps", 0) + 1,
                 }
-            if attempts < 1:
+            if attempts < 2:
                 report["rewrite_attempt"] = attempts + 1
                 return {
                     "proposed_tool": {

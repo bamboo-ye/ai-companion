@@ -432,7 +432,11 @@ func (w *RuntimeWorker) finishExecution(ctx context.Context, run Run, result Exe
 	}
 	switch result.Status {
 	case "completed":
-		_, err = w.service.Complete(ctx, run.ID, w.owner, run.Revision, result.Output)
+		if code, message, failed := terminalGraphFailure(result.Output); failed {
+			_, err = w.service.Fail(ctx, run.ID, w.owner, run.Revision, code, message)
+		} else {
+			_, err = w.service.Complete(ctx, run.ID, w.owner, run.Revision, result.Output)
+		}
 	case "waiting_approval":
 		_, err = w.service.PauseForApproval(ctx, run.ID, w.owner, run.Revision, result.Output)
 	case "waiting_tool":
@@ -457,6 +461,25 @@ func (w *RuntimeWorker) finishExecution(ctx context.Context, run Run, result Exe
 		return w.settleTransitionConflict(run.ID)
 	}
 	return err
+}
+
+func terminalGraphFailure(output map[string]any) (string, string, bool) {
+	outcome, _ := output["outcome"].(string)
+	outcome = strings.TrimSpace(outcome)
+	switch outcome {
+	case "model_budget_exhausted", "model_version_mismatch", "model_authentication_error",
+		"model_invalid_response", "model_unavailable", "artifact_quality_failed",
+		"artifact_missing", "response_quality_failed", "tool_failed", "tool_timeout",
+		"action_limit":
+		message, _ := output["response"].(string)
+		message = strings.TrimSpace(message)
+		if message == "" {
+			message = "Agent graph stopped before the task contract was satisfied"
+		}
+		return "graph_" + outcome, message, true
+	default:
+		return "", "", false
+	}
 }
 
 func permanentlyNonRetryable(classified interface {

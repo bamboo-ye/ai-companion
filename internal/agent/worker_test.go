@@ -28,6 +28,9 @@ func (s *runtimeWorkerStore) CreateAgentRun(context.Context, Run) (Run, bool, er
 func (s *runtimeWorkerStore) GetAgentRun(context.Context, string) (Run, error) {
 	return s.run, nil
 }
+func (s *runtimeWorkerStore) GetActiveAgentRun(context.Context, string, string) (Run, error) {
+	return s.run, nil
+}
 func (s *runtimeWorkerStore) ClaimAgentRun(_ context.Context, _, owner string, now time.Time, lease time.Duration) (Run, error) {
 	if s.claimError != nil {
 		return Run{}, s.claimError

@@ -19,7 +19,7 @@ var (
 
 const (
 	GraphName         = "ai-companion-supervisor"
-	GraphVersion      = "3.9.0"
+	GraphVersion      = "3.10.0"
 	DefaultRunTimeout = 15 * time.Minute
 )
 
@@ -70,6 +70,7 @@ type CreateInput struct {
 type Store interface {
 	CreateAgentRun(context.Context, Run) (Run, bool, error)
 	GetAgentRun(context.Context, string) (Run, error)
+	GetActiveAgentRun(context.Context, string, string) (Run, error)
 	ClaimAgentRun(context.Context, string, string, time.Time, time.Duration) (Run, error)
 	ClaimNextAgentRun(context.Context, string, time.Time, time.Duration) (Run, error)
 	DeferAgentRun(context.Context, string, string, int, time.Time, string, time.Time) (Run, error)
@@ -107,6 +108,15 @@ func (s *Service) SetRunTimeout(timeout time.Duration) {
 	if timeout > 0 {
 		s.runTimeout = timeout
 	}
+}
+
+func (s *Service) ActiveForConversation(ctx context.Context, userID, conversationID string) (Run, error) {
+	userID = strings.TrimSpace(userID)
+	conversationID = strings.TrimSpace(conversationID)
+	if userID == "" || conversationID == "" {
+		return Run{}, ErrValidation
+	}
+	return s.store.GetActiveAgentRun(ctx, userID, conversationID)
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Run, bool, error) {

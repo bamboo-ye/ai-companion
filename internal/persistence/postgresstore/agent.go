@@ -87,6 +87,23 @@ func (s *Store) GetAgentRun(ctx context.Context, runID string) (agent.Run, error
 	return item, err
 }
 
+func (s *Store) GetActiveAgentRun(ctx context.Context, userID, conversationID string) (agent.Run, error) {
+	var item agent.Run
+	err := scanAgentRun(s.db.QueryRowContext(ctx, `
+		SELECT `+agentRunColumns+`
+		FROM agent.runs
+		WHERE user_id=$1 AND conversation_id=$2
+			AND status IN ('accepted','queued','running','waiting_approval','waiting_tool','cancel_requested')
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		userID, conversationID,
+	), &item)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agent.Run{}, agent.ErrNotFound
+	}
+	return item, err
+}
+
 func (s *Store) ClaimAgentRun(ctx context.Context, runID, owner string, now time.Time, lease time.Duration) (agent.Run, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

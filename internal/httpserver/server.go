@@ -225,6 +225,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("POST /v1/conversations", server.requireAuth(http.HandlerFunc(server.createConversation)))
 	mux.Handle("DELETE /v1/conversations/{conversation_id}", server.requireAuth(http.HandlerFunc(server.deleteConversation)))
 	mux.Handle("GET /v1/conversations/{conversation_id}/messages", server.requireAuth(http.HandlerFunc(server.listMessages)))
+	mux.Handle("GET /v1/conversations/{conversation_id}/active-agent-run", server.requireAuth(http.HandlerFunc(server.getActiveAgentRun)))
 	mux.Handle("POST /v1/conversations/{conversation_id}/messages", server.requireAuth(http.HandlerFunc(server.sendMessage)))
 	mux.Handle("GET /v1/generation-jobs/{job_id}", server.requireAuth(http.HandlerFunc(server.getGenerationJob)))
 	mux.Handle("GET /v1/agent-runs/{run_id}", server.requireAuth(http.HandlerFunc(server.getAgentRun)))
