@@ -698,8 +698,23 @@ class OpenRouterDecisionPort:
                 "若来源观察的 truncated 为 true 或 coverage_ratio 小于 1，不得声称内容完整；"
                 "应保留来源覆盖信息。表格型来源必须使用 table.columns 和 table.rows 传递"
                 "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
-                "成为表头或逐页可见字段，所有记录必须保留 source_locator。"
+                "成为表头或逐页可见字段。source_locator 只能放在每个 row 对象中，严禁放在"
+                "table 对象上；row.cells 的数量必须与 table.columns 完全相同。不得用省略号、"
+                "‘详见原文’、‘多个时段’或示例记录代替真实数据。"
             )
+            document_round = context.get("document_processing_round")
+            if isinstance(document_round, Mapping):
+                encoded_round = json.dumps(
+                    dict(document_round),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                system_prompt += (
+                    "当前来源过大，Harness 正按轮处理。你只处理 completed_observations 中当前"
+                    "这一轮的原文，逐条输出本轮所有可识别记录；前一轮重叠片段仅用于补全跨轮"
+                    "记录，不得因此省略当前轮数据。不要尝试总结整份文件，也不要声称未看到的"
+                    f"轮次已经完成。分轮信息：{encoded_round}。"
+                )
             if isinstance(artifact_validation, Mapping):
                 violations = artifact_validation.get("violations")
                 if isinstance(violations, list) and violations:
@@ -768,7 +783,8 @@ class OpenRouterDecisionPort:
         if quality_retry and len(model_order) > 1:
             # A structurally valid but low-quality composed payload gets one
             # deliberately diverse fallback instead of repeating the same
-            # model. The graph quality gate bounds this path to one retry.
+            # model. The graph quality gate bounds the number of rewrite
+            # passes; oversized sources checkpoint every repaired batch.
             model_order = (model_order[1],)
         _, arguments = self._select_tool_with_fallback(
             payload,
@@ -1666,6 +1682,7 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
         "task_contract": context.get("task_contract", {}),
         "artifact_validation": context.get("artifact_validation", {}),
         "source_coverage": context.get("source_coverage", {}),
+        "document_processing_round": context.get("document_processing_round", {}),
         "completed_observations": observations[-6:],
         "next_action_number": int(context.get("action_index", 0)) + 1,
         "email_profile": context.get("email_profile", {}),

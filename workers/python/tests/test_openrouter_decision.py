@@ -696,6 +696,60 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             port.requests[0]["messages"][0]["content"],
         )
 
+    def test_presentation_composer_processes_only_the_current_document_round(self) -> None:
+        arguments = {
+            "title": "体育课课程安排",
+            "audience": "学生",
+            "style": "表格",
+            "brief": "当前轮次课程记录",
+            "slide_count": 3,
+            "table": {
+                "columns": ["课程代码", "课程名称", "上课时间"],
+                "rows": [
+                    {
+                        "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                        "source_locator": "page:1",
+                    }
+                ],
+            },
+        }
+        port = StubOpenRouter(
+            [tool_response("work_generate_pptx", json.dumps(arguments, ensure_ascii=False))]
+        )
+        context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+            "document_processing_round": {
+                "batch_id": "a1:r1",
+                "round_number": 1,
+                "round_count": 3,
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "data": {"output": {"text": "PED1101 Canoeing 10:00-11:50"}},
+                }
+            ],
+        }
+        port.compose_arguments(
+            module="work",
+            message="整理所有体育课并生成中文 PPT",
+            tool_name="work_generate_pptx",
+            context=context,
+        )
+        system_prompt = port.requests[0]["messages"][0]["content"]
+        self.assertIn("只处理 completed_observations 中当前这一轮", system_prompt)
+        self.assertIn("严禁放在table对象上", system_prompt.replace(" ", ""))
+        routed = json.loads(port.requests[0]["messages"][1]["content"])
+        self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")
+        self.assertIn("PED1101", routed["completed_observations"][0]["data"]["output"]["text"])
+
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
             [

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.10.0"
+GRAPH_VERSION = "3.11.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -77,6 +77,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "email_rewrite_attempts",
             "presentation_validation",
             "presentation_rewrite_attempts",
+            "document_processing",
             "response_validation",
             "response_rewrite_attempts",
             "execution_mode",
@@ -121,13 +122,14 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     "compose_arguments": NodeContract(
         responsibility=(
             "Generate grounded arguments for one trusted-catalog tool already "
-            "selected by the router."
+            "selected by the router, checkpointing oversized document rounds "
+            "and merging validated partial records deterministically."
         ),
         kind="model",
         model_role="composer",
         recovery="checkpoint_replay",
-        max_model_calls=4,
-        allowed_writes=(*_MODEL_CONTROL_WRITES, "proposed_tool"),
+        max_model_calls=48,
+        allowed_writes=(*_MODEL_CONTROL_WRITES, "proposed_tool", "document_processing"),
     ),
     "email_quality_gate": NodeContract(
         responsibility=(
@@ -255,6 +257,23 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "steps",
         ),
     ),
+    "continue_document_extraction": NodeContract(
+        responsibility=(
+            "Continue an oversized attachment at the exact trusted next_round "
+            "without spending router or assessor calls between extraction windows."
+        ),
+        kind="deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(
+            "proposed_tool",
+            "preparation",
+            "tool_result",
+            "outcome",
+            "response",
+            "node_trace",
+            "steps",
+        ),
+    ),
     "artifact_quality_gate": NodeContract(
         responsibility=(
             "Treat generated files as evidence and verify the task contract, "
@@ -376,6 +395,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "email_rewrite_attempts",
             "presentation_validation",
             "presentation_rewrite_attempts",
+            "document_processing",
             "response_validation",
             "response_rewrite_attempts",
             "node_trace",
@@ -393,10 +413,10 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
 @dataclass(frozen=True)
 class BudgetPolicy:
     max_actions: int = 10
-    max_model_calls: int = 12
-    max_prompt_tokens: int = 200_000
-    max_completion_tokens: int = 16_000
-    max_cost_micros: int = 50_000
+    max_model_calls: int = 64
+    max_prompt_tokens: int = 1_000_000
+    max_completion_tokens: int = 128_000
+    max_cost_micros: int = 250_000
     max_tool_resumes: int = 120
     tool_poll_interval_ms: int = 500
     tool_poll_max_interval_ms: int = 5_000
@@ -409,15 +429,13 @@ class BudgetPolicy:
     def from_env(cls) -> BudgetPolicy:
         policy = cls(
             max_actions=_positive_env("AGENT_MAX_ACTIONS", 10),
-            max_model_calls=_positive_env("AGENT_MAX_MODEL_CALLS", 12),
-            max_prompt_tokens=_positive_env("AGENT_MAX_PROMPT_TOKENS", 200_000),
-            max_completion_tokens=_positive_env("AGENT_MAX_COMPLETION_TOKENS", 16_000),
-            max_cost_micros=_positive_env("AGENT_MAX_COST_MICROS", 50_000),
+            max_model_calls=_positive_env("AGENT_MAX_MODEL_CALLS", 64),
+            max_prompt_tokens=_positive_env("AGENT_MAX_PROMPT_TOKENS", 1_000_000),
+            max_completion_tokens=_positive_env("AGENT_MAX_COMPLETION_TOKENS", 128_000),
+            max_cost_micros=_positive_env("AGENT_MAX_COST_MICROS", 250_000),
             max_tool_resumes=_positive_env("AGENT_MAX_TOOL_RESUMES", 120),
             tool_poll_interval_ms=_positive_env("AGENT_TOOL_POLL_INTERVAL_MS", 500),
-            tool_poll_max_interval_ms=_positive_env(
-                "AGENT_TOOL_POLL_MAX_INTERVAL_MS", 5_000
-            ),
+            tool_poll_max_interval_ms=_positive_env("AGENT_TOOL_POLL_MAX_INTERVAL_MS", 5_000),
             max_repair_attempts=_positive_env("AGENT_MAX_REPAIR_ATTEMPTS", 2),
             max_repair_model_calls=_positive_env("AGENT_MAX_REPAIR_MODEL_CALLS", 1),
             max_repair_cost_micros=_positive_env("AGENT_MAX_REPAIR_COST_MICROS", 1_000),

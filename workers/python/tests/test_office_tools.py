@@ -505,6 +505,7 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertTrue(output["truncated"])
         self.assertLessEqual(output["token_count"], 16_000)
         self.assertLess(output["selected_chunk_count"], output["total_chunk_count"])
+        self.assertIn("[[DOCUMENT ROUND 1]]", output["text"])
         self.assertIn("[[PAGE 1]]", output["text"])
         self.assertGreater(output["round_count"], output["completed_rounds"])
         self.assertTrue(output["has_more"])

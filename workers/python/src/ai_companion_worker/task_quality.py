@@ -129,7 +129,24 @@ def validate_presentation_arguments(
         violations.append(
             {"code": "structured_rows_missing", "message": "结构化字段任务没有记录行"}
         )
-    elif task_contract.get("exhaustive") is True:
+    elif isinstance(columns, list):
+        mismatched_rows = [
+            index
+            for index, row in enumerate(rows, start=1)
+            if not isinstance(row, Mapping)
+            or not isinstance(row.get("cells"), list)
+            or len(row["cells"]) != len(columns)
+        ]
+        if mismatched_rows:
+            violations.append(
+                {
+                    "code": "table_cell_count_mismatch",
+                    "message": "每条记录的单元格数量必须与表头数量一致",
+                    "affected_rows": mismatched_rows[:20],
+                    "affected_count": len(mismatched_rows),
+                }
+            )
+    if isinstance(rows, list) and rows and task_contract.get("exhaustive") is True:
         missing_locators = sum(
             1
             for row in rows
@@ -145,7 +162,10 @@ def validate_presentation_arguments(
                     "missing_rows": missing_locators,
                 }
             )
-        time_column = _requested_field_column(columns, "time")
+        time_column = _requested_field_column(
+            columns if isinstance(columns, list) else [],
+            "time",
+        )
         if time_column >= 0:
             vague_rows: list[int] = []
             vague_pattern = re.compile(
@@ -335,7 +355,18 @@ def _is_artifact_workflow_followup(message: str) -> bool:
         return False
     if re.search(r"(?:取消|停止|不用|不做|算了|换个|另外|无关)", normalized):
         return False
-    if normalized in {"确认", "好的", "好", "开始", "继续", "可以", "重试", "再试", "重新执行", "重新开始"}:
+    if normalized in {
+        "确认",
+        "好的",
+        "好",
+        "开始",
+        "继续",
+        "可以",
+        "重试",
+        "再试",
+        "重新执行",
+        "重新开始",
+    }:
         return True
     return bool(
         re.search(
@@ -491,13 +522,14 @@ def _presentation_output_violations(
     if not requested_fields:
         return []
     outline = output.get("outline")
-    table_slides = []
+    table_slides: list[Mapping[str, Any]] = []
     if isinstance(outline, list):
-        table_slides = [
-            slide.get("table")
-            for slide in outline
-            if isinstance(slide, Mapping) and isinstance(slide.get("table"), Mapping)
-        ]
+        for slide in outline:
+            if not isinstance(slide, Mapping):
+                continue
+            table = slide.get("table")
+            if isinstance(table, Mapping):
+                table_slides.append(table)
     if not table_slides:
         return [
             {
@@ -507,11 +539,11 @@ def _presentation_output_violations(
         ]
     columns = table_slides[0].get("columns")
     violations = _requested_field_violations(columns, requested_fields)
-    row_count = sum(
-        max(0, int(value))
-        for table in table_slides
-        if isinstance((value := table.get("row_count")), int) and not isinstance(value, bool)
-    )
+    row_count = 0
+    for table in table_slides:
+        value = table.get("row_count")
+        if isinstance(value, int) and not isinstance(value, bool):
+            row_count += max(0, value)
     if row_count < 1:
         violations.append({"code": "structured_rows_missing", "message": "PPT 表格没有任何记录"})
     quality = output.get("quality_report")
