@@ -386,7 +386,11 @@ def _document_context_rounds(
             round_blocks.append(f"{marker}\n{section}{cleaned}".strip())
             round_tokens += max(1, int(chunk.token_count)) + 16
             selected_chunks += 1
-        blocks.append("\n\n".join(round_blocks))
+        # Preserve the extraction boundary in the trusted observation.  The
+        # Agent uses this marker to process oversized sources one bounded
+        # round at a time instead of feeding the re-joined document back to a
+        # single model call.  Page markers remain unchanged for citations.
+        blocks.append(f"[[DOCUMENT ROUND {round_index}]]\n" + "\n\n".join(round_blocks))
         round_manifest.append(
             {
                 "round_no": round_index,

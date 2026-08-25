@@ -277,9 +277,7 @@ def serve() -> None:
             _validate_graph_identity(run)
             gateway.bind_revision(_required_positive_int(run, "revision"))
             run_id = _required_string(run, "id")
-            definitions = (
-                gateway.definitions(run_id) if _requires_tool_definitions(run) else []
-            )
+            definitions = gateway.definitions(run_id) if _requires_tool_definitions(run) else []
             try:
                 return execute_run(
                     run,
@@ -340,8 +338,7 @@ def _serve_requests(
             error["recycle"] = _requires_process_recycle(exc)
             envelope = {"ok": False, "error": error}
         output_stream.write(
-            json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            + b"\n"
+            json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
         )
         output_stream.flush()
 
@@ -497,6 +494,7 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
             "node_trace": _json_value(result.get("node_trace")),
             "repair_history": _json_value(result.get("repair_history")),
             "repair_fingerprints": _json_value(result.get("repair_fingerprints")),
+            "document_processing": _json_value(result.get("document_processing")),
         },
         "recovery": _json_value(result.get("recovery")),
     }

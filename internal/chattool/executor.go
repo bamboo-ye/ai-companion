@@ -229,7 +229,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 		{Name: "work_list_skills", Description: "用户询问当前有哪些工作台工具、Skill 或可用能力时调用。", Parameters: emptyObject()},
 		{Name: "work_query_documents", Description: "用户要求根据文档库或已上传附件回答具体问题、查找事实或只返回文字摘要时调用。创建 PPT/PPTX、翻译 PDF 或生成其他文件时绝对不要调用。", Parameters: emptyObject()},
 		{
-			Name: "work_extract_attached_document", Description: "通用附件内容提取工具。自动按顺序轮次清洗并合并大文件。若输出 has_more=true，必须使用 next_round 作为 round_start 继续读取同一附件；完整性任务在所有轮次完成前不得生成最终制品。存在多个附件时分别处理。",
+			Name: "work_extract_attached_document", Description: "通用附件内容提取工具。自动按顺序分轮清洗大文件并保留轮次边界；Harness 会让每轮分别完成后续结构化处理，再确定性合并中间结果。若输出 has_more=true，必须使用 next_round 作为 round_start 继续读取同一附件；完整性任务在所有轮次完成前不得生成最终制品。存在多个附件时分别处理。",
 			Parameters: object([]string{"attachment_index"}, map[string]any{
 				"attachment_index": map[string]any{"type": "integer", "description": fmt.Sprintf("附件在当前消息中的序号，从 1 开始；当前共有 %d 个附件", attachmentCount), "minimum": 1, "maximum": attachmentCount},
 				"round_start":      map[string]any{"type": "integer", "description": "从第几个提取轮次开始；首次为 1，后续必须使用上次输出的 next_round", "minimum": 1, "maximum": 100},

@@ -16,6 +16,10 @@ from ai_companion_worker.agent_runtime import (
     ToolOutcome,
     ToolPreparation,
     _document_source_coverage,
+    _latest_document_continuation,
+    _merge_presentation_arguments,
+    _normalize_presentation_arguments,
+    _presentation_document_batches,
     _validate_checkpoint_identity,
     _validate_tool_arguments,
     build_graph,
@@ -396,6 +400,305 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(coverage["completed_attachment_count"], 1)
         self.assertEqual(coverage["expected_attachment_count"], 2)
         self.assertTrue(coverage["truncated"])
+
+    def test_oversized_document_rounds_are_preserved_and_merged_without_summary(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "exhaustive": True,
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "plan": {"objective": "整理全部课程并生成中文 PPT"},
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {
+                        "output": {
+                            "source_filename": "courses.pdf",
+                            "text": (
+                                "[[DOCUMENT ROUND 1]]\n[[PAGE 1]]\n"
+                                "PED1101 Canoeing 10:00-11:50\n"
+                                "[[DOCUMENT ROUND 2]]\n[[PAGE 2]]\n"
+                                "PED1102 Swimming 14:00-14:50"
+                            ),
+                            "rounds": [
+                                {"round_no": 1, "token_count": 100},
+                                {"round_no": 2, "token_count": 100},
+                            ],
+                        }
+                    },
+                }
+            ],
+        }
+        batches = _presentation_document_batches(state)  # type: ignore[arg-type]
+        self.assertEqual([item["batch_id"] for item in batches], ["a1:r1", "a1:r2"])
+        self.assertNotIn("PED1102", batches[0]["processing_text"])
+        self.assertIn("[[PREVIOUS ROUND OVERLAP", batches[1]["processing_text"])
+
+        first = _normalize_presentation_arguments(
+            {
+                "title": "课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "第一轮",
+                "slide_count": 3,
+                "table": {
+                    "title": "全部课程",
+                    "columns": ["课程代码", "课程名称", "上课时间", "来源位置"],
+                    "source_locator": "Page 1",
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "10:00-11:50"],
+                            "source_locator": "Page 1",
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        self.assertNotIn("source_locator", first["table"])
+        self.assertEqual(first["table"]["columns"], ["课程代码", "课程名称", "上课时间"])
+        self.assertEqual(len(first["table"]["rows"][0]["cells"]), 3)
+
+        merged = _merge_presentation_arguments(
+            first,
+            {
+                "title": "课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "第二轮",
+                "slide_count": 3,
+                "table": {
+                    "title": "全部课程",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "10:00-11:50"],
+                            "source_locator": "Page 1 overlap",
+                        },
+                        {
+                            "cells": ["PED1102", "Swimming", "14:00-14:50"],
+                            "source_locator": "Page 2",
+                        },
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        self.assertEqual(len(merged["table"]["rows"]), 2)
+        self.assertIn("Page 1 overlap", merged["table"]["rows"][0]["source_locator"])
+        self.assertIn("2 条来源记录", merged["brief"])
+
+    def test_document_continuation_uses_exact_next_round(self) -> None:
+        state = {
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 2, "round_start": 5},
+                    "data": {"output": {"has_more": True, "next_round": 9}},
+                }
+            ]
+        }
+        self.assertEqual(
+            _latest_document_continuation(state),  # type: ignore[arg-type]
+            {"attachment_index": 2, "round_start": 9},
+        )
+
+    def test_exhaustive_ppt_composition_checkpoints_each_document_round(self) -> None:
+        class RoundDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(ModelDecision(intent="unused"))
+                self.composed_batches: list[str] = []
+
+            def decide(self, **values: Any) -> ModelDecision:
+                observations = values["context"].get("observations", [])
+                if not observations:
+                    return ModelDecision(
+                        intent="extract",
+                        tool_name="work_extract_attached_document",
+                        tool_arguments={"attachment_index": 1, "round_start": 1},
+                    )
+                return ModelDecision(
+                    intent="generate_pptx",
+                    tool_name="work_generate_pptx",
+                    requires_argument_composition=True,
+                )
+
+            def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
+                context = values["context"]
+                batch = context["document_processing_round"]
+                self.composed_batches.append(str(batch["batch_id"]))
+                text = context["observations"][0]["data"]["output"]["text"]
+                if "PED1102" in text and "[[CURRENT ROUND]]" in text:
+                    code, name, schedule, locator = (
+                        "PED1102",
+                        "Swimming",
+                        "周四 14:00-14:50",
+                        "Page 2",
+                    )
+                else:
+                    code, name, schedule, locator = (
+                        "PED1101",
+                        "Canoeing",
+                        "周三 10:00-11:50",
+                        "Page 1",
+                    )
+                return {
+                    "title": "体育课课程表",
+                    "audience": "学生",
+                    "style": "表格",
+                    "brief": "当前轮次",
+                    "slide_count": 3,
+                    "table": {
+                        "columns": ["课程代码", "课程名称", "上课时间"],
+                        "rows": [
+                            {
+                                "cells": [code, name, schedule],
+                                "source_locator": locator,
+                            }
+                        ],
+                    },
+                }
+
+            def assess(self, **_values: Any) -> AgentAssessment:
+                return AgentAssessment(status="continue", reason="继续生成 PPT")
+
+        class RoundTools(FakeTools):
+            def prepare(self, **values: Any) -> ToolPreparation:
+                self.prepared.append(dict(values))
+                if values["tool_name"] == "work_extract_attached_document":
+                    return ToolPreparation(
+                        status="completed",
+                        tool_name="work_extract_attached_document",
+                        response="文档已完整提取。",
+                        data={
+                            "output": {
+                                "source_filename": "courses.pdf",
+                                "text": (
+                                    "[[DOCUMENT ROUND 1]]\n[[PAGE 1]]\n"
+                                    "PED1101 Canoeing 10:00-11:50\n"
+                                    "[[DOCUMENT ROUND 2]]\n[[PAGE 2]]\n"
+                                    "PED1102 Swimming 14:00-14:50"
+                                ),
+                                "rounds": [
+                                    {"round_no": 1, "token_count": 100},
+                                    {"round_no": 2, "token_count": 100},
+                                ],
+                                "selected_chunk_count": 2,
+                                "total_chunk_count": 2,
+                                "completed_rounds": 2,
+                                "round_count": 2,
+                                "round_start": 1,
+                                "next_round": 3,
+                                "has_more": False,
+                                "truncated": False,
+                                "coverage_ratio": 1.0,
+                            }
+                        },
+                    )
+                arguments = values["arguments"]
+                rows = arguments["table"]["rows"]
+                return ToolPreparation(
+                    status="completed",
+                    tool_name="work_generate_pptx",
+                    response="PPT 已生成。",
+                    data={
+                        "kind": "skill_run",
+                        "id": "round-pptx",
+                        "skill_name": "office.pptx_generate",
+                        "status": "succeeded",
+                        "output": {
+                            "outline": [
+                                {
+                                    "page": 2,
+                                    "table": {
+                                        "columns": arguments["table"]["columns"],
+                                        "row_count": len(rows),
+                                        "source_locators": [row["source_locator"] for row in rows],
+                                    },
+                                }
+                            ],
+                            "quality_report": {
+                                "passed": True,
+                                "violations": [],
+                                "table_row_count": len(rows),
+                            },
+                            "source_coverage": {
+                                "coverage_ratio": 1.0,
+                                "truncated": False,
+                            },
+                            "source_overwritten": False,
+                        },
+                        "files": [{"name": "courses.pptx"}],
+                    },
+                )
+
+        decisions = RoundDecisions()
+        tools = RoundTools(ToolPreparation(status="completed", tool_name=""))
+        runtime = AgentRuntime(
+            build_graph(
+                checkpointer=InMemorySaver(),
+                decisions=decisions,
+                tools=tools,
+            )
+        )
+        payload = agent_input("run-round-processing", "work")
+        payload["user_message"] = (
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        payload["context"]["tools"] = [
+            {
+                "name": "work_extract_attached_document",
+                "description": "提取附件",
+                "parameters": {
+                    "type": "object",
+                    "required": ["attachment_index"],
+                    "properties": {
+                        "attachment_index": {"type": "integer"},
+                        "round_start": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                "repeatable": True,
+                "identity_fields": ["attachment_index", "round_start"],
+            },
+            {
+                "name": "work_generate_pptx",
+                "description": "生成 PPTX",
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "required": ["title", "audience", "style", "brief", "slide_count"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                        "table": {"type": "object"},
+                        "task_contract": {"type": "object"},
+                        "source_coverage": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        ]
+        result = runtime.start(payload)
+        self.assertEqual(result["outcome"], "completed")
+        self.assertEqual(decisions.composed_batches, ["a1:r1", "a1:r2"])
+        ppt_arguments = next(
+            item["arguments"]
+            for item in tools.prepared
+            if item["tool_name"] == "work_generate_pptx"
+        )
+        self.assertEqual(
+            [row["cells"][0] for row in ppt_arguments["table"]["rows"]],
+            ["PED1101", "PED1102"],
+        )
+        self.assertTrue(result["document_processing"]["complete"])
+        self.assertEqual(result["document_processing"]["merged_record_count"], 2)
 
     def test_tool_schema_rejects_non_finite_values_and_unsupported_keywords(self) -> None:
         with self.assertRaisesRegex(ValueError, "finite"):

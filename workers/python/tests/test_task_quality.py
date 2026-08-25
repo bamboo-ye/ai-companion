@@ -65,6 +65,28 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_structured_presentation_rejects_column_cell_mismatch_before_worker(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间", "来源位置"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        mismatch = next(item for item in violations if item["code"] == "table_cell_count_mismatch")
+        self.assertEqual(mismatch["affected_rows"], [1])
+
     def test_exhaustive_code_table_must_cover_repeated_source_record_keys(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

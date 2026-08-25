@@ -53,6 +53,7 @@ from ai_companion_worker.tool_repair import (
     known_repair_available,
     preflight_repair,
     repair_operator_allowed,
+    safe_basename,
 )
 
 ModuleKey = Literal["companion", "life", "work"]
@@ -116,6 +117,7 @@ class AgentState(AgentInput, total=False):
     execution_mode_reason: str
     task_contract: dict[str, Any]
     artifact_validation: dict[str, Any]
+    document_processing: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -368,6 +370,12 @@ def _normalize_presentation_arguments(
     """
 
     normalized = dict(arguments)
+    filename = normalized.get("filename")
+    if isinstance(filename, str) and filename.strip():
+        # The presentation quality gate precedes generic preflight in the
+        # graph. Apply the same allowlisted basename normalization here so a
+        # repairable path cannot be trapped behind that gate.
+        normalized["filename"] = safe_basename(filename, ".pptx")
     table = normalized.get("table")
     table_copy = dict(table) if isinstance(table, Mapping) else None
     title = normalized.get("title")
@@ -375,19 +383,61 @@ def _normalize_presentation_arguments(
         table_title = table_copy.get("title") if table_copy is not None else None
         plan = state.get("plan", {})
         objective = plan.get("objective") if isinstance(plan, Mapping) else None
-        fallback = table_title if isinstance(table_title, str) and table_title.strip() else objective
+        fallback = (
+            table_title if isinstance(table_title, str) and table_title.strip() else objective
+        )
         normalized["title"] = (
             fallback.strip() if isinstance(fallback, str) and fallback.strip() else "演示文稿"
         )
 
     task_contract = state.get("task_contract", {})
-    if (
-        table_copy is not None
-        and isinstance(task_contract, Mapping)
-        and str(task_contract.get("output_language") or "").casefold().startswith("zh")
-    ):
+    if table_copy is not None:
+        # source_locator belongs to every row.  The trusted schema deliberately
+        # rejects a table-level copy, but models commonly add one after seeing
+        # source-location requirements in the prompt.
+        table_copy.pop("source_locator", None)
+        requested = _presentation_requested_columns(task_contract)
         columns = table_copy.get("columns")
-        if isinstance(columns, list):
+        rows = table_copy.get("rows")
+        if requested and isinstance(columns, list) and isinstance(rows, list):
+            column_fields = [_presentation_column_field(value) for value in columns]
+            requested_fields = [field for field, _ in requested]
+            selected_indices: list[int] = []
+            for field in requested_fields:
+                try:
+                    selected_indices.append(column_fields.index(field))
+                except ValueError:
+                    selected_indices = []
+                    break
+            source_index = next(
+                (index for index, field in enumerate(column_fields) if field == "source_locator"),
+                -1,
+            )
+            normalized_rows: list[dict[str, Any]] = []
+            for raw_row in rows:
+                if not isinstance(raw_row, Mapping):
+                    continue
+                cells = raw_row.get("cells")
+                if not isinstance(cells, list):
+                    continue
+                if selected_indices and max(selected_indices, default=-1) < len(cells):
+                    visible_cells = [str(cells[index]).strip() for index in selected_indices]
+                elif len(cells) >= len(requested_fields):
+                    # When headings are localized but still ordered according
+                    # to the task contract, preserve that trusted order.
+                    visible_cells = [str(value).strip() for value in cells[: len(requested_fields)]]
+                else:
+                    visible_cells = [str(value).strip() for value in cells]
+                locator = str(raw_row.get("source_locator") or "").strip()
+                if not locator and 0 <= source_index < len(cells):
+                    locator = str(cells[source_index] or "").strip()
+                normalized_rows.append({"cells": visible_cells, "source_locator": locator})
+            chinese = isinstance(task_contract, Mapping) and str(
+                task_contract.get("output_language") or ""
+            ).casefold().startswith("zh")
+            table_copy["columns"] = [label if chinese else field for field, label in requested]
+            table_copy["rows"] = normalized_rows
+        elif isinstance(columns, list):
             aliases = {
                 "code": "课程代码",
                 "name": "课程名称",
@@ -403,6 +453,306 @@ def _normalize_presentation_arguments(
             ]
         normalized["table"] = table_copy
     return normalized
+
+
+def _presentation_requested_columns(task_contract: Any) -> list[tuple[str, str]]:
+    if not isinstance(task_contract, Mapping):
+        return []
+    values = task_contract.get("requested_fields")
+    if not isinstance(values, list):
+        return []
+    labels = {
+        "code": "课程代码",
+        "name": "课程名称",
+        "time": "上课时间",
+        "date": "日期",
+        "schedule": "上课时间",
+        "venue": "上课地点",
+        "location": "上课地点",
+    }
+    result: list[tuple[str, str]] = []
+    for value in values:
+        field = str(value or "").strip().casefold()
+        if field in ("date", "schedule"):
+            field = "time"
+        elif field == "location":
+            field = "venue"
+        if field and field in labels and field not in {item[0] for item in result}:
+            result.append((field, labels[field]))
+    return result
+
+
+def _presentation_column_field(value: Any) -> str:
+    normalized = re.sub(r"[\s_\-/:：]+", "", str(value or "").strip().casefold())
+    aliases = {
+        "code": "code",
+        "coursecode": "code",
+        "课程代码": "code",
+        "课程编号": "code",
+        "name": "name",
+        "coursename": "name",
+        "课程名称": "name",
+        "课程名": "name",
+        "time": "time",
+        "date": "time",
+        "schedule": "time",
+        "datetime": "time",
+        "上课时间": "time",
+        "时间": "time",
+        "日期": "time",
+        "venue": "venue",
+        "location": "venue",
+        "上课地点": "venue",
+        "地点": "venue",
+        "sourcelocator": "source_locator",
+        "source": "source_locator",
+        "来源位置": "source_locator",
+        "来源": "source_locator",
+    }
+    return aliases.get(normalized, normalized)
+
+
+_DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]\s*$")
+_DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
+
+
+def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
+    """Return ordered, de-duplicated extraction rounds for downstream work."""
+
+    batches: dict[tuple[int, int], dict[str, Any]] = {}
+    for observation in state.get("observations", []):
+        if not isinstance(observation, Mapping):
+            continue
+        if observation.get("tool_name") != "work_extract_attached_document":
+            continue
+        arguments = observation.get("arguments")
+        attachment_index = (
+            int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
+        )
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        if not isinstance(output, Mapping):
+            continue
+        text = output.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        manifest = output.get("rounds")
+        manifest_items = manifest if isinstance(manifest, list) else []
+        tokens_by_round: dict[int, int] = {}
+        for item in manifest_items:
+            if not isinstance(item, Mapping):
+                continue
+            item_round = item.get("round_no")
+            if isinstance(item_round, int) and not isinstance(item_round, bool):
+                tokens_by_round[item_round] = int(item.get("token_count") or 0)
+        matches = list(_DOCUMENT_ROUND_MARKER.finditer(text))
+        if matches:
+            for index, match in enumerate(matches):
+                round_no = int(match.group("round"))
+                start = match.end()
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+                round_text = text[start:end].strip()
+                if round_text:
+                    batches[(attachment_index, round_no)] = {
+                        "attachment_index": attachment_index,
+                        "round_no": round_no,
+                        "text": round_text,
+                        "token_count": tokens_by_round.get(round_no, 0),
+                        "source_filename": str(output.get("source_filename") or ""),
+                    }
+            continue
+        # Backward-compatible fallback for observations created before round
+        # markers were introduced.  Such a window remains one bounded batch.
+        round_no = int(output.get("round_start") or 1)
+        batches[(attachment_index, round_no)] = {
+            "attachment_index": attachment_index,
+            "round_no": round_no,
+            "text": text.strip(),
+            "token_count": int(output.get("token_count") or 0),
+            "source_filename": str(output.get("source_filename") or ""),
+        }
+    ordered = [batches[key] for key in sorted(batches)]
+    previous_tail = ""
+    for batch in ordered:
+        current = str(batch["text"])
+        if previous_tail:
+            batch["processing_text"] = (
+                "[[PREVIOUS ROUND OVERLAP — CONTEXT ONLY]]\n"
+                + previous_tail
+                + "\n[[CURRENT ROUND]]\n"
+                + current
+            )
+        else:
+            batch["processing_text"] = current
+        previous_tail = current[-_DOCUMENT_PROCESSING_OVERLAP_CHARS:]
+        batch["batch_id"] = f"a{batch['attachment_index']}:r{batch['round_no']}"
+    return ordered
+
+
+def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
+    locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
+    return {
+        "tool_name": "work_extract_attached_document",
+        "arguments": {
+            "attachment_index": int(batch.get("attachment_index") or 1),
+            "round_start": int(batch.get("round_no") or 1),
+        },
+        "status": "completed",
+        "response": f"正在处理文档分轮 {locator}",
+        "data": {
+            "output": {
+                "source_filename": str(batch.get("source_filename") or ""),
+                "format": "markdown",
+                "text": str(batch.get("processing_text") or batch.get("text") or ""),
+                "round_start": int(batch.get("round_no") or 1),
+                "completed_rounds": 1,
+                "round_count": 1,
+                "truncated": False,
+                "coverage_ratio": 1.0,
+                "source_locator": locator,
+            }
+        },
+    }
+
+
+def _presentation_row_key(row: Mapping[str, Any]) -> str:
+    cells = row.get("cells")
+    if not isinstance(cells, list):
+        return ""
+    normalized = [re.sub(r"\s+", " ", str(value or "").strip()).casefold() for value in cells]
+    return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
+def _merge_presentation_arguments(
+    base: Mapping[str, Any],
+    addition: Mapping[str, Any],
+    state: AgentState,
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key in ("title", "audience", "style", "brief", "filename"):
+        value = addition.get(key)
+        if key not in merged or not str(merged.get(key) or "").strip():
+            if value is not None:
+                merged[key] = value
+    base_table = base.get("table")
+    added_table = addition.get("table")
+    if isinstance(base_table, Mapping) or isinstance(added_table, Mapping):
+        first = dict(base_table) if isinstance(base_table, Mapping) else {}
+        second = dict(added_table) if isinstance(added_table, Mapping) else {}
+        columns = first.get("columns") or second.get("columns") or []
+        rows: list[dict[str, Any]] = []
+        row_positions: dict[str, int] = {}
+        for raw in [*(first.get("rows") or []), *(second.get("rows") or [])]:
+            if not isinstance(raw, Mapping):
+                continue
+            row = {
+                "cells": list(raw.get("cells") or []),
+                "source_locator": str(raw.get("source_locator") or "").strip(),
+            }
+            key = _presentation_row_key(row)
+            if not key:
+                continue
+            if key in row_positions:
+                position = row_positions[key]
+                locators = [
+                    value.strip()
+                    for value in (
+                        rows[position].get("source_locator", ""),
+                        row.get("source_locator", ""),
+                    )
+                    if isinstance(value, str) and value.strip()
+                ]
+                rows[position]["source_locator"] = "; ".join(dict.fromkeys(locators))[:160]
+                continue
+            row_positions[key] = len(rows)
+            rows.append(row)
+        merged["table"] = {
+            "title": str(first.get("title") or second.get("title") or "").strip()[:60],
+            "columns": list(columns),
+            "rows": rows,
+        }
+        merged["brief"] = f"依据已逐轮提取、校验并合并的 {len(rows)} 条来源记录生成结构化演示文稿。"
+        requested_slides = max(
+            int(base.get("slide_count") or 0),
+            int(addition.get("slide_count") or 0),
+            3,
+        )
+        merged["slide_count"] = min(20, max(requested_slides, math.ceil(len(rows) / 6) + 2))
+    return _normalize_presentation_arguments(merged, state)
+
+
+def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict[str, Any]:
+    base = dict(arguments)
+    table = base.get("table")
+    if not isinstance(table, Mapping) or not isinstance(report, Mapping):
+        return base
+    affected: set[int] = set()
+    violations = report.get("violations")
+    if isinstance(violations, list):
+        for violation in violations:
+            if not isinstance(violation, Mapping):
+                continue
+            rows = violation.get("affected_rows")
+            if isinstance(rows, list):
+                affected.update(
+                    int(value)
+                    for value in rows
+                    if isinstance(value, int) and not isinstance(value, bool) and value > 0
+                )
+    table_copy = dict(table)
+    rows = table_copy.get("rows")
+    if affected and isinstance(rows, list):
+        table_copy["rows"] = [
+            row for index, row in enumerate(rows, start=1) if index not in affected
+        ]
+    table_copy.pop("source_locator", None)
+    base["table"] = table_copy
+    return base
+
+
+def _missing_presentation_record_keys(
+    arguments: Mapping[str, Any],
+    expected: list[str],
+) -> list[str]:
+    table = arguments.get("table")
+    rows = table.get("rows") if isinstance(table, Mapping) else None
+    observed: set[str] = set()
+    if isinstance(rows, list):
+        for row in rows:
+            cells = row.get("cells") if isinstance(row, Mapping) else None
+            if not isinstance(cells, list) or not cells:
+                continue
+            code = re.sub(r"[^A-Z0-9]", "", str(cells[0] or "").upper())
+            observed.update(key for key in expected if key in code)
+    return [key for key in expected if key not in observed]
+
+
+def _repair_document_batches(
+    batches: list[dict[str, Any]],
+    base_arguments: Mapping[str, Any],
+    state: AgentState,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    expected = presentation_source_record_keys(
+        state.get("observations", []),
+        state.get("task_contract", {}),
+    )
+    missing = _missing_presentation_record_keys(base_arguments, expected)
+    if not missing:
+        return batches, []
+    selected = [
+        batch
+        for batch in batches
+        if any(
+            key
+            in re.sub(
+                r"[^A-Z0-9]",
+                "",
+                str(batch.get("text") or "").upper(),
+            )
+            for key in missing
+        )
+    ]
+    return selected or batches, missing
 
 
 def _validate_schema_value(
@@ -735,6 +1085,7 @@ def _supervise(
             context.get("history") if isinstance(context, dict) else None,
         ),
         "artifact_validation": {},
+        "document_processing": {},
         "needs_response": False,
         "node_contracts": node_contract_manifest(),
         "budget_limits": limits,
@@ -1282,6 +1633,71 @@ def build_graph(
         composer = getattr(decisions, "compose_arguments", None)
         if not callable(composer):
             raise ValueError("decision port must implement compose_arguments for marked tools")
+        normalized_tool_name = tool_name.strip()
+        presentation_tool = normalized_tool_name in (
+            "work_create_pptx_outline",
+            "work_generate_pptx",
+        )
+        task_contract = state.get("task_contract", {})
+        all_document_batches = (
+            _presentation_document_batches(state)
+            if presentation_tool
+            and isinstance(task_contract, Mapping)
+            and task_contract.get("exhaustive") is True
+            and bool(_presentation_requested_columns(task_contract))
+            else []
+        )
+        round_processing = len(all_document_batches) > 1
+        rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
+        raw_processing = state.get("document_processing", {})
+        processing = dict(raw_processing) if isinstance(raw_processing, Mapping) else {}
+        raw_base_arguments = proposed.get("arguments")
+        base_arguments = dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
+        selected_batches = all_document_batches
+        missing_keys: list[str] = []
+        if round_processing and rewrite_attempt > 0:
+            base_arguments = _normalize_presentation_arguments(
+                _presentation_repair_base(
+                    base_arguments,
+                    state.get("artifact_validation", {}),
+                ),
+                state,
+            )
+            selected_batches, missing_keys = _repair_document_batches(
+                all_document_batches,
+                base_arguments,
+                state,
+            )
+        processing_key = (
+            canonical_arguments_hash(
+                {
+                    "version": "document-processing-v1",
+                    "tool_name": normalized_tool_name,
+                    "rewrite_attempt": rewrite_attempt,
+                    "batches": [batch.get("batch_id") for batch in selected_batches],
+                }
+            )
+            if round_processing
+            else ""
+        )
+        if round_processing and processing.get("processing_key") != processing_key:
+            processing = {
+                "version": "document-processing-v1",
+                "processing_key": processing_key,
+                "tool_name": normalized_tool_name,
+                "rewrite_attempt": rewrite_attempt,
+                "batch_count": len(selected_batches),
+                "next_batch_index": 0,
+                "processed_batches": [],
+                "missing_record_keys": missing_keys,
+                "complete": False,
+            }
+        batch: dict[str, Any] | None = None
+        if round_processing:
+            batch_index = int(processing.get("next_batch_index") or 0)
+            if not 0 <= batch_index < len(selected_batches):
+                raise ValueError("document processing batch checkpoint is out of range")
+            batch = selected_batches[batch_index]
         started_ns = time.perf_counter_ns()
         composition_context = with_model_allowance(
             state,
@@ -1289,37 +1705,60 @@ def build_graph(
             node=node,
         )
         composition_context["agent_plan"] = dict(state.get("plan", {}))
-        composition_context["observations"] = list(state.get("observations", []))
+        composition_context["observations"] = (
+            [_document_batch_observation(batch)]
+            if batch is not None
+            else list(state.get("observations", []))
+        )
         composition_context["action_index"] = state.get("action_index", 0)
-        composition_context["task_contract"] = dict(state.get("task_contract", {}))
+        composition_context["task_contract"] = dict(task_contract)
         composition_context["email_validation"] = dict(state.get("email_validation", {}))
         composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
+        composition_context["source_coverage"] = _document_source_coverage(state)
+        composition_context["previous_arguments"] = base_arguments
+        if batch is not None:
+            composition_context["document_processing_round"] = {
+                "version": "document-processing-v1",
+                "batch_id": batch.get("batch_id"),
+                "round_number": int(processing.get("next_batch_index") or 0) + 1,
+                "round_count": len(selected_batches),
+                "source_round": int(batch.get("round_no") or 1),
+                "attachment_index": int(batch.get("attachment_index") or 1),
+                "rewrite_attempt": rewrite_attempt,
+                "missing_record_keys": missing_keys,
+            }
         try:
             arguments = composer(
                 module=state["module"],
                 message=state["user_message"],
-                tool_name=tool_name.strip(),
+                tool_name=normalized_tool_name,
                 context=composition_context,
             )
             if not isinstance(arguments, Mapping):
                 raise ValueError("composed tool arguments must be an object")
             normalized_arguments = dict(arguments)
-            definition = _trusted_tool_definition(state, tool_name.strip())
+            definition = _trusted_tool_definition(state, normalized_tool_name)
             if definition is None:
                 raise ValueError("argument composition requires a trusted tool definition")
-            if tool_name.strip() in ("work_create_pptx_outline", "work_generate_pptx"):
+            if presentation_tool:
+                normalized_arguments = _normalize_presentation_arguments(
+                    normalized_arguments,
+                    state,
+                )
+                if batch is not None:
+                    normalized_arguments = _merge_presentation_arguments(
+                        base_arguments,
+                        normalized_arguments,
+                        state,
+                    )
                 parameters = definition.get("parameters")
                 properties = (
                     parameters.get("properties") if isinstance(parameters, Mapping) else None
                 )
                 if isinstance(properties, Mapping) and "task_contract" in properties:
-                    normalized_arguments["task_contract"] = dict(state.get("task_contract", {}))
+                    normalized_arguments["task_contract"] = dict(task_contract)
                 if isinstance(properties, Mapping) and "source_coverage" in properties:
                     normalized_arguments["source_coverage"] = _document_source_coverage(state)
-                normalized_arguments = _normalize_presentation_arguments(
-                    normalized_arguments,
-                    state,
-                )
         except ModelBudgetExceeded as exc:
             return model_terminal_update(state, node=node, reason=str(exc))
         except Exception as exc:
@@ -1330,18 +1769,64 @@ def build_graph(
                 started_ns=started_ns,
                 error=exc,
             )
+        model_update = model_observability_update(
+            state,
+            node=node,
+            role="composer",
+            started_ns=started_ns,
+        )
+        processing_update = processing
+        compose_more = False
+        if batch is not None:
+            raw_processed = processing.get("processed_batches")
+            processed = list(raw_processed) if isinstance(raw_processed, list) else []
+            processed.append(
+                {
+                    "batch_id": batch.get("batch_id"),
+                    "attachment_index": batch.get("attachment_index"),
+                    "source_round": batch.get("round_no"),
+                    "input_characters": len(str(batch.get("processing_text") or "")),
+                    "record_count": len(
+                        normalized_arguments.get("table", {}).get("rows", [])
+                        if isinstance(normalized_arguments.get("table"), Mapping)
+                        else []
+                    ),
+                }
+            )
+            next_batch_index = int(processing.get("next_batch_index") or 0) + 1
+            compose_more = next_batch_index < len(selected_batches)
+            processing_update = {
+                **processing,
+                "next_batch_index": next_batch_index,
+                "processed_batches": processed,
+                "complete": not compose_more,
+                "merged_record_count": len(
+                    normalized_arguments.get("table", {}).get("rows", [])
+                    if isinstance(normalized_arguments.get("table"), Mapping)
+                    else []
+                ),
+            }
+            trace = model_update.get("node_trace")
+            if isinstance(trace, list) and trace and isinstance(trace[-1], dict):
+                details = trace[-1].get("details")
+                if isinstance(details, dict):
+                    details.update(
+                        {
+                            "document_processing": True,
+                            "batch_id": batch.get("batch_id"),
+                            "batch_number": next_batch_index,
+                            "batch_count": len(selected_batches),
+                            "merged_record_count": processing_update["merged_record_count"],
+                        }
+                    )
         return {
-            **model_observability_update(
-                state,
-                node=node,
-                role="composer",
-                started_ns=started_ns,
-            ),
+            **model_update,
             "proposed_tool": {
-                "name": tool_name.strip(),
+                "name": normalized_tool_name,
                 "arguments": normalized_arguments,
-                "compose_arguments": False,
+                "compose_arguments": compose_more,
             },
+            "document_processing": processing_update,
             "steps": state.get("steps", 0) + 1,
         }
 
@@ -1354,6 +1839,8 @@ def build_graph(
             "model_unavailable",
         ):
             return "finalize"
+        if state.get("proposed_tool", {}).get("compose_arguments") is True:
+            return "compose_arguments"
         return "email_quality_gate"
 
     def email_quality_gate(state: AgentState) -> dict[str, Any]:
@@ -1375,16 +1862,20 @@ def build_graph(
                             "code": "trusted_schema_invalid",
                             "message": "演示文稿参数未通过可信 Schema 校验",
                             "validator": type(exc).__name__,
+                            "reason": str(exc).strip()[:240],
                         }
                     )
-            violations = [*schema_violations, *validate_presentation_arguments(
-                arguments,
-                state.get("task_contract", {}),
-                expected_record_keys=presentation_source_record_keys(
-                    state.get("observations", []),
+            violations = [
+                *schema_violations,
+                *validate_presentation_arguments(
+                    arguments,
                     state.get("task_contract", {}),
+                    expected_record_keys=presentation_source_record_keys(
+                        state.get("observations", []),
+                        state.get("task_contract", {}),
+                    ),
                 ),
-            )]
+            ]
             attempts = int(state.get("presentation_rewrite_attempts", 0))
             report = {
                 "policy_version": "presentation-arguments-v1",
@@ -1485,15 +1976,15 @@ def build_graph(
         profile = context.get("email_profile", {}) if isinstance(context, dict) else {}
         if not isinstance(profile, Mapping):
             profile = {}
-        violations = validate_email_arguments(
+        email_violations = validate_email_arguments(
             arguments,
             message=state["user_message"],
             email_profile=profile,
         )
-        report = email_quality_report(violations)
+        report = email_quality_report(email_violations)
         attempts = int(state.get("email_rewrite_attempts", 0))
         report["rewrite_attempt"] = attempts
-        if not violations:
+        if not email_violations:
             return {
                 "email_validation": report,
                 "node_trace": [
@@ -1527,7 +2018,7 @@ def build_graph(
                         started_ns=started_ns,
                         details={
                             "policy_version": EMAIL_DRAFT_POLICY_VERSION,
-                            "violations": violations,
+                            "violations": email_violations,
                             "rewrite_attempt": attempts + 1,
                         },
                     ),
@@ -1546,7 +2037,7 @@ def build_graph(
                     started_ns=started_ns,
                     details={
                         "policy_version": EMAIL_DRAFT_POLICY_VERSION,
-                        "violations": violations,
+                        "violations": email_violations,
                         "rewrite_attempt": attempts,
                     },
                 ),
@@ -2084,6 +2575,8 @@ def build_graph(
             return "wait_task"
         if state.get("outcome") == "tool_failed":
             return "classify_tool_failure"
+        if _latest_document_continuation(state):
+            return "continue_document_extraction"
         # A generated file is evidence, not proof that the user objective was
         # satisfied. Artifact-producing skills pass through a deterministic
         # contract gate before the Harness may finalize the run.
@@ -2095,6 +2588,45 @@ def build_graph(
         if state.get("execution_mode") != "agentic":
             return "finalize"
         return "assess_progress"
+
+    def continue_document_extraction(state: AgentState) -> dict[str, Any]:
+        arguments = _latest_document_continuation(state)
+        if not arguments:
+            raise ValueError("document continuation requires a pending extraction round")
+        if state.get("action_index", 0) >= state.get("action_budget", policy.max_actions):
+            return {
+                "outcome": "action_limit",
+                "response": "大文件仍有未读取轮次，但本次运行的文档行动预算已用完。",
+                "node_trace": [
+                    *state.get("node_trace", []),
+                    _trace_event(
+                        "continue_document_extraction",
+                        "blocked",
+                        details={"reason": "action_limit", **arguments},
+                    ),
+                ],
+                "steps": state.get("steps", 0) + 1,
+            }
+        return {
+            "proposed_tool": {
+                "name": "work_extract_attached_document",
+                "arguments": arguments,
+                "compose_arguments": False,
+            },
+            "preparation": {},
+            "tool_result": {},
+            "outcome": "",
+            "response": "正在继续读取并处理大文件的下一轮内容。",
+            "node_trace": [
+                *state.get("node_trace", []),
+                _trace_event(
+                    "continue_document_extraction",
+                    "succeeded",
+                    details=arguments,
+                ),
+            ],
+            "steps": state.get("steps", 0) + 1,
+        }
 
     def artifact_quality_gate(state: AgentState) -> dict[str, Any]:
         started_ns = time.perf_counter_ns()
@@ -2832,6 +3364,7 @@ def build_graph(
             "email_rewrite_attempts": 0,
             "presentation_validation": {},
             "presentation_rewrite_attempts": 0,
+            "document_processing": {},
             "node_trace": [
                 *state.get("node_trace", []),
                 _trace_event("continue_action", "succeeded"),
@@ -2849,8 +3382,26 @@ def build_graph(
             artifact_validation.get("applicable") is True
             and artifact_validation.get("passed") is not True
         ):
-            outcome = "artifact_quality_failed"
-            response = "生成文件未通过任务完整性与制品质量门禁，已停止交付不合格结果。"
+            # Preserve a more specific upstream model terminal.  Earlier
+            # versions overwrote model_invalid_response here, which made a
+            # malformed repair response look like a generic artifact failure.
+            if outcome not in (
+                "model_budget_exhausted",
+                "model_version_mismatch",
+                "model_authentication_error",
+                "model_invalid_response",
+                "model_unavailable",
+            ):
+                outcome = "artifact_quality_failed"
+                violation_codes = [
+                    str(item.get("code") or "")
+                    for item in artifact_validation.get("violations", [])
+                    if isinstance(item, Mapping) and str(item.get("code") or "").strip()
+                ]
+                detail = "、".join(dict.fromkeys(violation_codes[:5]))
+                response = "生成文件未通过任务完整性与制品质量门禁，已停止交付不合格结果。"
+                if detail:
+                    response += f" 未通过项：{detail}。"
         elif outcome in ("", "completed") and not task_contract_artifact_satisfied(
             state.get("task_contract", {}), artifact_validation
         ):
@@ -2897,6 +3448,7 @@ def build_graph(
     register("commit_tool", commit_tool)
     register("reject_tool", reject_tool)
     register("observe_result", observe_result)
+    register("continue_document_extraction", continue_document_extraction)
     register("artifact_quality_gate", artifact_quality_gate)
     register("classify_tool_failure", classify_tool_failure)
     register("apply_known_repair", apply_known_repair_node)
@@ -2947,6 +3499,7 @@ def build_graph(
         "compose_arguments",
         after_composition,
         {
+            "compose_arguments": "compose_arguments",
             "email_quality_gate": "email_quality_gate",
             "finalize": "finalize",
         },
@@ -2997,9 +3550,20 @@ def build_graph(
         after_observation,
         {
             "wait_task": "wait_task",
+            "continue_document_extraction": "continue_document_extraction",
             "assess_progress": "assess_progress",
             "classify_tool_failure": "classify_tool_failure",
             "artifact_quality_gate": "artifact_quality_gate",
+            "finalize": "finalize",
+        },
+    )
+    builder.add_conditional_edges(
+        "continue_document_extraction",
+        lambda state: (
+            "finalize" if state.get("outcome") == "action_limit" else "preflight_normalize"
+        ),
+        {
+            "preflight_normalize": "preflight_normalize",
             "finalize": "finalize",
         },
     )
@@ -3172,6 +3736,30 @@ def _latest_observation_requires_artifact_gate(state: AgentState) -> bool:
         return False
     data = observations[-1].get("data")
     return artifact_observation_applicable(data)
+
+
+def _latest_document_continuation(state: AgentState) -> dict[str, int]:
+    observations = state.get("observations", [])
+    if not observations:
+        return {}
+    latest = observations[-1]
+    if (
+        not isinstance(latest, Mapping)
+        or latest.get("tool_name") != "work_extract_attached_document"
+    ):
+        return {}
+    data = latest.get("data")
+    output = data.get("output") if isinstance(data, Mapping) else None
+    if not isinstance(output, Mapping) or output.get("has_more") is not True:
+        return {}
+    next_round = output.get("next_round")
+    if not isinstance(next_round, int) or isinstance(next_round, bool) or next_round < 1:
+        return {}
+    arguments = latest.get("arguments")
+    attachment_index = (
+        int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
+    )
+    return {"attachment_index": attachment_index, "round_start": next_round}
 
 
 def _document_source_coverage(state: AgentState) -> dict[str, Any]:
