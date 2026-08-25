@@ -680,6 +680,11 @@ func pendingAttachmentRequest(history []conversation.Message) (conversation.Mess
 	}
 	assistant := history[len(history)-1]
 	user := history[len(history)-2]
+	if assistant.Role == "assistant" && user.Role == "user" &&
+		isFailedArtifactRuntimeReply(assistant.Content) &&
+		len(chatattachment.DocumentIDs(user.Content)) > 0 {
+		return user, true
+	}
 	if assistant.Role == "assistant" && strings.Contains(assistant.Content, "请先上传一个需要读取的附件") &&
 		user.Role == "user" && isArtifactWorkflowContinuation(user.Content) && len(history) >= 4 {
 		assistant = history[len(history)-3]
@@ -690,6 +695,12 @@ func pendingAttachmentRequest(history []conversation.Message) (conversation.Mess
 		return conversation.Message{}, false
 	}
 	return user, true
+}
+
+func isFailedArtifactRuntimeReply(text string) bool {
+	return (strings.Contains(text, "<!--ai-agent-run:") ||
+		strings.Contains(text, "<!--ai-generation-job:")) &&
+		(strings.Contains(text, "|failed") || strings.Contains(text, "|timed_out"))
 }
 
 func isArtifactWorkflowContinuation(text string) bool {
@@ -710,7 +721,7 @@ func isExplicitWorkflowConfirmation(text string) bool {
 		"，", "", "。", "", "！", "", "？", "", "!", "", "?", "", ".", "",
 	).Replace(text))
 	switch normalized {
-	case "确认", "好的", "好", "开始", "继续", "可以":
+	case "确认", "好的", "好", "开始", "继续", "可以", "重试", "再试", "重新执行", "重新开始":
 		return true
 	default:
 		return false

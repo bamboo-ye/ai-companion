@@ -26,6 +26,25 @@ func (s *Server) getAgentRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicAgentRun(item))
 }
 
+func (s *Server) getActiveAgentRun(w http.ResponseWriter, r *http.Request) {
+	if s.agentRuns == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	item, err := s.agentRuns.ActiveForConversation(
+		r.Context(), currentAuth(r).User.ID, r.PathValue("conversation_id"),
+	)
+	if errors.Is(err, agent.ErrNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeAgentRunError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent_run": publicAgentRun(item)})
+}
+
 func (s *Server) resolveAgentRun(w http.ResponseWriter, r *http.Request) {
 	if s.agentRuns == nil {
 		writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "agent_unavailable", Message: "Agent 运行时暂不可用"})

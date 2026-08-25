@@ -20,6 +20,9 @@ func (s *serviceStore) CreateAgentRun(_ context.Context, item Run) (Run, bool, e
 func (s *serviceStore) GetAgentRun(context.Context, string) (Run, error) {
 	return s.run, nil
 }
+func (s *serviceStore) GetActiveAgentRun(context.Context, string, string) (Run, error) {
+	return s.run, nil
+}
 func (s *serviceStore) ClaimAgentRun(context.Context, string, string, time.Time, time.Duration) (Run, error) {
 	return Run{}, nil
 }

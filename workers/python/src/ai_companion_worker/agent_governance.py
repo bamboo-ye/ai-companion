@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.9.0"
+GRAPH_VERSION = "3.10.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -126,14 +126,14 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         kind="model",
         model_role="composer",
         recovery="checkpoint_replay",
-        max_model_calls=3,
+        max_model_calls=4,
         allowed_writes=(*_MODEL_CONTROL_WRITES, "proposed_tool"),
     ),
     "email_quality_gate": NodeContract(
         responsibility=(
             "Validate language fidelity, polite email structure, introduction, "
             "sender identity and signature, and validate structured presentation "
-            "arguments before tool dispatch; request at most one bounded rewrite."
+            "arguments before tool dispatch; request at most two bounded rewrites."
         ),
         kind="deterministic",
         recovery="checkpoint_replay",

@@ -34,6 +34,13 @@ func (s *agentHTTPStore) GetAgentRun(_ context.Context, runID string) (agent.Run
 	return s.run, nil
 }
 
+func (s *agentHTTPStore) GetActiveAgentRun(_ context.Context, userID, conversationID string) (agent.Run, error) {
+	if s.run.UserID != userID || s.run.ConversationID != conversationID || agent.IsTerminalStatus(s.run.Status) {
+		return agent.Run{}, agent.ErrNotFound
+	}
+	return s.run, nil
+}
+
 func (s *agentHTTPStore) ClaimAgentRun(context.Context, string, string, time.Time, time.Duration) (agent.Run, error) {
 	return agent.Run{}, agent.ErrConflict
 }

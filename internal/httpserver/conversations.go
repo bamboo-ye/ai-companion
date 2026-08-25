@@ -96,7 +96,8 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	for _, item := range documents {
 		messageContent = chatattachment.AppendDocument(messageContent, item.ID, item.Name)
 	}
-	if len(s.agentChatModules) > 0 {
+	forceArtifactAgent := requiresDurableArtifactAgent(messageContent)
+	if len(s.agentChatModules) > 0 || forceArtifactAgent {
 		conversationItem, conversationErr := s.conversations.Get(
 			r.Context(),
 			auth.User.ID,
@@ -115,9 +116,23 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 			writeConversationError(w, conversation.ErrNotFound)
 			return
 		}
-		if s.agentModuleEnabled(persona.Module) {
+		if s.agentModuleEnabled(persona.Module) || (forceArtifactAgent && persona.Module == "work") {
 			if s.agentRuns == nil {
 				writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "agent_unavailable", Message: "当前模块的 Agent 运行时暂不可用"})
+				return
+			}
+			activeRun, activeErr := s.agentRuns.ActiveForConversation(
+				r.Context(), auth.User.ID, conversationItem.ID,
+			)
+			if activeErr == nil {
+				writeJSON(w, http.StatusConflict, map[string]any{
+					"code": "agent_run_active", "message": "当前会话已有任务正在执行",
+					"agent_run": publicAgentRun(activeRun),
+				})
+				return
+			}
+			if !errors.Is(activeErr, agent.ErrNotFound) {
+				writeAgentRunError(w, activeErr)
 				return
 			}
 			if validateErr := s.conversations.ValidateContent(messageContent); validateErr != nil {
@@ -172,6 +187,39 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "job": job})
+}
+
+func requiresDurableArtifactAgent(content string) bool {
+	visible := strings.ToLower(chatattachment.VisibleText(content))
+	if visible == "" {
+		return false
+	}
+	if len(chatattachment.DocumentIDs(content)) > 0 {
+		return true
+	}
+	retry := strings.TrimSpace(strings.NewReplacer(
+		"，", "", "。", "", "！", "", "？", "", "!", "", "?", "", ".", "",
+	).Replace(visible))
+	switch retry {
+	case "重试", "再试", "重新执行", "重新开始":
+		return true
+	}
+	hasArtifact := false
+	for _, marker := range []string{"ppt", "pptx", "演示文稿", "幻灯片", "xlsx", "excel", "电子表格", "docx", "word 文档", "markdown"} {
+		if strings.Contains(visible, marker) {
+			hasArtifact = true
+			break
+		}
+	}
+	if !hasArtifact {
+		return false
+	}
+	for _, action := range []string{"生成", "创建", "制作", "整理", "展示", "输出", "导出", "create", "generate", "make", "build", "export"} {
+		if strings.Contains(visible, action) {
+			return true
+		}
+	}
+	return false
 }
 func (s *Server) getGenerationJob(w http.ResponseWriter, r *http.Request) {
 	job, err := s.conversations.Job(r.Context(), currentAuth(r).User.ID, r.PathValue("job_id"))
