@@ -196,7 +196,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			"audience":    stringField("目标受众"),
 			"style":       stringField("视觉与表达风格"),
 			"brief":       map[string]any{"type": "string", "description": "供 PPT 独立生成使用的完整内容简报；若来自前序观察，应先整理主题和要点，不得超过 10000 字符", "maxLength": 10000},
-			"slide_count": map[string]any{"type": "integer", "description": "页数，3 到 20", "minimum": 3, "maximum": 20},
+			"slide_count": map[string]any{"type": "integer", "description": "页数，3 到 60；完整性任务按数据量自动扩页", "minimum": 3, "maximum": 60},
 			"filename":    filenameField(".pptx"),
 			"table": map[string]any{
 				"type": "object", "description": "表格型内容必须使用此结构，禁止压缩为单段 brief",
@@ -204,11 +204,31 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 				"properties": map[string]any{
 					"title":   map[string]any{"type": "string", "maxLength": 60},
 					"columns": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 40}},
-					"rows": map[string]any{"type": "array", "minItems": 1, "maxItems": 120, "items": map[string]any{
+					"rows": map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{
 						"type": "object", "required": []string{"cells", "source_locator"}, "additionalProperties": false,
 						"properties": map[string]any{
-							"cells":          map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 500}},
+							"cells":          map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}},
 							"source_locator": map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+							"entity_id":      map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+							"source_refs":    map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+						},
+					}},
+				},
+			},
+			"mapping_contract": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"required": []string{"version", "source_table_ids", "entity_level", "field_mappings"},
+				"properties": map[string]any{
+					"version":          map[string]any{"type": "string", "enum": []string{"target-mapping-v1"}},
+					"source_table_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+					"entity_level":     map[string]any{"type": "string", "enum": []string{"row_group", "row"}},
+					"field_mappings": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{
+						"type": "object", "additionalProperties": false,
+						"required": []string{"target_index", "source_column_ids", "mode"},
+						"properties": map[string]any{
+							"target_index":      map[string]any{"type": "integer", "minimum": 0, "maximum": 5},
+							"source_column_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+							"mode":              map[string]any{"type": "string", "enum": []string{"direct", "aggregate"}},
 						},
 					}},
 				},

@@ -84,7 +84,8 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		"style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"},
 		"slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},
 		"table": presentationTableSchema, "task_contract": map[string]any{"type": "object"},
-		"source_coverage": map[string]any{"type": "object"},
+		"mapping_contract": map[string]any{"type": "object"},
+		"source_coverage":  map[string]any{"type": "object"},
 	}
 	presentationOutput := map[string]any{
 		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
@@ -121,7 +122,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.2.0", DisplayName: "PPTX 生成", Category: "office",
+				Name: "office.pptx_generate", Version: "1.3.0", DisplayName: "PPTX 生成", Category: "office",
 				Description: "根据受众、页数、风格和简报直接生成新的演示文稿，不覆盖已有文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, ExecutionMode: "worker",
 				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
@@ -132,18 +133,19 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.document_extract", Version: "1.0.0", DisplayName: "附件正文提取", Category: "office",
+				Name: "office.document_extract", Version: "1.1.0", DisplayName: "附件正文提取", Category: "office",
 				Description: "从受支持的文本或 PDF 附件中提取结构化正文，供 Agent 独立规划后续任务。", RiskLevel: "none", Enabled: true,
 				ToolName: "document.extract_text", TimeoutMS: 120_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"source_filename", "source_base64", "media_type"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"}, "round_start": map[string]any{"type": "integer"},
 				}),
-				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "round_count", "completed_rounds", "coverage_ratio", "rounds", "cleaning_report", "source_overwritten"}, map[string]any{
+				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "round_count", "completed_rounds", "coverage_ratio", "rounds", "source_ir", "cleaning_report", "source_overwritten"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
 					"page_count": map[string]any{"type": "integer"}, "character_count": map[string]any{"type": "integer"},
 					"text": map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"},
 					"round_count": map[string]any{"type": "integer"}, "completed_rounds": map[string]any{"type": "integer"},
 					"coverage_ratio": map[string]any{"type": "number"}, "rounds": map[string]any{"type": "array"},
+					"source_ir":       map[string]any{"type": "object"},
 					"cleaning_report": map[string]any{"type": "object"}, "source_overwritten": map[string]any{"type": "boolean"},
 				}),
 			},

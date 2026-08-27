@@ -108,6 +108,7 @@ def validate_presentation_arguments(
     task_contract: Mapping[str, Any],
     *,
     expected_record_keys: list[str] | None = None,
+    source_ir: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Reject structurally valid PPT arguments that cannot satisfy the task."""
 
@@ -190,17 +191,25 @@ def validate_presentation_arguments(
                         "affected_count": len(vague_rows),
                     }
                 )
+    if source_ir and source_ir.get("structure_preserved") is True:
+        violations.extend(
+            _source_mapping_violations(
+                arguments,
+                table if isinstance(table, Mapping) else {},
+                source_ir,
+                exhaustive=task_contract.get("exhaustive") is True,
+            )
+        )
+
     expected_record_keys = expected_record_keys or []
     if expected_record_keys and isinstance(columns, list) and isinstance(rows, list):
         code_column = _requested_field_column(columns, "code")
         if code_column >= 0:
             observed = {
-                key
+                _canonical_record_key(row["cells"][code_column])
                 for row in rows
                 if isinstance(row, Mapping) and isinstance(row.get("cells"), list)
-                for key in expected_record_keys
                 if code_column < len(row["cells"])
-                and key in _canonical_record_key(row["cells"][code_column])
             }
             missing = [key for key in expected_record_keys if key not in observed]
             if missing:
@@ -214,6 +223,274 @@ def validate_presentation_arguments(
                     }
                 )
     return _deduplicate_violations(violations)
+
+
+def _source_mapping_violations(
+    arguments: Mapping[str, Any],
+    table: Mapping[str, Any],
+    source_ir: Mapping[str, Any],
+    *,
+    exhaustive: bool,
+) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    mapping = arguments.get("mapping_contract")
+    if not isinstance(mapping, Mapping):
+        return [
+            {
+                "code": "source_mapping_contract_missing",
+                "message": "结构化来源任务必须先锁定来源到目标的字段映射和实体粒度",
+            }
+        ]
+    if mapping.get("version") != "target-mapping-v1":
+        violations.append(
+            {
+                "code": "source_mapping_contract_version_invalid",
+                "message": "来源映射契约版本无效",
+            }
+        )
+    source_tables = {
+        str(value.get("id") or ""): value
+        for value in source_ir.get("tables", [])
+        if isinstance(value, Mapping) and str(value.get("id") or "")
+    }
+    table_ids = mapping.get("source_table_ids")
+    selected_ids = (
+        list(dict.fromkeys(str(value) for value in table_ids if str(value)))
+        if isinstance(table_ids, list)
+        else []
+    )
+    unknown_tables = [value for value in selected_ids if value not in source_tables]
+    if not selected_ids or unknown_tables:
+        violations.append(
+            {
+                "code": "source_mapping_table_invalid",
+                "message": "来源映射必须引用已提取的逻辑表",
+                "unknown_table_ids": unknown_tables[:20],
+            }
+        )
+        return violations
+    entity_level = str(mapping.get("entity_level") or "")
+    if entity_level not in ("row_group", "row"):
+        violations.append(
+            {
+                "code": "source_mapping_entity_level_invalid",
+                "message": "实体粒度必须是 row_group 或 row",
+            }
+        )
+        return violations
+
+    columns = table.get("columns")
+    column_count = len(columns) if isinstance(columns, list) else 0
+    available_columns = {
+        str(column.get("id") or "")
+        for table_id in selected_ids
+        for column in source_tables[table_id].get("columns", [])
+        if isinstance(column, Mapping) and str(column.get("id") or "")
+    }
+    field_mappings = mapping.get("field_mappings")
+    mapped_targets: set[int] = set()
+    mapped_sources: set[str] = set()
+    target_sources: dict[int, set[str]] = {}
+    if isinstance(field_mappings, list):
+        for raw_mapping in field_mappings:
+            if not isinstance(raw_mapping, Mapping):
+                continue
+            target_index = raw_mapping.get("target_index")
+            source_columns = raw_mapping.get("source_column_ids")
+            mode = str(raw_mapping.get("mode") or "")
+            if (
+                not isinstance(target_index, int)
+                or isinstance(target_index, bool)
+                or not 0 <= target_index < column_count
+                or mode not in ("direct", "aggregate")
+                or not isinstance(source_columns, list)
+                or not source_columns
+            ):
+                continue
+            normalized_sources = {str(value) for value in source_columns if str(value)}
+            if not normalized_sources or not normalized_sources.issubset(available_columns):
+                continue
+            if mapped_sources.intersection(normalized_sources):
+                violations.append(
+                    {
+                        "code": "source_column_mapping_ambiguous",
+                        "message": "同一来源列不能在锁定契约中漂移到多个目标字段",
+                    }
+                )
+            mapped_targets.add(target_index)
+            mapped_sources.update(normalized_sources)
+            target_sources.setdefault(target_index, set()).update(normalized_sources)
+    if mapped_targets != set(range(column_count)):
+        violations.append(
+            {
+                "code": "source_field_mapping_incomplete",
+                "message": "每个目标字段都必须绑定到有效来源列",
+                "mapped_target_indices": sorted(mapped_targets),
+                "expected_target_count": column_count,
+            }
+        )
+    uncovered_table_fields = [
+        {"table_id": table_id, "target_index": target_index}
+        for table_id in selected_ids
+        for target_index in range(column_count)
+        if not target_sources.get(target_index, set()).intersection(
+            {
+                str(column.get("id") or "")
+                for column in source_tables[table_id].get("columns", [])
+                if isinstance(column, Mapping)
+            }
+        )
+    ]
+    if uncovered_table_fields:
+        violations.append(
+            {
+                "code": "source_table_field_mapping_incomplete",
+                "message": "每个相关逻辑表都必须为全部目标字段提供来源列映射",
+                "uncovered": uncovered_table_fields[:20],
+            }
+        )
+
+    expected_entities: set[str] = set()
+    entity_rows: dict[str, set[str]] = {}
+    all_source_text: set[str] = set()
+    for table_id in selected_ids:
+        source_table = source_tables[table_id]
+        rows = [value for value in source_table.get("rows", []) if isinstance(value, Mapping)]
+        rows_by_group: dict[str, set[str]] = {}
+        for row in rows:
+            row_id = str(row.get("id") or "")
+            group_id = str(row.get("group_id") or "")
+            if not row_id:
+                continue
+            rows_by_group.setdefault(group_id, set()).add(row_id)
+            for cell in row.get("cells", []):
+                if not isinstance(cell, Mapping):
+                    continue
+                for key in ("text", "inherited_text"):
+                    text = re.sub(r"\s+", " ", str(cell.get(key) or "")).strip().casefold()
+                    if text:
+                        all_source_text.add(text)
+        if entity_level == "row":
+            for row in rows:
+                row_id = str(row.get("id") or "")
+                if row_id:
+                    expected_entities.add(row_id)
+                    entity_rows[row_id] = {row_id}
+        else:
+            for group in source_table.get("row_groups", []):
+                if not isinstance(group, Mapping):
+                    continue
+                group_id = str(group.get("id") or "")
+                if not group_id:
+                    continue
+                expected_entities.add(group_id)
+                entity_rows.setdefault(group_id, set()).update(
+                    rows_by_group.get(group_id, set())
+                )
+
+    output_rows = table.get("rows")
+    observed_entities: set[str] = set()
+    observed_refs: dict[str, set[str]] = {}
+    extra_entities: list[str] = []
+    missing_evidence: list[int] = []
+    invalid_evidence: list[int] = []
+    placeholder_rows: list[int] = []
+    placeholder = re.compile(
+        r"(?:未(?:知|提供|出现|找到)|待补|无来源|not\s+(?:found|provided|available)|unknown)",
+        re.I,
+    )
+    if isinstance(output_rows, list):
+        for index, row in enumerate(output_rows, start=1):
+            if not isinstance(row, Mapping):
+                continue
+            entity_id = str(row.get("entity_id") or "").strip()
+            if entity_id:
+                observed_entities.add(entity_id)
+                if entity_id not in expected_entities:
+                    extra_entities.append(entity_id)
+            source_refs = row.get("source_refs")
+            refs = (
+                {str(value) for value in source_refs if str(value)}
+                if isinstance(source_refs, list)
+                else set()
+            )
+            if not entity_id or not refs:
+                missing_evidence.append(index)
+            elif entity_id not in entity_rows or not refs.issubset(entity_rows[entity_id]):
+                invalid_evidence.append(index)
+            else:
+                observed_refs.setdefault(entity_id, set()).update(refs)
+            cells = row.get("cells")
+            if isinstance(cells, list):
+                for value in cells:
+                    normalized = re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+                    if placeholder.search(normalized) and normalized not in all_source_text:
+                        placeholder_rows.append(index)
+                        break
+    if extra_entities:
+        violations.append(
+            {
+                "code": "unmapped_output_entities",
+                "message": "输出包含无法映射回来源实体的额外记录",
+                "entity_ids": list(dict.fromkeys(extra_entities))[:20],
+            }
+        )
+    if exhaustive:
+        missing_entities = sorted(expected_entities - observed_entities)
+        if missing_entities:
+            violations.append(
+                {
+                    "code": "source_entities_missing",
+                    "message": "输出没有覆盖锁定粒度下的全部来源实体",
+                    "expected_count": len(expected_entities),
+                    "observed_count": len(observed_entities.intersection(expected_entities)),
+                    "entity_ids": missing_entities[:20],
+                }
+            )
+        unreferenced_rows = {
+            entity_id: sorted(source_rows - observed_refs.get(entity_id, set()))
+            for entity_id, source_rows in entity_rows.items()
+            if source_rows - observed_refs.get(entity_id, set())
+        }
+        if unreferenced_rows:
+            violations.append(
+                {
+                    "code": "source_child_rows_unreferenced",
+                    "message": "完整性任务中每个父实体的全部来源子行都必须进入合并结果",
+                    "affected_entity_count": len(unreferenced_rows),
+                    "entity_ids": list(unreferenced_rows)[:20],
+                    "missing_source_refs": [
+                        value
+                        for values in list(unreferenced_rows.values())[:20]
+                        for value in values[:5]
+                    ][:40],
+                }
+            )
+    if missing_evidence:
+        violations.append(
+            {
+                "code": "source_evidence_missing",
+                "message": "每条输出记录必须携带来源实体 ID 和来源行引用",
+                "affected_rows": missing_evidence[:20],
+            }
+        )
+    if invalid_evidence:
+        violations.append(
+            {
+                "code": "source_evidence_invalid",
+                "message": "输出记录引用了不属于该来源实体的行",
+                "affected_rows": invalid_evidence[:20],
+            }
+        )
+    if placeholder_rows:
+        violations.append(
+            {
+                "code": "ungrounded_placeholder_values",
+                "message": "输出不得用来源中不存在的占位文本代替真实字段值",
+                "affected_rows": placeholder_rows[:20],
+            }
+        )
+    return violations
 
 
 def presentation_source_record_keys(

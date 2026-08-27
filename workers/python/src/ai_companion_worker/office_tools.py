@@ -38,6 +38,9 @@ MAX_MODEL_RESPONSE_BYTES = 4 << 20
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_ROWS = 10_000
 MAX_COLUMNS = 100
+MAX_PRESENTATION_SLIDES = 60
+PRESENTATION_DISPLAY_CELL_CHARS = 42
+PRESENTATION_ROWS_PER_SLIDE = 6
 
 
 class ModelBackedOperationError(ValueError):
@@ -106,16 +109,22 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     if (
         not isinstance(requested_slide_count, int)
         or isinstance(requested_slide_count, bool)
-        or not 3 <= requested_slide_count <= 20
+        or not 3 <= requested_slide_count <= MAX_PRESENTATION_SLIDES
     ):
-        raise ValueError("slide_count_must_be_between_3_and_20")
+        raise ValueError("slide_count_must_be_between_3_and_60")
     table = _presentation_table(payload.get("table"))
     task_contract = payload.get("task_contract")
     task_contract = dict(task_contract) if isinstance(task_contract, dict) else {}
     source_coverage = _presentation_source_coverage(payload.get("source_coverage"))
+    display_rows = _presentation_display_rows(table["rows"]) if table else []
     if table:
-        required_table_slides = math.ceil(len(table["rows"]) / 6)
-        slide_count = min(20, max(requested_slide_count, required_table_slides + 2))
+        required_table_slides = math.ceil(
+            len(display_rows) / PRESENTATION_ROWS_PER_SLIDE
+        )
+        slide_count = min(
+            MAX_PRESENTATION_SLIDES,
+            max(requested_slide_count, required_table_slides + 2),
+        )
     else:
         slide_count = requested_slide_count
     sections = _presentation_units(brief)
@@ -135,23 +144,24 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     outline.append({"page": 1, "title": title, "bullets": [f"面向：{audience}"]})
 
     if table:
-        row_groups = _balanced_groups(table["rows"], slide_count - 2)
+        row_groups = _balanced_groups(display_rows, slide_count - 2)
         for index, rows in enumerate(row_groups, start=1):
-            heading = table["title"] or f"课程信息（{index}/{len(row_groups)}）"
+            heading = table["title"] or f"结构化数据（{index}/{len(row_groups)}）"
             if len(row_groups) > 1 and table["title"]:
                 heading = f"{table['title']}（{index}/{len(row_groups)}）"
             slide = presentation.slides.add_slide(presentation.slide_layouts[5])
-            slide.shapes.title.text = heading[:36]
+            slide.shapes.title.text = heading[:32]
             _add_table_slide(slide, table["columns"], rows)
             _style_slide(slide, title_color=RGBColor(72, 104, 183))
             source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
             outline.append(
                 {
                     "page": len(outline) + 1,
-                    "title": heading[:36],
+                    "title": heading[:32],
                     "table": {
                         "columns": table["columns"],
-                        "row_count": len(rows),
+                        "row_count": sum(not row.get("continuation") for row in rows),
+                        "display_row_count": len(rows),
                         "source_locators": source_locators,
                     },
                 }
@@ -180,8 +190,8 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     summary_bullets = (
         [
             f"共整理 {len(table['rows'])} 条记录",
-            f"来源覆盖率：{source_coverage['coverage_ratio']:.0%}",
-            "详细信息见前页表格",
+            "完整内容已按可读容量自动分页",
+            "详细信息与来源页码见前页表格",
         ]
         if table
         else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
@@ -201,10 +211,12 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         table=table,
         task_contract=task_contract,
         source_coverage=source_coverage,
+        display_rows=display_rows,
+        layout_violations=_presentation_layout_violations(presentation),
     )
 
     files: list[dict[str, Any]] = []
-    if include_file:
+    if include_file and quality_report["passed"] is True:
         output = io.BytesIO()
         presentation.save(output)
         files.append(
@@ -264,6 +276,7 @@ def _extract_document(payload: dict[str, Any]) -> dict[str, Any]:
     selected_chunks = sum(int(item["chunk_count"]) for item in manifest["rounds"])
     original_character_count = sum(len(page.text) for page in parsed.pages)
     low_quality_pages = [page.page_no for page in parsed.pages if page.quality < 0.5]
+    source_ir = _source_ir_slice(parsed.source_ir, manifest)
     return {
         "output": {
             "source_filename": source_name,
@@ -284,6 +297,7 @@ def _extract_document(payload: dict[str, Any]) -> dict[str, Any]:
             "has_more": manifest["has_more"],
             "coverage_ratio": manifest["coverage_ratio"],
             "rounds": manifest["rounds"],
+            "source_ir": source_ir,
             "cleaning_report": cleaning_report,
             "low_quality_pages": low_quality_pages,
             "source_overwritten": False,
@@ -398,6 +412,8 @@ def _document_context_rounds(
                 "chunk_end": int(chunks[-1].ordinal),
                 "chunk_count": len(chunks),
                 "token_count": round_tokens,
+                "page_start": min(int(chunk.page_start) for chunk in chunks),
+                "page_end": max(int(chunk.page_end) for chunk in chunks),
             }
         )
 
@@ -417,6 +433,67 @@ def _document_context_rounds(
         "blank_lines_collapsed": blank_lines_collapsed,
     }
     return context, manifest, count_tokens(context), cleaning_report
+
+
+def _source_ir_slice(source_ir: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    selected_pages: set[int] = set()
+    for item in manifest.get("rounds", []):
+        if not isinstance(item, dict):
+            continue
+        start = int(item.get("page_start") or 0)
+        end = int(item.get("page_end") or start)
+        selected_pages.update(range(start, end + 1))
+    tables: list[dict[str, Any]] = []
+    for raw_table in source_ir.get("tables", []):
+        if not isinstance(raw_table, dict):
+            continue
+        rows = [
+            dict(row)
+            for row in raw_table.get("rows", [])
+            if isinstance(row, dict) and int(row.get("page") or 0) in selected_pages
+        ]
+        if not rows:
+            continue
+        row_ids = {str(row.get("id") or "") for row in rows}
+        groups: list[dict[str, Any]] = []
+        for raw_group in raw_table.get("row_groups", []):
+            if not isinstance(raw_group, dict):
+                continue
+            selected_ids = [
+                str(value)
+                for value in raw_group.get("row_ids", [])
+                if str(value) in row_ids
+            ]
+            if not selected_ids:
+                continue
+            group = dict(raw_group)
+            group["row_ids"] = selected_ids
+            group["partial"] = len(selected_ids) < len(raw_group.get("row_ids", []))
+            groups.append(group)
+        table = dict(raw_table)
+        table["rows"] = rows
+        table["row_groups"] = groups
+        table["partial"] = len(rows) < len(raw_table.get("rows", []))
+        tables.append(table)
+    blocks = [
+        dict(block)
+        for block in source_ir.get("blocks", [])
+        if isinstance(block, dict)
+        and any(
+            page in selected_pages
+            for page in range(
+                int(block.get("page_start") or 0),
+                int(block.get("page_end") or block.get("page_start") or 0) + 1,
+            )
+        )
+    ]
+    return {
+        "version": str(source_ir.get("version") or "document-source-ir-v1"),
+        "structure_preserved": bool(tables),
+        "selected_pages": sorted(selected_pages),
+        "tables": tables,
+        "blocks": blocks,
+    }
 
 
 def _clean_context_text(value: str) -> tuple[str, int, int]:
@@ -992,8 +1069,8 @@ def _presentation_table(value: Any) -> dict[str, Any] | None:
         if not isinstance(column, str) or not column.strip():
             raise ValueError("presentation_table_column_is_invalid")
         normalized_columns.append(column.strip()[:40])
-    if not isinstance(rows, list) or not rows or len(rows) > 120:
-        raise ValueError("presentation_table_rows_must_be_between_1_and_120")
+    if not isinstance(rows, list) or not rows or len(rows) > 500:
+        raise ValueError("presentation_table_rows_must_be_between_1_and_500")
     normalized_rows: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -1006,7 +1083,7 @@ def _presentation_table(value: Any) -> dict[str, Any] | None:
             text = str(cell).strip()
             if not text:
                 raise ValueError("presentation_table_cell_is_empty")
-            if len(text) > 500:
+            if len(text) > 4000:
                 raise ValueError("presentation_table_cell_is_too_long")
             normalized_cells.append(text)
         source_locator = str(row.get("source_locator") or "").strip()
@@ -1014,7 +1091,19 @@ def _presentation_table(value: Any) -> dict[str, Any] | None:
             raise ValueError("presentation_table_source_locator_is_empty")
         if len(source_locator) > 160:
             raise ValueError("presentation_table_source_locator_is_too_long")
-        normalized_rows.append({"cells": normalized_cells, "source_locator": source_locator})
+        normalized_row: dict[str, Any] = {
+            "cells": normalized_cells,
+            "source_locator": source_locator,
+        }
+        entity_id = str(row.get("entity_id") or "").strip()
+        if entity_id:
+            normalized_row["entity_id"] = entity_id[:160]
+        source_refs = row.get("source_refs")
+        if isinstance(source_refs, list):
+            normalized_row["source_refs"] = list(
+                dict.fromkeys(str(value).strip() for value in source_refs if str(value).strip())
+            )[:500]
+        normalized_rows.append(normalized_row)
     return {
         "title": str(value.get("title") or "").strip()[:60],
         "columns": normalized_columns,
@@ -1043,6 +1132,65 @@ def _presentation_source_coverage(value: Any) -> dict[str, Any]:
     }
 
 
+def _presentation_display_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    display: list[dict[str, Any]] = []
+    for source_index, row in enumerate(rows):
+        split_cells = [_split_visible_cell(value) for value in row["cells"]]
+        fragment_count = max((len(values) for values in split_cells), default=1)
+        entity_id = str(row.get("entity_id") or f"record:{source_index + 1}")
+        for fragment_index in range(fragment_count):
+            cells: list[str] = []
+            for column_index, values in enumerate(split_cells):
+                if fragment_index < len(values):
+                    cells.append(values[fragment_index])
+                elif fragment_index == 0:
+                    cells.append(values[0])
+                else:
+                    cells.append("↳" if column_index == 0 else "")
+            display.append(
+                {
+                    "cells": cells,
+                    "source_locator": row["source_locator"],
+                    "entity_id": entity_id,
+                    "continuation": fragment_index > 0,
+                }
+            )
+    return display
+
+
+def _split_visible_cell(value: Any) -> list[str]:
+    remaining = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not remaining:
+        return [""]
+    result: list[str] = []
+    while len(remaining) > PRESENTATION_DISPLAY_CELL_CHARS:
+        window = remaining[:PRESENTATION_DISPLAY_CELL_CHARS]
+        positions = [
+            window.rfind(separator)
+            for separator in ("；", ";", "，", ",", " ")
+        ]
+        boundary = max(positions)
+        cut = (
+            boundary + 1
+            if boundary >= PRESENTATION_DISPLAY_CELL_CHARS // 2
+            else PRESENTATION_DISPLAY_CELL_CHARS
+        )
+        result.append(remaining[:cut].strip())
+        remaining = remaining[cut:].strip()
+    if remaining:
+        result.append(remaining)
+    return result or [""]
+
+
+def _audience_source_locators(values: list[str]) -> list[str]:
+    pages: list[str] = []
+    for value in values:
+        matches = re.findall(r"(?i)\bpage\s+(\d+)(?:\s*[-–]\s*(\d+))?", value)
+        for start, end in matches:
+            pages.append(f"第 {start}-{end} 页" if end else f"第 {start} 页")
+    return list(dict.fromkeys(pages)) or ["附件原文"]
+
+
 def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]]) -> None:
     shape = slide.shapes.add_table(
         len(rows) + 1,
@@ -1053,6 +1201,20 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
         Inches(5.15),
     )
     table = shape.table
+    weights = []
+    for column_index, column in enumerate(columns):
+        maximum = max(
+            [len(column), *[len(str(row["cells"][column_index])) for row in rows]],
+            default=len(column),
+        )
+        weights.append(max(1.0, min(3.0, math.sqrt(maximum) / 3)))
+    total_weight = sum(weights)
+    for column_index, weight in enumerate(weights):
+        table.columns[column_index].width = Inches(12.43 * weight / total_weight)
+    table.rows[0].height = Inches(0.52)
+    body_height = 4.63 / max(1, len(rows))
+    for row in table.rows[1:]:
+        row.height = Inches(body_height)
     for column_index, column in enumerate(columns):
         cell = table.cell(0, column_index)
         cell.text = column
@@ -1071,13 +1233,15 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
                 RGBColor(238, 243, 255) if row_index % 2 == 0 else RGBColor(255, 255, 255)
             )
             for paragraph in cell.text_frame.paragraphs:
-                paragraph.font.size = Pt(14 if len(rows) > 5 else 16)
+                paragraph.font.size = Pt(11 if len(rows) > 4 else 13)
                 paragraph.font.color.rgb = RGBColor(31, 41, 55)
-    source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
+    source_locators = _audience_source_locators(
+        list(dict.fromkeys(row["source_locator"] for row in rows))
+    )
     footer = slide.shapes.add_textbox(Inches(0.48), Inches(6.72), Inches(12.35), Inches(0.32))
     footer_frame = footer.text_frame
     footer_frame.clear()
-    footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:240]
+    footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:160]
     footer_frame.paragraphs[0].font.size = Pt(9)
     footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
 
@@ -1089,8 +1253,10 @@ def _presentation_quality_report(
     table: dict[str, Any] | None,
     task_contract: dict[str, Any],
     source_coverage: dict[str, Any],
+    display_rows: list[dict[str, Any]],
+    layout_violations: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    violations: list[dict[str, Any]] = []
+    violations: list[dict[str, Any]] = list(layout_violations)
     if "表格" in style and not table:
         violations.append(
             {"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"}
@@ -1134,19 +1300,68 @@ def _presentation_quality_report(
                         "message": f"缺少字段：{field}",
                     }
                 )
-    if table and any(len(cell) > 120 for row in table["rows"] for cell in row["cells"]):
+    visible_text = " ".join(
+        [
+            str(outline[0].get("title") or "") if outline else "",
+            *[str(column) for column in (table.get("columns", []) if table else [])],
+            *[
+                str(cell)
+                for row in (table.get("rows", []) if table else [])
+                for cell in row.get("cells", [])
+            ],
+        ]
+    )
+    if re.search(
+        r"(?:\battachment\s*:\s*\d+|\bround\s*:\s*\d+|\bsegment\s*:\s*\d+|"
+        r"source\s*ir|source_locator|本轮观测|当前轮次|harness)",
+        visible_text,
+        re.I,
+    ):
         violations.append(
-            {"code": "table_cell_too_dense", "message": "表格单元格内容过长，不利于投影阅读"}
+            {"code": "internal_workflow_text_visible", "message": "可见内容泄露了内部处理术语"}
+        )
+    content_capacity = (MAX_PRESENTATION_SLIDES - 2) * PRESENTATION_ROWS_PER_SLIDE
+    if table and len(display_rows) > content_capacity:
+        violations.append(
+            {
+                "code": "presentation_capacity_exceeded",
+                "message": "完整内容超过当前可读字号下的确定性分页容量",
+                "display_row_count": len(display_rows),
+                "capacity": content_capacity,
+            }
         )
     return {
-        "policy_version": "pptx-quality-v1",
+        "policy_version": "pptx-quality-v2",
         "passed": not violations,
         "hard_gate": True,
         "violations": violations,
         "slide_count": len(outline),
         "table_row_count": len(table["rows"]) if table else 0,
+        "display_row_count": len(display_rows),
         "source_coverage": source_coverage,
     }
+
+
+def _presentation_layout_violations(presentation: Presentation) -> list[dict[str, Any]]:
+    violations: list[dict[str, Any]] = []
+    width = int(presentation.slide_width)
+    height = int(presentation.slide_height)
+    for slide_index, slide in enumerate(presentation.slides, start=1):
+        for shape in slide.shapes:
+            left = int(getattr(shape, "left", 0))
+            top = int(getattr(shape, "top", 0))
+            shape_width = int(getattr(shape, "width", 0))
+            shape_height = int(getattr(shape, "height", 0))
+            if left < 0 or top < 0 or left + shape_width > width or top + shape_height > height:
+                violations.append(
+                    {
+                        "code": "shape_outside_slide_canvas",
+                        "message": "页面元素超出演示文稿画布",
+                        "slide": slide_index,
+                    }
+                )
+                break
+    return violations
 
 
 def _style_slide(slide: Any, title_color: RGBColor) -> None:
@@ -1154,9 +1369,14 @@ def _style_slide(slide: Any, title_color: RGBColor) -> None:
     background.solid()
     background.fore_color.rgb = RGBColor(247, 249, 255)  # type: ignore[no-untyped-call]
     if slide.shapes.title is not None:
+        slide.shapes.title.left = Inches(0.55)
+        slide.shapes.title.top = Inches(0.28)
+        slide.shapes.title.width = Inches(12.2)
+        slide.shapes.title.height = Inches(0.75)
         for paragraph in slide.shapes.title.text_frame.paragraphs:
             paragraph.font.bold = True
             paragraph.font.color.rgb = title_color
+            paragraph.font.size = Pt(24)
 
 
 def _file(name: str, media_type: str, data: bytes) -> dict[str, str]:

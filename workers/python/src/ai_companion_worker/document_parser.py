@@ -18,8 +18,9 @@ from pypdf import PdfReader
 
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
 
-PARSER_VERSION = "pypdf-6.14.2-markdown-v2"
-TEXT_PARSER_VERSION = "text-markdown-v2"
+PARSER_VERSION = "pypdf-6.14.2-markdown-v3"
+TEXT_PARSER_VERSION = "text-markdown-v3"
+SOURCE_IR_VERSION = "document-source-ir-v1"
 MAX_CHUNK_TOKENS = 800
 OVERLAP_TOKENS = 80
 MAX_PAGES = 1000
@@ -54,6 +55,7 @@ class ParseResult:
     parser_version: str
     pages: list[Page]
     chunks: list[Chunk]
+    source_ir: dict[str, Any]
 
 
 def parse_document(
@@ -74,7 +76,7 @@ def parse_document(
     chunks = _chunk_pages(pages)
     if not chunks:
         raise ValueError("no_extractable_text")
-    return ParseResult(parser_version, pages, chunks)
+    return ParseResult(parser_version, pages, chunks, _build_source_ir(pages, chunks))
 
 
 def count_tokens(value: str) -> int:
@@ -363,6 +365,311 @@ def _is_plain_heading(value: str) -> bool:
 def _looks_like_fixed_width_row(value: str) -> bool:
     stripped = value.strip()
     return bool(stripped and len(re.findall(r"\S(?: {2,}|\t+)\S", stripped)) >= 1)
+
+
+def _build_source_ir(pages: list[Page], chunks: list[Chunk]) -> dict[str, Any]:
+    """Build a domain-neutral structural representation with stable source IDs.
+
+    The text representation remains available for unstructured work.  Fixed-width
+    tables additionally retain columns, row groups, explicit/inherited cells and
+    page/line provenance so downstream models never need to rediscover hierarchy
+    after arbitrary token splits.
+    """
+
+    raw_tables: dict[str, dict[str, Any]] = {}
+    for page in pages:
+        candidate = _page_fixed_width_table(page)
+        if candidate is None:
+            continue
+        signature = _table_signature(candidate["columns"])
+        table = raw_tables.setdefault(
+            signature,
+            {
+                "id": f"table:{signature[:16]}",
+                "type": "table",
+                "columns": candidate["columns"],
+                "page_start": page.page_no,
+                "page_end": page.page_no,
+                "raw_rows": [],
+            },
+        )
+        table["page_start"] = min(int(table["page_start"]), page.page_no)
+        table["page_end"] = max(int(table["page_end"]), page.page_no)
+        table["raw_rows"].extend(candidate["rows"])
+
+    tables = [_finalize_source_table(value) for value in raw_tables.values()]
+    tables = [table for table in tables if table["rows"]]
+    tables.sort(key=lambda table: (int(table["page_start"]), str(table["id"])))
+    blocks = [
+        {
+            "id": f"block:{chunk.content_hash[:16]}",
+            "type": "text_span",
+            "page_start": chunk.page_start,
+            "page_end": chunk.page_end,
+            "section_path": chunk.section_path,
+            "text": chunk.content,
+        }
+        for chunk in chunks
+    ]
+    return {
+        "version": SOURCE_IR_VERSION,
+        "structure_preserved": bool(tables),
+        "tables": tables,
+        "blocks": blocks,
+    }
+
+
+def _page_fixed_width_table(page: Page) -> dict[str, Any] | None:
+    lines = page.text.splitlines()
+    candidates: list[tuple[float, int, list[tuple[int, str]]]] = []
+    for index, line in enumerate(lines):
+        if line.strip().startswith("```"):
+            continue
+        segments = _layout_segments(line)
+        if not 3 <= len(segments) <= 12:
+            continue
+        combined = " ".join(value for _, value in segments)
+        digit_ratio = sum(char.isdigit() for char in combined) / max(1, len(combined))
+        short_ratio = sum(len(value) <= 32 for _, value in segments) / len(segments)
+        alpha_cells = sum(any(char.isalpha() for char in value) for _, value in segments)
+        score = len(segments) * 4 + short_ratio * 3 + alpha_cells - digit_ratio * 100
+        if digit_ratio == 0:
+            score += 10
+        score += max(0.0, 3.0 - index / max(1, len(lines)) * 6)
+        candidates.append((score, index, segments))
+    if not candidates:
+        return None
+    _, header_index, header_segments = max(candidates, key=lambda item: item[0])
+    column_count = len(header_segments)
+
+    position_counts: dict[int, int] = {}
+    for line in lines[header_index + 1 :]:
+        for position, _ in _layout_segments(line):
+            position_counts[position] = position_counts.get(position, 0) + 1
+    clustered: list[dict[str, Any]] = []
+    for position, count in sorted(position_counts.items()):
+        if clustered and position - int(clustered[-1]["maximum"]) <= 8:
+            cluster = clustered[-1]
+            cluster["positions"].extend([position] * count)
+            cluster["count"] = int(cluster["count"]) + count
+            cluster["maximum"] = position
+        else:
+            clustered.append(
+                {
+                    "positions": [position] * count,
+                    "count": count,
+                    "maximum": position,
+                }
+            )
+    ranked = sorted(clustered, key=lambda item: int(item["count"]), reverse=True)
+    anchors = sorted(
+        {
+            min(item["positions"])
+            for item in ranked[:column_count]
+        }
+    )
+    if len(anchors) < 3:
+        anchors = [position for position, _ in header_segments]
+    if anchors and anchors[0] <= 3:
+        anchors[0] = 0
+    if len(anchors) != column_count:
+        anchors = [position for position, _ in header_segments]
+    anchors = _spread_layout_anchors(anchors)
+    if len(anchors) < 3:
+        return None
+
+    header_end = header_index
+    for index in range(header_index + 1, min(len(lines), header_index + 4)):
+        cells = _slice_layout_line(lines[index], anchors)
+        visible = " ".join(cell for cell in cells if cell)
+        if not visible or any(char.isdigit() for char in visible):
+            break
+        if sum(bool(cell) for cell in cells) < 2:
+            break
+        header_end = index
+    header_lines = lines[header_index : header_end + 1]
+    labels_by_column: list[list[str]] = [[] for _ in anchors]
+    for line in header_lines:
+        for position, label in _layout_segments(line):
+            nearest = min(range(len(anchors)), key=lambda index: abs(anchors[index] - position))
+            labels_by_column[nearest].append(label)
+    columns: list[dict[str, Any]] = []
+    for column_index, start in enumerate(anchors):
+        labels = labels_by_column[column_index]
+        label = " ".join(dict.fromkeys(labels)).strip() or f"Column {column_index + 1}"
+        columns.append(
+            {
+                "id": f"c{column_index + 1}",
+                "index": column_index,
+                "label": label[:120],
+                "x_start": start,
+            }
+        )
+
+    raw_rows: list[dict[str, Any]] = []
+    trailing_non_rows = 0
+    for line_index in range(header_end + 1, len(lines)):
+        line = lines[line_index]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```"):
+            continue
+        if re.search(r"\bPage\s+\d+\s+(?:of|/)\s+\d+\b", stripped, re.I):
+            continue
+        cells = _slice_layout_line(line, anchors)
+        populated = [index for index, cell in enumerate(cells) if cell]
+        if len(populated) >= 3:
+            trailing_non_rows = 0
+            raw_rows.append(
+                {
+                    "page": page.page_no,
+                    "line": line_index + 1,
+                    "cells": cells,
+                }
+            )
+            continue
+        if populated and len(populated) <= 2 and raw_rows:
+            leading_only = max(populated) < max(2, len(anchors) // 2)
+            if leading_only and not _later_structural_row(lines, line_index + 1, anchors):
+                break
+            for column_index in populated:
+                previous = raw_rows[-1]["cells"][column_index]
+                raw_rows[-1]["cells"][column_index] = (
+                    f"{previous} {cells[column_index]}".strip()
+                )
+            continue
+        trailing_non_rows += 1
+        if raw_rows and trailing_non_rows >= 8:
+            break
+    if len(raw_rows) < 2:
+        return None
+    return {"columns": columns, "rows": raw_rows}
+
+
+def _later_structural_row(lines: list[str], start: int, anchors: list[int]) -> bool:
+    inspected = 0
+    for line in lines[start:]:
+        if not line.strip() or line.strip().startswith("```"):
+            continue
+        inspected += 1
+        if sum(bool(value) for value in _slice_layout_line(line, anchors)) >= 3:
+            return True
+        if inspected >= 4:
+            break
+    return False
+
+
+def _layout_segments(line: str) -> list[tuple[int, str]]:
+    segments: list[tuple[int, str]] = []
+    cursor = 0
+    for separator in re.finditer(r"(?: {2,}|\t+)", line):
+        value = line[cursor : separator.start()]
+        stripped = value.strip()
+        if stripped:
+            segments.append((cursor + len(value) - len(value.lstrip()), stripped))
+        cursor = separator.end()
+    value = line[cursor:]
+    stripped = value.strip()
+    if stripped:
+        segments.append((cursor + len(value) - len(value.lstrip()), stripped))
+    return segments
+
+
+def _spread_layout_anchors(values: list[int]) -> list[int]:
+    result: list[int] = []
+    for value in sorted(dict.fromkeys(values)):
+        if result and value - result[-1] < 6:
+            continue
+        result.append(max(0, value))
+    return result
+
+
+def _slice_layout_line(line: str, anchors: list[int]) -> list[str]:
+    cells: list[str] = []
+    for index, start in enumerate(anchors):
+        end = anchors[index + 1] if index + 1 < len(anchors) else len(line)
+        cells.append(re.sub(r"\s+", " ", line[start:end]).strip())
+    return cells
+
+
+def _table_signature(columns: list[dict[str, Any]]) -> str:
+    labels = [re.sub(r"\W+", "", str(item.get("label") or "").casefold()) for item in columns]
+    return _hash(json.dumps(labels, ensure_ascii=False, separators=(",", ":")))
+
+
+def _finalize_source_table(raw: dict[str, Any]) -> dict[str, Any]:
+    table_id = str(raw["id"])
+    columns = [dict(value) for value in raw["columns"]]
+    for column in columns:
+        column["id"] = f"{table_id}:{column['id']}"
+    rows: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
+    group: dict[str, Any] | None = None
+    inherited: list[dict[str, str] | None] = [None] * len(columns)
+    for raw_row in raw["raw_rows"]:
+        page = int(raw_row["page"])
+        line = int(raw_row["line"])
+        values = [str(value or "").strip() for value in raw_row["cells"]]
+        row_digest = _hash(
+            f"{table_id}|{page}|{line}|" + json.dumps(values, ensure_ascii=False)
+        )[:16]
+        row_id = f"row:{row_digest}"
+        if values and values[0]:
+            group = {
+                "id": f"group:{row_digest}",
+                "type": "row_group",
+                "row_ids": [],
+                "page_start": page,
+                "page_end": page,
+            }
+            groups.append(group)
+        elif group is None:
+            group = {
+                "id": f"group:{table_id.split(':')[-1]}:leading",
+                "type": "row_group",
+                "row_ids": [],
+                "page_start": page,
+                "page_end": page,
+                "continuation_without_parent": True,
+            }
+            groups.append(group)
+        cells: list[dict[str, Any]] = []
+        for index, value in enumerate(values):
+            cell_id = f"{row_id}:c{index + 1}"
+            cell: dict[str, Any] = {
+                "id": cell_id,
+                "column_id": columns[index]["id"],
+                "text": value,
+                "explicit": bool(value),
+            }
+            if value:
+                inherited[index] = {"id": cell_id, "text": value}
+            elif inherited[index] is not None:
+                cell["inherited_from"] = inherited[index]["id"]
+                cell["inherited_text"] = inherited[index]["text"]
+            cells.append(cell)
+        assert group is not None
+        group["row_ids"].append(row_id)
+        group["page_end"] = page
+        rows.append(
+            {
+                "id": row_id,
+                "type": "row",
+                "group_id": group["id"],
+                "page": page,
+                "line": line,
+                "source_locator": f"page {page}, line {line}",
+                "cells": cells,
+            }
+        )
+    return {
+        "id": table_id,
+        "type": "table",
+        "page_start": int(raw["page_start"]),
+        "page_end": int(raw["page_end"]),
+        "columns": columns,
+        "row_groups": groups,
+        "rows": rows,
+    }
 
 
 def _margin_key(value: str) -> str:
