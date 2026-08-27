@@ -604,10 +604,19 @@ class AgentRuntimeTest(unittest.TestCase):
         )
 
     def test_exhaustive_ppt_composition_checkpoints_each_document_round(self) -> None:
+        class ComposerTimeout(RuntimeError):
+            status_code = 408
+
         class RoundDecisions(FakeDecisions):
             def __init__(self) -> None:
                 super().__init__(ModelDecision(intent="unused"))
                 self.composed_batches: list[str] = []
+                self.events: list[dict[str, Any]] = []
+                self.injected_timeout = False
+
+            def consume_observability(self) -> list[dict[str, Any]]:
+                events, self.events = self.events, []
+                return events
 
             def decide(self, **values: Any) -> ModelDecision:
                 observations = values["context"].get("observations", [])
@@ -627,6 +636,21 @@ class AgentRuntimeTest(unittest.TestCase):
                 context = values["context"]
                 batch = context["document_processing_round"]
                 self.composed_batches.append(str(batch["batch_id"]))
+                if not self.injected_timeout:
+                    self.injected_timeout = True
+                    self.events.append(
+                        {
+                            "kind": "model_call",
+                            "role": "composer",
+                            "status": "error",
+                            "prompt_tokens": 0,
+                            "completion_tokens": 0,
+                            "cost_micros": 0,
+                            "error_status": 408,
+                            "retryable": True,
+                        }
+                    )
+                    raise ComposerTimeout("composer fallback deadline exhausted")
                 text = context["observations"][0]["data"]["output"]["text"]
                 if "PED1102" in text and "[[CURRENT ROUND]]" in text:
                     code, name, schedule, locator = (
@@ -785,7 +809,7 @@ class AgentRuntimeTest(unittest.TestCase):
         ]
         result = runtime.start(payload)
         self.assertEqual(result["outcome"], "completed")
-        self.assertEqual(decisions.composed_batches, ["a1:r1", "a1:r2"])
+        self.assertEqual(decisions.composed_batches, ["a1:r1", "a1:r1", "a1:r2"])
         ppt_arguments = next(
             item["arguments"]
             for item in tools.prepared
@@ -797,6 +821,11 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(result["document_processing"]["merged_record_count"], 2)
+        self.assertEqual(result["document_processing"]["timeout_retry_total"], 1)
+        self.assertIn(
+            "retry_scheduled",
+            [event["status"] for event in result["node_trace"]],
+        )
 
     def test_tool_schema_rejects_non_finite_values_and_unsupported_keywords(self) -> None:
         with self.assertRaisesRegex(ValueError, "finite"):
