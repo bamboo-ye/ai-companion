@@ -613,47 +613,53 @@ def _split_document_round_for_composer(text: str, token_count: int) -> list[str]
     normalized = text.strip()
     if not normalized:
         return []
-    segment_count = max(
-        1,
-        math.ceil(len(normalized) / _DOCUMENT_COMPOSER_BATCH_MAX_CHARS),
-        (
-            math.ceil(token_count / _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS)
-            if token_count > 0
-            else 1
-        ),
-    )
-    if segment_count == 1:
+    max_characters = _DOCUMENT_COMPOSER_BATCH_MAX_CHARS
+    if token_count > 0:
+        max_characters = min(
+            max_characters,
+            max(
+                1,
+                (_DOCUMENT_COMPOSER_BATCH_MAX_TOKENS * len(normalized)) // token_count,
+            ),
+        )
+    if len(normalized) <= max_characters:
         return [normalized]
 
-    # Page starts are the best boundaries; line starts retain a lossless and
-    # deterministic fallback for unusually dense pages or parser output.
-    page_boundaries = {
-        match.start()
-        for match in re.finditer(r"(?m)^\[\[PAGE \d+\]\]\s*$", normalized)
-        if match.start() > 0
-    }
-    line_boundaries = {
-        match.end()
-        for match in re.finditer(r"\n", normalized)
-        if 0 < match.end() < len(normalized)
-    }
-    boundaries = sorted(page_boundaries | line_boundaries)
+    # Page starts are preferred when they are close to the hard limit; line
+    # starts are the deterministic fallback. No selected cut may exceed the
+    # derived character/token ceiling.
+    page_boundaries = sorted(
+        {
+            match.start()
+            for match in re.finditer(r"(?m)^\[\[PAGE \d+\]\]\s*$", normalized)
+            if match.start() > 0
+        }
+    )
+    line_boundaries = sorted(
+        {
+            match.end()
+            for match in re.finditer(r"\n", normalized)
+            if 0 < match.end() < len(normalized)
+        }
+    )
     segments: list[str] = []
     start = 0
-    for index in range(segment_count - 1):
-        remaining_segments = segment_count - index
-        ideal = start + math.ceil((len(normalized) - start) / remaining_segments)
-        minimum = start + max(1, (ideal - start) // 2)
-        maximum = min(
-            len(normalized) - (remaining_segments - 1),
-            start + math.ceil((ideal - start) * 1.5),
-        )
-        candidates = [value for value in boundaries if minimum <= value <= maximum]
-        if candidates:
-            page_candidates = [value for value in candidates if value in page_boundaries]
-            cut = min(page_candidates or candidates, key=lambda value: abs(value - ideal))
+    while len(normalized) - start > max_characters:
+        maximum = start + max_characters
+        preferred_minimum = start + math.floor(max_characters * 0.8)
+        safe_minimum = start + max(1, math.floor(max_characters * 0.5))
+        page_candidates = [
+            value for value in page_boundaries if preferred_minimum <= value <= maximum
+        ]
+        line_candidates = [
+            value for value in line_boundaries if safe_minimum <= value <= maximum
+        ]
+        if page_candidates:
+            cut = page_candidates[-1]
+        elif line_candidates:
+            cut = line_candidates[-1]
         else:
-            cut = min(maximum, max(minimum, ideal))
+            cut = maximum
         segment = normalized[start:cut].strip()
         if segment:
             segments.append(segment)
