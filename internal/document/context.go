@@ -40,7 +40,8 @@ type DocumentContext struct {
 
 // ContextRound is a lossless, ordered unit of document work. It deliberately
 // carries only manifest data: the merged Text remains the single model-facing
-// payload so round metadata does not duplicate large source content.
+// payload and contains lightweight round markers rather than duplicating the
+// large source content in the manifest.
 type ContextRound struct {
 	RoundNo    int `json:"round_no"`
 	ChunkStart int `json:"chunk_start"`
@@ -199,7 +200,8 @@ func (s *Service) ReadParsedContextRoundWindow(
 			estimatedTokens += cost
 			selected = append(selected, chunk)
 		}
-		blocks = append(blocks, strings.Join(roundBlocks, "\n\n"))
+		roundMarker := fmt.Sprintf("[[DOCUMENT ROUND %d]]", startIndex+index+1)
+		blocks = append(blocks, roundMarker+"\n"+strings.Join(roundBlocks, "\n\n"))
 		manifest = append(manifest, ContextRound{
 			RoundNo: startIndex + index + 1, ChunkStart: items[0].Ordinal,
 			ChunkEnd: items[len(items)-1].Ordinal, ChunkCount: len(items),

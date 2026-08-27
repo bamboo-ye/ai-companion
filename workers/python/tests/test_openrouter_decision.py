@@ -572,7 +572,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "function": {"name": "work_create_markdown_document"},
             },
         )
-        self.assertEqual(port.requests[1]["max_tokens"], 8192)
+        self.assertEqual(port.requests[1]["max_tokens"], 12288)
 
     def test_email_composer_uses_profile_language_contract_and_quality_fallback(self) -> None:
         arguments = {
@@ -730,6 +730,10 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "round_number": 1,
                 "round_count": 3,
             },
+            "artifact_validation": {
+                "passed": False,
+                "violations": [{"code": "source_records_missing"}],
+            },
             "observations": [
                 {
                     "tool_name": "work_extract_attached_document",
@@ -745,6 +749,8 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         system_prompt = port.requests[0]["messages"][0]["content"]
         self.assertIn("只处理 completed_observations 中当前这一轮", system_prompt)
+        self.assertIn("只重新生成当前来源轮次", system_prompt)
+        self.assertNotIn("必须重新生成全部参数", system_prompt)
         self.assertIn("严禁放在table对象上", system_prompt.replace(" ", ""))
         routed = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")

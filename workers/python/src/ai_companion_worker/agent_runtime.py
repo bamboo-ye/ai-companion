@@ -392,10 +392,13 @@ def _normalize_presentation_arguments(
 
     task_contract = state.get("task_contract", {})
     if table_copy is not None:
-        # source_locator belongs to every row.  The trusted schema deliberately
-        # rejects a table-level copy, but models commonly add one after seeing
-        # source-location requirements in the prompt.
-        table_copy.pop("source_locator", None)
+        # Only the trusted table fields may cross the quality gate. Models
+        # commonly nest harness-owned fields such as source_coverage inside the
+        # table during a repair pass, while the schema rejects all unknown
+        # properties.
+        table_copy = {
+            key: table_copy[key] for key in ("title", "columns", "rows") if key in table_copy
+        }
         requested = _presentation_requested_columns(task_contract)
         columns = table_copy.get("columns")
         rows = table_copy.get("rows")
@@ -431,7 +434,10 @@ def _normalize_presentation_arguments(
                 locator = str(raw_row.get("source_locator") or "").strip()
                 if not locator and 0 <= source_index < len(cells):
                     locator = str(cells[source_index] or "").strip()
-                normalized_rows.append({"cells": visible_cells, "source_locator": locator})
+                if not locator:
+                    locator = _presentation_source_locator(visible_cells, state)
+                for expanded_cells in _expand_presentation_cells(visible_cells):
+                    normalized_rows.append({"cells": expanded_cells, "source_locator": locator})
             chinese = isinstance(task_contract, Mapping) and str(
                 task_contract.get("output_language") or ""
             ).casefold().startswith("zh")
@@ -510,6 +516,89 @@ def _presentation_column_field(value: Any) -> str:
         "来源": "source_locator",
     }
     return aliases.get(normalized, normalized)
+
+
+_PRESENTATION_CELL_RENDER_LIMIT = 120
+_PRESENTATION_PAGE_MARKER = re.compile(r"\[\[(?P<page>PAGES?\s+\d+(?:-\d+)?)\]\]", re.I)
+
+
+def _presentation_source_locator(cells: list[str], state: AgentState) -> str:
+    """Recover a grounded row locator from the extracted source when omitted."""
+
+    needles = [str(value).strip() for value in cells if str(value).strip()]
+    if not needles:
+        return ""
+    # Course and record identifiers are normally the first visible field and
+    # are much safer anchors than a generic name or time fragment.
+    needle = needles[0]
+    for observation in state.get("observations", []):
+        if not isinstance(observation, Mapping):
+            continue
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        if not isinstance(output, Mapping):
+            continue
+        text = output.get("text")
+        if not isinstance(text, str):
+            continue
+        match = re.search(re.escape(needle), text, re.I)
+        if match is None:
+            continue
+        markers = list(_PRESENTATION_PAGE_MARKER.finditer(text, 0, match.start()))
+        if markers:
+            return markers[-1].group("page").title()
+        filename = str(output.get("source_filename") or "").strip()
+        round_start = int(output.get("round_start") or 1)
+        if filename:
+            return f"{filename}, round {round_start}"[:160]
+    return ""
+
+
+def _split_presentation_cell(value: Any) -> list[str]:
+    """Split dense cell text without dropping non-whitespace source content."""
+
+    remaining = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(remaining) <= _PRESENTATION_CELL_RENDER_LIMIT:
+        return [remaining]
+    result: list[str] = []
+    while len(remaining) > _PRESENTATION_CELL_RENDER_LIMIT:
+        window = remaining[: _PRESENTATION_CELL_RENDER_LIMIT + 1]
+        candidates = [
+            (window.rfind(";"), 1),
+            (window.rfind("；"), 1),
+            (window.rfind(" "), 0),
+        ]
+        boundary, suffix = max(candidates, key=lambda item: item[0])
+        if boundary < _PRESENTATION_CELL_RENDER_LIMIT // 2:
+            cut = _PRESENTATION_CELL_RENDER_LIMIT
+        else:
+            cut = boundary + suffix
+        segment = remaining[:cut].strip()
+        if segment:
+            result.append(segment)
+        remaining = remaining[cut:].strip()
+    if remaining:
+        result.append(remaining)
+    return result or [""]
+
+
+def _expand_presentation_cells(cells: list[str]) -> list[list[str]]:
+    """Expand one dense record into readable continuation rows losslessly."""
+
+    segmented = [_split_presentation_cell(value) for value in cells]
+    row_count = max((len(items) for items in segmented), default=1)
+    result: list[list[str]] = []
+    for index in range(row_count):
+        row: list[str] = []
+        for items in segmented:
+            if len(items) == 1:
+                row.append(items[0])
+            elif index < len(items):
+                row.append(items[index])
+            else:
+                row.append("同上")
+        result.append(row)
+    return result
 
 
 _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]\s*$")

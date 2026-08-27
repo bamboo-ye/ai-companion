@@ -70,7 +70,7 @@ class OpenRouterConfig:
     composer_attempt_timeout_seconds: float = 30
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
-    composer_max_tokens: int = 8192
+    composer_max_tokens: int = 12288
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
@@ -139,7 +139,7 @@ class OpenRouterConfig:
                 os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
-            composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "8192")),
+            composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -726,11 +726,18 @@ class OpenRouterDecisionPort:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
-                    system_prompt += (
-                        "上一次演示文稿参数未通过确定性完整性门禁。必须重新生成全部参数，"
-                        "不得复用空泛 brief，并修复这些问题："
-                        f"{encoded_violations}。"
-                    )
+                    if isinstance(document_round, Mapping):
+                        system_prompt += (
+                            "上一次演示文稿参数未通过确定性完整性门禁。只重新生成当前来源轮次"
+                            "的完整结构化参数；Harness 会保留其他已通过轮次并确定性合并。修复"
+                            f"这些问题：{encoded_violations}。"
+                        )
+                    else:
+                        system_prompt += (
+                            "上一次演示文稿参数未通过确定性完整性门禁。必须重新生成全部参数，"
+                            "不得复用空泛 brief，并修复这些问题："
+                            f"{encoded_violations}。"
+                        )
         payload = self._base_payload("composer")
         payload.update(
             {
