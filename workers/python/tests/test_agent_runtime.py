@@ -447,6 +447,7 @@ class AgentRuntimeTest(unittest.TestCase):
                     "title": "全部课程",
                     "columns": ["课程代码", "课程名称", "上课时间", "来源位置"],
                     "source_locator": "Page 1",
+                    "source_coverage": {"coverage_ratio": 1.0},
                     "rows": [
                         {
                             "cells": ["PED1101", "Canoeing", "10:00-11:50"],
@@ -458,6 +459,7 @@ class AgentRuntimeTest(unittest.TestCase):
             state,  # type: ignore[arg-type]
         )
         self.assertNotIn("source_locator", first["table"])
+        self.assertNotIn("source_coverage", first["table"])
         self.assertEqual(first["table"]["columns"], ["课程代码", "课程名称", "上课时间"])
         self.assertEqual(len(first["table"]["rows"][0]["cells"]), 3)
 
@@ -489,6 +491,56 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(len(merged["table"]["rows"]), 2)
         self.assertIn("Page 1 overlap", merged["table"]["rows"][0]["source_locator"])
         self.assertIn("2 条来源记录", merged["brief"])
+
+    def test_presentation_normalization_recovers_locator_and_splits_dense_cells(self) -> None:
+        schedule = "; ".join(
+            f"T{index:02d} 8/9, 15/9, 22/9, 29/9 (Tue) {900 + index:04d}-0950"
+            for index in range(1, 9)
+        )
+        state: dict[str, Any] = {
+            "task_contract": {
+                "exhaustive": True,
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "data": {
+                        "output": {
+                            "source_filename": "courses.pdf",
+                            "round_start": 2,
+                            "text": f"[[PAGE 2]]\nPED1317 HIIT\n{schedule}",
+                        }
+                    },
+                }
+            ],
+        }
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "课程表",
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "source_coverage": {"coverage_ratio": 1.0},
+                    "unexpected": "remove me",
+                    "rows": [
+                        {
+                            "cells": ["PED1317", "HIIT", schedule],
+                            "source_locator": "",
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        table = normalized["table"]
+        self.assertEqual(set(table), {"columns", "rows"})
+        self.assertGreater(len(table["rows"]), 1)
+        self.assertTrue(all(len(cell) <= 120 for row in table["rows"] for cell in row["cells"]))
+        self.assertTrue(all(row["source_locator"] == "Page 2" for row in table["rows"]))
+        rebuilt_schedule = " ".join(row["cells"][2] for row in table["rows"])
+        for index in range(1, 9):
+            self.assertIn(f"T{index:02d}", rebuilt_schedule)
 
     def test_document_continuation_uses_exact_next_round(self) -> None:
         state = {

@@ -270,8 +270,8 @@ func Load(serviceName string) (Config, error) {
 	if _, err := fmt.Sscanf(value("MODEL_MAX_TOKENS", "1024"), "%d", &modelMaxTokens); err != nil || modelMaxTokens < 64 || modelMaxTokens > 32768 {
 		return Config{}, fmt.Errorf("MODEL_MAX_TOKENS must be between 64 and 32768")
 	}
-	modelComposerMaxTokens := 4096
-	if _, err := fmt.Sscanf(value("MODEL_COMPOSER_MAX_TOKENS", "4096"), "%d", &modelComposerMaxTokens); err != nil || modelComposerMaxTokens < 64 || modelComposerMaxTokens > 32768 {
+	modelComposerMaxTokens := 12288
+	if _, err := fmt.Sscanf(value("MODEL_COMPOSER_MAX_TOKENS", "12288"), "%d", &modelComposerMaxTokens); err != nil || modelComposerMaxTokens < 64 || modelComposerMaxTokens > 32768 {
 		return Config{}, fmt.Errorf("MODEL_COMPOSER_MAX_TOKENS must be between 64 and 32768")
 	}
 	modelDataCollection := value("MODEL_DATA_COLLECTION", "deny")

@@ -284,7 +284,7 @@ func TestLoadOpenRouterRouting(t *testing.T) {
 		got[2] != "inclusionai/ling-3.0-flash:free" {
 		t.Fatalf("companion responder models = %#v", got)
 	}
-	if cfg.ModelComposerMaxTokens != 4096 || cfg.ModelTranslationName != "openai/gpt-5-mini" ||
+	if cfg.ModelComposerMaxTokens != 12288 || cfg.ModelTranslationName != "openai/gpt-5-mini" ||
 		cfg.ModelTranslationMaxTokens != 8000 || cfg.ModelTranslationMaxCostMicros != 60000 {
 		t.Fatalf("unexpected role/translation budgets: %#v", cfg)
 	}

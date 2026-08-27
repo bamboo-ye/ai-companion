@@ -109,6 +109,11 @@ func TestReadParsedContextRoundsMergesSequentialCoverageAndCleaning(t *testing.T
 	if !strings.Contains(parsed.Text, "row-1") || !strings.Contains(parsed.Text, "row-4") || strings.Contains(parsed.Text, "row-5") {
 		t.Fatalf("unexpected merged text: %s", parsed.Text)
 	}
+	if strings.Count(parsed.Text, "[[DOCUMENT ROUND ") != 2 ||
+		!strings.Contains(parsed.Text, "[[DOCUMENT ROUND 1]]\n[[PAGE 1]]") ||
+		!strings.Contains(parsed.Text, "[[DOCUMENT ROUND 2]]\n[[PAGE 3]]") {
+		t.Fatalf("document round boundaries missing: %s", parsed.Text)
+	}
 	if parsed.CleaningReport.DuplicateLinesRemoved != 4 || parsed.CleaningReport.BlankLinesCollapsed != 4 {
 		t.Fatalf("cleaning report = %#v", parsed.CleaningReport)
 	}
