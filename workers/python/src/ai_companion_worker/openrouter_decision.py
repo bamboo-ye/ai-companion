@@ -122,7 +122,7 @@ class OpenRouterConfig:
     data_collection: str = "deny"
     zdr_required: bool = False
     reasoning_effort: str = "minimal"
-    composer_reasoning_effort: str = "low"
+    composer_reasoning_effort: str = "minimal"
     fallback_reasoning_effort: str = "minimal"
     reasoning_exclude: bool = True
     http_referer: str = ""
@@ -195,7 +195,7 @@ class OpenRouterConfig:
             reasoning_effort=os.getenv("MODEL_REASONING_EFFORT", "minimal"),
             composer_reasoning_effort=os.getenv(
                 "MODEL_COMPOSER_REASONING_EFFORT",
-                "low",
+                "minimal",
             ),
             fallback_reasoning_effort=os.getenv(
                 "MODEL_FALLBACK_REASONING_EFFORT",

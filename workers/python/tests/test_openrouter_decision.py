@@ -139,7 +139,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(config.composer_attempt_timeout_seconds, 30)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
         self.assertEqual(config.reasoning_effort, "minimal")
-        self.assertEqual(config.composer_reasoning_effort, "low")
+        self.assertEqual(config.composer_reasoning_effort, "minimal")
         self.assertEqual(config.fallback_reasoning_effort, "minimal")
 
     def test_model_generates_structured_execution_plan(self) -> None:
@@ -981,7 +981,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "min_fallback_timeout_seconds": 5,
             },
         )
-        self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
+        self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "minimal")
         self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "minimal")
 
     def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
