@@ -811,7 +811,8 @@ class OpenRouterDecisionPort:
                 "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
                 "成为表头或逐页可见字段。source_locator 只能放在每个 row 对象中，严禁放在"
                 "table 对象上；row.cells 的数量必须与 table.columns 完全相同。不得用省略号、"
-                "‘详见原文’、‘多个时段’或示例记录代替真实数据。"
+                "‘详见原文’、‘多个时段’或示例记录代替真实数据。不得把 Harness 的轮次、"
+                "附件索引、Source IR、来源定位器或质量门术语写入标题、表头或可见单元格。"
             )
             document_round = context.get("document_processing_round")
             if isinstance(document_round, Mapping):
@@ -821,11 +822,30 @@ class OpenRouterDecisionPort:
                     separators=(",", ":"),
                 )
                 system_prompt += (
-                    "当前来源过大，Harness 正按轮处理。你只处理 completed_observations 中当前"
-                    "这一轮的原文，逐条输出本轮所有可识别记录；前一轮重叠片段仅用于补全跨轮"
-                    "记录，不得因此省略当前轮数据。不要尝试总结整份文件，也不要声称未看到的"
-                    f"轮次已经完成。分轮信息：{encoded_round}。"
+                    "当前来源过大，Harness 正按逻辑行组分轮处理。若观察中包含 STRUCTURED "
+                    "SOURCE IR，必须按 table/row_group/row/cell 关系读取，不得把子行标识重新"
+                    "解释成父实体字段。第一轮必须生成 mapping_contract：version 固定为"
+                    " target-mapping-v1，source_table_ids 必须覆盖 source_structure_summary"
+                    "列出的全部相关逻辑表，entity_level"
+                    "根据用户要求的目标记录粒度选择 row_group 或 row，field_mappings 为每个"
+                    "目标列声明 target_index、source_column_ids 和 direct/aggregate 模式。"
+                    "每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须是锁定粒度"
+                    "下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行实际使用的"
+                    "来源 row ID。你只处理 completed_observations 中当前轮的全部逻辑实体，"
+                    "不要总结整份文件，也不要声称未看到的轮次已完成。"
+                    f"分轮信息：{encoded_round}。"
                 )
+                locked_mapping = context.get("locked_mapping_contract")
+                if isinstance(locked_mapping, Mapping) and locked_mapping:
+                    encoded_mapping = json.dumps(
+                        dict(locked_mapping),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    system_prompt += (
+                        "字段映射与实体粒度已经由 Harness 锁定；本轮必须逐字复用，不得重新"
+                        f"解释表头或改变粒度：{encoded_mapping}。"
+                    )
             if isinstance(artifact_validation, Mapping):
                 violations = artifact_validation.get("violations")
                 if isinstance(violations, list) and violations:
@@ -896,6 +916,16 @@ class OpenRouterDecisionPort:
             "composer",
         )
         model_order = self._config.models_for("composer")
+        raw_exclusions = context.get("composer_model_exclusions")
+        exclusions = (
+            {str(value) for value in raw_exclusions if str(value)}
+            if isinstance(raw_exclusions, list)
+            else set()
+        )
+        if exclusions:
+            healthy_order = tuple(model for model in model_order if model not in exclusions)
+            if healthy_order:
+                model_order = healthy_order
         quality_retry = (
             tool_name == "work_draft_email"
             and isinstance(email_validation, Mapping)
@@ -1902,6 +1932,8 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
         "artifact_validation": context.get("artifact_validation", {}),
         "source_coverage": context.get("source_coverage", {}),
         "document_processing_round": context.get("document_processing_round", {}),
+        "locked_mapping_contract": context.get("locked_mapping_contract", {}),
+        "source_structure_summary": context.get("source_structure_summary", {}),
         "completed_observations": observations[-6:],
         "next_action_number": int(context.get("action_index", 0)) + 1,
         "email_profile": context.get("email_profile", {}),

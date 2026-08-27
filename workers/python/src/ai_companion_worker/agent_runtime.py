@@ -436,8 +436,21 @@ def _normalize_presentation_arguments(
                     locator = str(cells[source_index] or "").strip()
                 if not locator:
                     locator = _presentation_source_locator(visible_cells, state)
-                for expanded_cells in _expand_presentation_cells(visible_cells):
-                    normalized_rows.append({"cells": expanded_cells, "source_locator": locator})
+                normalized_row: dict[str, Any] = {
+                    "cells": visible_cells,
+                    "source_locator": locator,
+                }
+                entity_id = str(raw_row.get("entity_id") or "").strip()
+                if entity_id:
+                    normalized_row["entity_id"] = entity_id
+                source_refs = raw_row.get("source_refs")
+                if isinstance(source_refs, list):
+                    normalized_row["source_refs"] = list(
+                        dict.fromkeys(
+                            str(value).strip() for value in source_refs if str(value).strip()
+                        )
+                    )
+                normalized_rows.append(normalized_row)
             chinese = isinstance(task_contract, Mapping) and str(
                 task_contract.get("output_language") or ""
             ).casefold().startswith("zh")
@@ -562,7 +575,7 @@ def _split_presentation_cell(value: Any) -> list[str]:
         return [remaining]
     result: list[str] = []
     while len(remaining) > _PRESENTATION_CELL_RENDER_LIMIT:
-        window = remaining[: _PRESENTATION_CELL_RENDER_LIMIT + 1]
+        window = remaining[:_PRESENTATION_CELL_RENDER_LIMIT]
         candidates = [
             (window.rfind(";"), 1),
             (window.rfind("；"), 1),
@@ -605,6 +618,7 @@ _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
+_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 18_000
 
 
 def _split_document_round_for_composer(text: str, token_count: int) -> list[str]:
@@ -670,7 +684,7 @@ def _split_document_round_for_composer(text: str, token_count: int) -> list[str]
     return segments
 
 
-def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
+def _presentation_text_document_batches(state: AgentState) -> list[dict[str, Any]]:
     """Return ordered, de-duplicated extraction rounds for downstream work."""
 
     batches: dict[tuple[int, int], dict[str, Any]] = {}
@@ -764,12 +778,470 @@ def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
     return ordered
 
 
+def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
+    tables: dict[str, dict[str, Any]] = {}
+    for observation in state.get("observations", []):
+        if not isinstance(observation, Mapping):
+            continue
+        if observation.get("tool_name") != "work_extract_attached_document":
+            continue
+        arguments = observation.get("arguments")
+        attachment_index = (
+            int(arguments.get("attachment_index") or 1)
+            if isinstance(arguments, Mapping)
+            else 1
+        )
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        source_ir = output.get("source_ir") if isinstance(output, Mapping) else None
+        if not isinstance(source_ir, Mapping):
+            continue
+        filename = str(output.get("source_filename") or "")
+        for raw_table in source_ir.get("tables", []):
+            if not isinstance(raw_table, Mapping):
+                continue
+            table = _namespace_source_table(raw_table, attachment_index)
+            table_id = str(table.get("id") or "")
+            if not table_id:
+                continue
+            target = tables.setdefault(
+                table_id,
+                {
+                    **table,
+                    "source_filename": filename,
+                    "attachment_index": attachment_index,
+                    "rows": [],
+                    "row_groups": [],
+                },
+            )
+            row_map = {
+                str(item.get("id") or ""): item
+                for item in target.get("rows", [])
+                if isinstance(item, Mapping)
+            }
+            for row in table.get("rows", []):
+                if isinstance(row, Mapping) and str(row.get("id") or "") not in row_map:
+                    copied = dict(row)
+                    target["rows"].append(copied)
+                    row_map[str(copied.get("id") or "")] = copied
+            group_map = {
+                str(item.get("id") or ""): item
+                for item in target.get("row_groups", [])
+                if isinstance(item, Mapping)
+            }
+            for raw_group in table.get("row_groups", []):
+                if not isinstance(raw_group, Mapping):
+                    continue
+                group_id = str(raw_group.get("id") or "")
+                if not group_id:
+                    continue
+                if group_id not in group_map:
+                    copied = dict(raw_group)
+                    copied["row_ids"] = list(raw_group.get("row_ids") or [])
+                    target["row_groups"].append(copied)
+                    group_map[group_id] = copied
+                else:
+                    existing = group_map[group_id]
+                    existing["row_ids"] = list(
+                        dict.fromkeys(
+                            [
+                                *list(existing.get("row_ids") or []),
+                                *list(raw_group.get("row_ids") or []),
+                            ]
+                        )
+                    )
+                    existing["partial"] = bool(
+                        existing.get("partial") and raw_group.get("partial")
+                    )
+            target["page_start"] = min(
+                int(target.get("page_start") or 1), int(table.get("page_start") or 1)
+            )
+            target["page_end"] = max(
+                int(target.get("page_end") or 1), int(table.get("page_end") or 1)
+            )
+    ordered_tables = list(tables.values())
+    for table in ordered_tables:
+        table["rows"] = sorted(
+            table.get("rows", []),
+            key=lambda row: (int(row.get("page") or 0), int(row.get("line") or 0)),
+        )
+        row_order = {
+            str(row.get("id") or ""): index for index, row in enumerate(table["rows"])
+        }
+        table["row_groups"] = sorted(
+            table.get("row_groups", []),
+            key=lambda group: min(
+                (row_order.get(str(value), 10**9) for value in group.get("row_ids", [])),
+                default=10**9,
+            ),
+        )
+    ordered_tables.sort(
+        key=lambda table: (
+            int(table.get("attachment_index") or 1),
+            int(table.get("page_start") or 1),
+            str(table.get("id") or ""),
+        )
+    )
+    _unify_source_row_groups(ordered_tables)
+    return {
+        "version": "document-source-ir-v1",
+        "structure_preserved": bool(ordered_tables),
+        "tables": ordered_tables,
+    }
+
+
+def _unify_source_row_groups(tables: list[dict[str, Any]]) -> None:
+    """Join cross-page table segments by their explicit leading parent value."""
+
+    entity_ids: dict[tuple[int, str], str] = {}
+    for table in tables:
+        attachment_index = int(table.get("attachment_index") or 1)
+        rows_by_id = {
+            str(row.get("id") or ""): row
+            for row in table.get("rows", [])
+            if isinstance(row, Mapping)
+        }
+        for group in table.get("row_groups", []):
+            if not isinstance(group, dict):
+                continue
+            first_row = next(
+                (
+                    rows_by_id.get(str(row_id))
+                    for row_id in group.get("row_ids", [])
+                    if str(row_id) in rows_by_id
+                ),
+                None,
+            )
+            cells = first_row.get("cells") if isinstance(first_row, Mapping) else None
+            first_cell = cells[0] if isinstance(cells, list) and cells else None
+            parent_value = ""
+            if isinstance(first_cell, Mapping):
+                parent_value = str(
+                    first_cell.get("text") or first_cell.get("inherited_text") or ""
+                )
+            normalized_parent = re.sub(r"\s+", " ", parent_value).strip().casefold()
+            if not normalized_parent:
+                continue
+            key = (attachment_index, normalized_parent)
+            entity_id = entity_ids.setdefault(
+                key,
+                "entity:"
+                + canonical_arguments_hash(
+                    {"attachment_index": attachment_index, "parent": normalized_parent}
+                )[:24],
+            )
+            previous_id = str(group.get("id") or "")
+            group["id"] = entity_id
+            for row in table.get("rows", []):
+                if isinstance(row, dict) and row.get("group_id") == previous_id:
+                    row["group_id"] = entity_id
+
+
+def _namespace_source_table(raw_table: Mapping[str, Any], attachment_index: int) -> dict[str, Any]:
+    prefix = f"a{attachment_index}:"
+
+    def source_id(value: Any) -> str:
+        normalized = str(value or "")
+        return prefix + normalized if normalized and not normalized.startswith(prefix) else normalized
+
+    table = dict(raw_table)
+    table["id"] = source_id(table.get("id"))
+    columns: list[dict[str, Any]] = []
+    for raw_column in table.get("columns", []):
+        if not isinstance(raw_column, Mapping):
+            continue
+        column = dict(raw_column)
+        column["id"] = source_id(column.get("id"))
+        columns.append(column)
+    table["columns"] = columns
+    groups: list[dict[str, Any]] = []
+    for raw_group in table.get("row_groups", []):
+        if not isinstance(raw_group, Mapping):
+            continue
+        group = dict(raw_group)
+        group["id"] = source_id(group.get("id"))
+        group["row_ids"] = [source_id(value) for value in group.get("row_ids", [])]
+        groups.append(group)
+    table["row_groups"] = groups
+    rows: list[dict[str, Any]] = []
+    for raw_row in table.get("rows", []):
+        if not isinstance(raw_row, Mapping):
+            continue
+        row = dict(raw_row)
+        row["id"] = source_id(row.get("id"))
+        row["group_id"] = source_id(row.get("group_id"))
+        cells: list[dict[str, Any]] = []
+        for raw_cell in row.get("cells", []):
+            if not isinstance(raw_cell, Mapping):
+                continue
+            cell = dict(raw_cell)
+            cell["id"] = source_id(cell.get("id"))
+            cell["column_id"] = source_id(cell.get("column_id"))
+            if cell.get("inherited_from"):
+                cell["inherited_from"] = source_id(cell.get("inherited_from"))
+            cells.append(cell)
+        row["cells"] = cells
+        rows.append(row)
+    table["rows"] = rows
+    return table
+
+
+def _relevant_source_tables(
+    source_ir: Mapping[str, Any], task_contract: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    tables = [dict(value) for value in source_ir.get("tables", []) if isinstance(value, Mapping)]
+    requested = [field for field, _ in _presentation_requested_columns(task_contract)]
+    if not tables or not requested:
+        return tables
+    aliases = {
+        "code": ("code", "编号", "代码", "id"),
+        "name": ("name", "title", "course", "名称", "课程"),
+        "time": ("time", "date", "schedule", "时间", "日期", "时段"),
+        "venue": ("venue", "location", "place", "地点", "场地", "位置"),
+    }
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for table in tables:
+        header = " ".join(
+            str(column.get("label") or "").casefold()
+            for column in table.get("columns", [])
+            if isinstance(column, Mapping)
+        )
+        score = sum(
+            1
+            for field in requested
+            if any(alias in header for alias in aliases.get(field, (field,)))
+        )
+        scored.append((score, table))
+    best = max((score for score, _ in scored), default=0)
+    return [table for score, table in scored if score == best] if best > 0 else tables
+
+
+def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
+    task_contract = state.get("task_contract", {})
+    source_ir = _presentation_source_ir(state)
+    tables = _relevant_source_tables(
+        source_ir, task_contract if isinstance(task_contract, Mapping) else {}
+    )
+    batches: list[dict[str, Any]] = []
+    maximum_characters = _STRUCTURED_COMPOSER_BATCH_MAX_CHARS
+    for raw_table in tables:
+        table = _project_source_table(
+            raw_table, task_contract if isinstance(task_contract, Mapping) else {}
+        )
+        rows_by_id = {
+            str(row.get("id") or ""): dict(row)
+            for row in table.get("rows", [])
+            if isinstance(row, Mapping)
+        }
+        bundles: list[dict[str, Any]] = []
+        for raw_group in table.get("row_groups", []):
+            if not isinstance(raw_group, Mapping):
+                continue
+            group_rows = [
+                rows_by_id[str(value)]
+                for value in raw_group.get("row_ids", [])
+                if str(value) in rows_by_id
+            ]
+            if not group_rows:
+                continue
+            current: list[dict[str, Any]] = []
+            for row in group_rows:
+                candidate = [*current, row]
+                if current and _structured_rows_size(candidate) > maximum_characters:
+                    bundles.append(
+                        {
+                            "group": {**dict(raw_group), "partial": True},
+                            "rows": current,
+                        }
+                    )
+                    current = []
+                current.append(row)
+            if current:
+                bundles.append(
+                    {
+                        "group": {
+                            **dict(raw_group),
+                            "partial": bool(raw_group.get("partial"))
+                            or len(current) < len(group_rows),
+                        },
+                        "rows": current,
+                    }
+                )
+        current_bundles: list[dict[str, Any]] = []
+        for bundle in bundles:
+            candidate = [*current_bundles, bundle]
+            if current_bundles and sum(
+                _structured_rows_size(value["rows"]) + 300 for value in candidate
+            ) > maximum_characters:
+                batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
+                current_bundles = []
+            current_bundles.append(bundle)
+        if current_bundles:
+            batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
+    return batches
+
+
+def _structured_rows_size(rows: list[Mapping[str, Any]]) -> int:
+    return sum(
+        120
+        + sum(
+            70 + len(str(cell.get("text") or ""))
+            for cell in row.get("cells", [])
+            if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
+        )
+        for row in rows
+    )
+
+
+def _project_source_table(
+    table: Mapping[str, Any], task_contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    columns = [dict(value) for value in table.get("columns", []) if isinstance(value, Mapping)]
+    requested = [field for field, _ in _presentation_requested_columns(task_contract)]
+    aliases = {
+        "code": ("code", "编号", "代码", "id"),
+        "name": ("name", "title", "course", "名称", "课程"),
+        "time": ("time", "date", "schedule", "时间", "日期", "时段"),
+        "venue": ("venue", "location", "place", "地点", "场地", "位置"),
+    }
+    selected: set[int] = set()
+    for index, column in enumerate(columns):
+        label = str(column.get("label") or "").casefold()
+        if any(
+            alias in label
+            for field in requested
+            for alias in aliases.get(field, (field,))
+        ):
+            selected.update((index - 1, index, index + 1))
+    selected.update((0, 1))
+    selected = {index for index in selected if 0 <= index < len(columns)}
+    if not selected:
+        selected = set(range(len(columns)))
+    selected_ids = {str(columns[index].get("id") or "") for index in selected}
+    projected = dict(table)
+    projected["columns"] = [columns[index] for index in sorted(selected)]
+    projected_rows: list[dict[str, Any]] = []
+    for raw_row in table.get("rows", []):
+        if not isinstance(raw_row, Mapping):
+            continue
+        row = dict(raw_row)
+        row["cells"] = [
+            dict(cell)
+            for cell in raw_row.get("cells", [])
+            if isinstance(cell, Mapping) and str(cell.get("column_id") or "") in selected_ids
+        ]
+        projected_rows.append(row)
+    projected["rows"] = projected_rows
+    return projected
+
+
+def _structured_batch(
+    table: Mapping[str, Any], bundles: list[dict[str, Any]], sequence: int
+) -> dict[str, Any]:
+    rows = [row for bundle in bundles for row in bundle["rows"]]
+    compact_groups: list[dict[str, Any]] = []
+    for bundle in bundles:
+        group = dict(bundle["group"])
+        first_row = bundle["rows"][0] if bundle["rows"] else {}
+        group["context_cells"] = [
+            {
+                "column_id": cell.get("column_id"),
+                "text": str(cell.get("text") or cell.get("inherited_text") or ""),
+            }
+            for cell in first_row.get("cells", [])
+            if isinstance(cell, Mapping)
+            and str(cell.get("text") or cell.get("inherited_text") or "").strip()
+        ]
+        compact_groups.append(group)
+    compact_rows = [
+        {
+            "id": row.get("id"),
+            "group_id": row.get("group_id"),
+            "source_locator": row.get("source_locator"),
+            "cells": [
+                {
+                    "column_id": cell.get("column_id"),
+                    "text": cell.get("text"),
+                }
+                for cell in row.get("cells", [])
+                if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
+            ],
+        }
+        for row in rows
+    ]
+    source_ir = {
+        "version": "document-source-ir-v1",
+        "table": {
+            "id": table.get("id"),
+            "columns": table.get("columns", []),
+            "row_groups": compact_groups,
+            "rows": compact_rows,
+        },
+    }
+    text = "[[STRUCTURED SOURCE IR]]\n" + json.dumps(
+        source_ir, ensure_ascii=False, separators=(",", ":")
+    )
+    pages = sorted({int(row.get("page") or 0) for row in rows})
+    return {
+        "batch_id": f"{table.get('id')}:b{sequence}",
+        "attachment_index": int(table.get("attachment_index") or 1),
+        "round_no": sequence,
+        "segment_no": 1,
+        "segment_count": 1,
+        "text": text,
+        "processing_text": text,
+        "token_count": max(1, math.ceil(len(text) / 3)),
+        "source_filename": str(table.get("source_filename") or ""),
+        "source_ir": source_ir,
+        "source_pages": pages,
+        "structured": True,
+    }
+
+
+def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
+    structured = _presentation_structured_batches(state)
+    return structured or _presentation_text_document_batches(state)
+
+
+def _composer_circuit_breaker_models(state: AgentState) -> list[str]:
+    failed: set[str] = set()
+    succeeded: set[str] = set()
+    for event in state.get("model_events", []):
+        if not isinstance(event, Mapping) or event.get("role") != "composer":
+            continue
+        model = str(event.get("requested_model") or "").strip()
+        if not model:
+            continue
+        if event.get("status") == "succeeded":
+            succeeded.add(model)
+        elif int(event.get("error_status") or 0) == 408:
+            failed.add(model)
+    # Open the circuit only after this run has demonstrated a healthy fallback.
+    # If every model failed, retain the configured order for the checkpointed retry.
+    return sorted(failed - succeeded) if succeeded else []
+
+
 def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
     if int(batch.get("segment_count") or 1) > 1:
         locator += (
             f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
         )
+    structured = batch.get("structured") is True
+    output = {
+        "source_filename": str(batch.get("source_filename") or ""),
+        "format": "json" if structured else "markdown",
+        "text": str(batch.get("processing_text") or batch.get("text") or ""),
+        "round_start": int(batch.get("round_no") or 1),
+        "completed_rounds": 1,
+        "round_count": 1,
+        "truncated": False,
+        "coverage_ratio": 1.0,
+        "source_locator": locator,
+    }
+    if structured:
+        output["source_ir"] = dict(batch.get("source_ir") or {})
+        output["source_pages"] = list(batch.get("source_pages") or [])
     return {
         "tool_name": "work_extract_attached_document",
         "arguments": {
@@ -779,22 +1251,15 @@ def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
         "status": "completed",
         "response": f"正在处理文档分轮 {locator}",
         "data": {
-            "output": {
-                "source_filename": str(batch.get("source_filename") or ""),
-                "format": "markdown",
-                "text": str(batch.get("processing_text") or batch.get("text") or ""),
-                "round_start": int(batch.get("round_no") or 1),
-                "completed_rounds": 1,
-                "round_count": 1,
-                "truncated": False,
-                "coverage_ratio": 1.0,
-                "source_locator": locator,
-            }
+            "output": output
         },
     }
 
 
 def _presentation_row_key(row: Mapping[str, Any]) -> str:
+    entity_id = str(row.get("entity_id") or "").strip()
+    if entity_id:
+        return "entity:" + entity_id
     cells = row.get("cells")
     if not isinstance(cells, list):
         return ""
@@ -808,6 +1273,12 @@ def _merge_presentation_arguments(
     state: AgentState,
 ) -> dict[str, Any]:
     merged = dict(base)
+    base_mapping = base.get("mapping_contract")
+    added_mapping = addition.get("mapping_contract")
+    if isinstance(base_mapping, Mapping):
+        merged["mapping_contract"] = dict(base_mapping)
+    elif isinstance(added_mapping, Mapping):
+        merged["mapping_contract"] = dict(added_mapping)
     for key in ("title", "audience", "style", "brief", "filename"):
         value = addition.get(key)
         if key not in merged or not str(merged.get(key) or "").strip():
@@ -824,10 +1295,20 @@ def _merge_presentation_arguments(
         for raw in [*(first.get("rows") or []), *(second.get("rows") or [])]:
             if not isinstance(raw, Mapping):
                 continue
-            row = {
+            row: dict[str, Any] = {
                 "cells": list(raw.get("cells") or []),
                 "source_locator": str(raw.get("source_locator") or "").strip(),
             }
+            entity_id = str(raw.get("entity_id") or "").strip()
+            if entity_id:
+                row["entity_id"] = entity_id
+            source_refs = raw.get("source_refs")
+            if isinstance(source_refs, list):
+                row["source_refs"] = list(
+                    dict.fromkeys(
+                        str(value).strip() for value in source_refs if str(value).strip()
+                    )
+                )
             key = _presentation_row_key(row)
             if not key:
                 continue
@@ -842,6 +1323,19 @@ def _merge_presentation_arguments(
                     if isinstance(value, str) and value.strip()
                 ]
                 rows[position]["source_locator"] = "; ".join(dict.fromkeys(locators))[:160]
+                rows[position]["source_refs"] = list(
+                    dict.fromkeys(
+                        [
+                            *list(rows[position].get("source_refs") or []),
+                            *list(row.get("source_refs") or []),
+                        ]
+                    )
+                )
+                rows[position]["cells"] = _merge_presentation_cells(
+                    list(rows[position].get("cells") or []),
+                    list(row.get("cells") or []),
+                    merged.get("mapping_contract"),
+                )
                 continue
             row_positions[key] = len(rows)
             rows.append(row)
@@ -856,8 +1350,38 @@ def _merge_presentation_arguments(
             int(addition.get("slide_count") or 0),
             3,
         )
-        merged["slide_count"] = min(20, max(requested_slides, math.ceil(len(rows) / 6) + 2))
+        merged["slide_count"] = min(60, max(requested_slides, math.ceil(len(rows) / 6) + 2))
     return _normalize_presentation_arguments(merged, state)
+
+
+def _merge_presentation_cells(
+    base_cells: list[Any], addition_cells: list[Any], mapping_contract: Any
+) -> list[str]:
+    modes: dict[int, str] = {}
+    if isinstance(mapping_contract, Mapping):
+        for raw_mapping in mapping_contract.get("field_mappings", []):
+            if not isinstance(raw_mapping, Mapping):
+                continue
+            index = raw_mapping.get("target_index")
+            if isinstance(index, int) and not isinstance(index, bool):
+                modes[index] = str(raw_mapping.get("mode") or "direct").casefold()
+    size = max(len(base_cells), len(addition_cells))
+    merged: list[str] = []
+    for index in range(size):
+        first = str(base_cells[index] if index < len(base_cells) else "").strip()
+        second = str(addition_cells[index] if index < len(addition_cells) else "").strip()
+        if not first:
+            merged.append(second)
+        elif not second or second.casefold() == first.casefold():
+            merged.append(first)
+        elif modes.get(index) == "aggregate":
+            merged.append("；".join(dict.fromkeys((first, second))))
+        else:
+            # Direct fields are locked by the first grounded occurrence.  A
+            # later batch may add provenance, but it cannot silently remap or
+            # rename the same source entity.
+            merged.append(first)
+    return merged
 
 
 def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict[str, Any]:
@@ -866,11 +1390,22 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
     if not isinstance(table, Mapping) or not isinstance(report, Mapping):
         return base
     affected: set[int] = set()
+    mapping_failure = False
     violations = report.get("violations")
     if isinstance(violations, list):
         for violation in violations:
             if not isinstance(violation, Mapping):
                 continue
+            code = str(violation.get("code") or "")
+            if code.startswith(
+                (
+                    "source_mapping_",
+                    "source_field_mapping_",
+                    "source_table_field_mapping_",
+                    "source_column_mapping_",
+                )
+            ):
+                mapping_failure = True
             rows = violation.get("affected_rows")
             if isinstance(rows, list):
                 affected.update(
@@ -880,7 +1415,10 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
                 )
     table_copy = dict(table)
     rows = table_copy.get("rows")
-    if affected and isinstance(rows, list):
+    if mapping_failure:
+        base.pop("mapping_contract", None)
+        table_copy["rows"] = []
+    elif affected and isinstance(rows, list):
         table_copy["rows"] = [
             row for index, row in enumerate(rows, start=1) if index not in affected
         ]
@@ -1841,7 +2379,9 @@ def build_graph(
             and bool(_presentation_requested_columns(task_contract))
             else []
         )
-        round_processing = len(all_document_batches) > 1
+        round_processing = len(all_document_batches) > 1 or any(
+            batch.get("structured") is True for batch in all_document_batches
+        )
         rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
         raw_processing = state.get("document_processing", {})
         processing = dict(raw_processing) if isinstance(raw_processing, Mapping) else {}
@@ -1865,7 +2405,7 @@ def build_graph(
         processing_key = (
             canonical_arguments_hash(
                 {
-                    "version": "document-processing-v1",
+                    "version": "document-processing-v2",
                     "tool_name": normalized_tool_name,
                     "rewrite_attempt": rewrite_attempt,
                     "batches": [batch.get("batch_id") for batch in selected_batches],
@@ -1876,7 +2416,7 @@ def build_graph(
         )
         if round_processing and processing.get("processing_key") != processing_key:
             processing = {
-                "version": "document-processing-v1",
+                "version": "document-processing-v2",
                 "processing_key": processing_key,
                 "tool_name": normalized_tool_name,
                 "rewrite_attempt": rewrite_attempt,
@@ -1931,9 +2471,39 @@ def build_graph(
         composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         composition_context["source_coverage"] = _document_source_coverage(state)
         composition_context["previous_arguments"] = base_arguments
+        composition_context["composer_model_exclusions"] = _composer_circuit_breaker_models(
+            state
+        )
+        locked_mapping = base_arguments.get("mapping_contract")
+        if isinstance(locked_mapping, Mapping):
+            composition_context["locked_mapping_contract"] = dict(locked_mapping)
+        source_ir = _presentation_source_ir(state) if presentation_tool else {}
+        if source_ir:
+            source_tables = _relevant_source_tables(
+                source_ir, task_contract if isinstance(task_contract, Mapping) else {}
+            )
+            composition_context["source_structure_summary"] = {
+                "version": source_ir.get("version"),
+                "tables": [
+                    {
+                        "id": projected.get("id"),
+                        "columns": projected.get("columns", []),
+                        "row_count": len(table.get("rows", [])),
+                        "row_group_count": len(table.get("row_groups", [])),
+                    }
+                    for table in source_tables
+                    if isinstance(table, Mapping)
+                    for projected in [
+                        _project_source_table(
+                            table,
+                            task_contract if isinstance(task_contract, Mapping) else {},
+                        )
+                    ]
+                ],
+            }
         if batch is not None:
             composition_context["document_processing_round"] = {
-                "version": "document-processing-v1",
+                "version": "document-processing-v2",
                 "batch_id": batch.get("batch_id"),
                 "round_number": int(processing.get("next_batch_index") or 0) + 1,
                 "round_count": len(selected_batches),
@@ -2159,6 +2729,7 @@ def build_graph(
                         state.get("observations", []),
                         state.get("task_contract", {}),
                     ),
+                    source_ir=_presentation_source_ir(state),
                 ),
             ]
             attempts = int(state.get("presentation_rewrite_attempts", 0))
