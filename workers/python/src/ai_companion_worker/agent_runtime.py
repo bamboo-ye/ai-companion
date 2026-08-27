@@ -603,6 +603,65 @@ def _expand_presentation_cells(cells: list[str]) -> list[list[str]]:
 
 _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]\s*$")
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
+_DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
+_DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
+
+
+def _split_document_round_for_composer(text: str, token_count: int) -> list[str]:
+    """Split one extraction round losslessly into bounded Composer inputs."""
+
+    normalized = text.strip()
+    if not normalized:
+        return []
+    segment_count = max(
+        1,
+        math.ceil(len(normalized) / _DOCUMENT_COMPOSER_BATCH_MAX_CHARS),
+        (
+            math.ceil(token_count / _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS)
+            if token_count > 0
+            else 1
+        ),
+    )
+    if segment_count == 1:
+        return [normalized]
+
+    # Page starts are the best boundaries; line starts retain a lossless and
+    # deterministic fallback for unusually dense pages or parser output.
+    page_boundaries = {
+        match.start()
+        for match in re.finditer(r"(?m)^\[\[PAGE \d+\]\]\s*$", normalized)
+        if match.start() > 0
+    }
+    line_boundaries = {
+        match.end()
+        for match in re.finditer(r"\n", normalized)
+        if 0 < match.end() < len(normalized)
+    }
+    boundaries = sorted(page_boundaries | line_boundaries)
+    segments: list[str] = []
+    start = 0
+    for index in range(segment_count - 1):
+        remaining_segments = segment_count - index
+        ideal = start + math.ceil((len(normalized) - start) / remaining_segments)
+        minimum = start + max(1, (ideal - start) // 2)
+        maximum = min(
+            len(normalized) - (remaining_segments - 1),
+            start + math.ceil((ideal - start) * 1.5),
+        )
+        candidates = [value for value in boundaries if minimum <= value <= maximum]
+        if candidates:
+            page_candidates = [value for value in candidates if value in page_boundaries]
+            cut = min(page_candidates or candidates, key=lambda value: abs(value - ideal))
+        else:
+            cut = min(maximum, max(minimum, ideal))
+        segment = normalized[start:cut].strip()
+        if segment:
+            segments.append(segment)
+        start = cut
+    final_segment = normalized[start:].strip()
+    if final_segment:
+        segments.append(final_segment)
+    return segments
 
 
 def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
@@ -660,7 +719,26 @@ def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
             "token_count": int(output.get("token_count") or 0),
             "source_filename": str(output.get("source_filename") or ""),
         }
-    ordered = [batches[key] for key in sorted(batches)]
+    ordered_rounds = [batches[key] for key in sorted(batches)]
+    ordered: list[dict[str, Any]] = []
+    for batch in ordered_rounds:
+        round_text = str(batch.get("text") or "")
+        round_tokens = int(batch.get("token_count") or 0)
+        segments = _split_document_round_for_composer(round_text, round_tokens)
+        for segment_index, segment in enumerate(segments, start=1):
+            ordered.append(
+                {
+                    **batch,
+                    "text": segment,
+                    "token_count": (
+                        math.ceil(round_tokens * len(segment) / max(1, len(round_text)))
+                        if round_tokens > 0
+                        else 0
+                    ),
+                    "segment_no": segment_index,
+                    "segment_count": len(segments),
+                }
+            )
     previous_tail = ""
     for batch in ordered:
         current = str(batch["text"])
@@ -675,11 +753,17 @@ def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
             batch["processing_text"] = current
         previous_tail = current[-_DOCUMENT_PROCESSING_OVERLAP_CHARS:]
         batch["batch_id"] = f"a{batch['attachment_index']}:r{batch['round_no']}"
+        if int(batch.get("segment_count") or 1) > 1:
+            batch["batch_id"] += f":s{batch['segment_no']}"
     return ordered
 
 
 def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
+    if int(batch.get("segment_count") or 1) > 1:
+        locator += (
+            f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
+        )
     return {
         "tool_name": "work_extract_attached_document",
         "arguments": {
@@ -1802,6 +1886,22 @@ def build_graph(
             if not 0 <= batch_index < len(selected_batches):
                 raise ValueError("document processing batch checkpoint is out of range")
             batch = selected_batches[batch_index]
+            processing = {
+                **processing,
+                "active_batch": {
+                    "batch_id": batch.get("batch_id"),
+                    "batch_number": batch_index + 1,
+                    "batch_count": len(selected_batches),
+                    "attachment_index": batch.get("attachment_index"),
+                    "source_round": batch.get("round_no"),
+                    "source_segment": batch.get("segment_no", 1),
+                    "source_segment_count": batch.get("segment_count", 1),
+                    "source_characters": len(str(batch.get("text") or "")),
+                    "input_characters": len(str(batch.get("processing_text") or "")),
+                    "estimated_tokens": int(batch.get("token_count") or 0),
+                    "status": "in_progress",
+                },
+            }
         started_ns = time.perf_counter_ns()
         composition_context = with_model_allowance(
             state,
@@ -1827,6 +1927,8 @@ def build_graph(
                 "round_number": int(processing.get("next_batch_index") or 0) + 1,
                 "round_count": len(selected_batches),
                 "source_round": int(batch.get("round_no") or 1),
+                "source_segment": int(batch.get("segment_no") or 1),
+                "source_segment_count": int(batch.get("segment_count") or 1),
                 "attachment_index": int(batch.get("attachment_index") or 1),
                 "rewrite_attempt": rewrite_attempt,
                 "missing_record_keys": missing_keys,
@@ -1864,15 +1966,42 @@ def build_graph(
                 if isinstance(properties, Mapping) and "source_coverage" in properties:
                     normalized_arguments["source_coverage"] = _document_source_coverage(state)
         except ModelBudgetExceeded as exc:
-            return model_terminal_update(state, node=node, reason=str(exc))
+            failure_update = model_terminal_update(state, node=node, reason=str(exc))
+            if batch is not None:
+                processing["active_batch"] = {
+                    **processing.get("active_batch", {}),
+                    "status": "failed",
+                }
+                failure_update["document_processing"] = processing
+            return failure_update
         except Exception as exc:
-            return model_failure_update(
+            failure_update = model_failure_update(
                 state,
                 node=node,
                 role="composer",
                 started_ns=started_ns,
                 error=exc,
             )
+            if batch is not None:
+                processing["active_batch"] = {
+                    **processing.get("active_batch", {}),
+                    "status": "failed",
+                }
+                failure_update["document_processing"] = processing
+                trace = failure_update.get("node_trace")
+                if isinstance(trace, list) and trace and isinstance(trace[-1], dict):
+                    details = trace[-1].get("details")
+                    if isinstance(details, dict):
+                        details.update(
+                            {
+                                "document_processing": True,
+                                "batch_id": batch.get("batch_id"),
+                                "batch_number": int(processing.get("next_batch_index") or 0)
+                                + 1,
+                                "batch_count": len(selected_batches),
+                            }
+                        )
+            return failure_update
         model_update = model_observability_update(
             state,
             node=node,
@@ -1889,7 +2018,10 @@ def build_graph(
                     "batch_id": batch.get("batch_id"),
                     "attachment_index": batch.get("attachment_index"),
                     "source_round": batch.get("round_no"),
+                    "source_segment": batch.get("segment_no", 1),
+                    "source_segment_count": batch.get("segment_count", 1),
                     "input_characters": len(str(batch.get("processing_text") or "")),
+                    "estimated_tokens": int(batch.get("token_count") or 0),
                     "record_count": len(
                         normalized_arguments.get("table", {}).get("rows", [])
                         if isinstance(normalized_arguments.get("table"), Mapping)
@@ -1903,6 +2035,7 @@ def build_graph(
                 **processing,
                 "next_batch_index": next_batch_index,
                 "processed_batches": processed,
+                "active_batch": {},
                 "complete": not compose_more,
                 "merged_record_count": len(
                     normalized_arguments.get("table", {}).get("rows", [])

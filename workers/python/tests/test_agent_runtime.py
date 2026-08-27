@@ -503,6 +503,39 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("Page 1 overlap", merged["table"]["rows"][0]["source_locator"])
         self.assertIn("2 条来源记录", merged["brief"])
 
+    def test_dense_extraction_round_is_split_into_lossless_composer_sub_batches(self) -> None:
+        page_text = "\n".join(
+            f"PED{1100 + index} Course {index} 周三 10:00-11:50"
+            for index in range(1, 121)
+        )
+        state: dict[str, Any] = {
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {
+                        "output": {
+                            "source_filename": "courses.pdf",
+                            "text": f"[[DOCUMENT ROUND 1]]\n[[PAGE 1]]\n{page_text}",
+                            "rounds": [{"round_no": 1, "token_count": 3_200}],
+                        }
+                    },
+                }
+            ]
+        }
+
+        batches = _presentation_document_batches(state)  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [item["batch_id"] for item in batches],
+            ["a1:r1:s1", "a1:r1:s2", "a1:r1:s3"],
+        )
+        self.assertTrue(all(item["segment_count"] == 3 for item in batches))
+        for index in range(1, 121):
+            code = f"PED{1100 + index}"
+            self.assertEqual(sum(code in item["text"] for item in batches), 1)
+        self.assertIn("[[PREVIOUS ROUND OVERLAP", batches[1]["processing_text"])
+
     def test_presentation_normalization_recovers_locator_and_splits_dense_cells(self) -> None:
         schedule = "; ".join(
             f"T{index:02d} 8/9, 15/9, 22/9, 29/9 (Tue) {900 + index:04d}-0950"
