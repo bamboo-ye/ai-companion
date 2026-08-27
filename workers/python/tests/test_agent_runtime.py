@@ -317,6 +317,8 @@ class AgentRuntimeTest(unittest.TestCase):
                         "cost_micros": 5,
                         "error_status": 0,
                         "retryable": False,
+                        "contract_valid": False,
+                        "contract_error": "model_empty_content",
                     }
                 )
                 raise RuntimeError("empty revised response")
@@ -332,10 +334,19 @@ class AgentRuntimeTest(unittest.TestCase):
         result = AgentRuntime(graph).start(payload)
         self.assertEqual(result["outcome"], "model_invalid_response")
         self.assertIn("未通过节点契约", result["response"])
+        self.assertIn("model_empty_content", result["response"])
         revise_index = next(
             index
             for index, item in enumerate(result["node_trace"])
             if item["node"] == "revise_response"
+        )
+        self.assertEqual(
+            result["node_trace"][revise_index]["details"]["contract_errors"],
+            ["model_empty_content"],
+        )
+        self.assertEqual(
+            result["node_trace"][revise_index]["details"]["error_reason"],
+            "empty revised response",
         )
         self.assertNotIn(
             "response_quality_gate",

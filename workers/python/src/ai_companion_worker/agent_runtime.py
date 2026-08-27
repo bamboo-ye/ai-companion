@@ -1445,6 +1445,15 @@ def build_graph(
         provider_error = bool(error_statuses) or any(
             item.get("status") == "error" for item in events
         )
+        contract_errors: list[str] = []
+        for event in events:
+            contract_error = event.get("contract_error")
+            if (
+                isinstance(contract_error, str)
+                and contract_error.strip()
+                and contract_error not in contract_errors
+            ):
+                contract_errors.append(contract_error)
         if authentication_error:
             outcome = "model_authentication_error"
             response = "模型服务鉴权失败，任务已安全停止；请修复 OpenRouter 凭据后发起新的运行。"
@@ -1453,8 +1462,12 @@ def build_graph(
             response = "模型服务当前不可用，任务已安全停止；已有工具结果和预算账本均已保留。"
         else:
             outcome = "model_invalid_response"
+            error_hint = (
+                f"（错误代码：{contract_errors[-1]}）" if contract_errors else ""
+            )
             response = (
-                "模型返回内容未通过节点契约校验，任务已安全停止；调用成本和已有结果均已保留。"
+                f"模型返回内容未通过节点契约校验{error_hint}，任务已安全停止；"
+                "调用成本和已有结果均已保留。"
             )
         return {
             "budget_usage": usage,
@@ -1470,7 +1483,9 @@ def build_graph(
                     started_ns=started_ns,
                     details={
                         "error_type": type(error).__name__,
+                        "error_reason": str(error).strip()[:240],
                         "error_statuses": error_statuses,
+                        "contract_errors": contract_errors,
                         "model_calls": len(events),
                         "role": role,
                     },
