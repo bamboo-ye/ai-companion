@@ -1884,6 +1884,8 @@ def build_graph(
                 "next_batch_index": 0,
                 "processed_batches": [],
                 "missing_record_keys": missing_keys,
+                "active_batch_timeout_retries": 0,
+                "timeout_retry_total": 0,
                 "complete": False,
             }
         batch: dict[str, Any] | None = None
@@ -1905,6 +1907,9 @@ def build_graph(
                     "source_characters": len(str(batch.get("text") or "")),
                     "input_characters": len(str(batch.get("processing_text") or "")),
                     "estimated_tokens": int(batch.get("token_count") or 0),
+                    "timeout_retry_attempt": int(
+                        processing.get("active_batch_timeout_retries") or 0
+                    ),
                     "status": "in_progress",
                 },
             }
@@ -1937,6 +1942,9 @@ def build_graph(
                 "source_segment_count": int(batch.get("segment_count") or 1),
                 "attachment_index": int(batch.get("attachment_index") or 1),
                 "rewrite_attempt": rewrite_attempt,
+                "timeout_retry_attempt": int(
+                    processing.get("active_batch_timeout_retries") or 0
+                ),
                 "missing_record_keys": missing_keys,
             }
         try:
@@ -1989,13 +1997,32 @@ def build_graph(
                 error=exc,
             )
             if batch is not None:
+                timeout_retry_count = int(
+                    processing.get("active_batch_timeout_retries") or 0
+                )
+                schedule_timeout_retry = (
+                    getattr(exc, "status_code", 0) == 408 and timeout_retry_count < 1
+                )
+                if schedule_timeout_retry:
+                    processing["active_batch_timeout_retries"] = timeout_retry_count + 1
+                    processing["timeout_retry_total"] = (
+                        int(processing.get("timeout_retry_total") or 0) + 1
+                    )
+                recorded_timeout_retries = (
+                    timeout_retry_count + 1
+                    if schedule_timeout_retry
+                    else timeout_retry_count
+                )
                 processing["active_batch"] = {
                     **processing.get("active_batch", {}),
-                    "status": "failed",
+                    "timeout_retry_attempt": recorded_timeout_retries,
+                    "status": "retry_pending" if schedule_timeout_retry else "failed",
                 }
                 failure_update["document_processing"] = processing
                 trace = failure_update.get("node_trace")
                 if isinstance(trace, list) and trace and isinstance(trace[-1], dict):
+                    if schedule_timeout_retry:
+                        trace[-1]["status"] = "retry_scheduled"
                     details = trace[-1].get("details")
                     if isinstance(details, dict):
                         details.update(
@@ -2005,8 +2032,22 @@ def build_graph(
                                 "batch_number": int(processing.get("next_batch_index") or 0)
                                 + 1,
                                 "batch_count": len(selected_batches),
+                                "timeout_retry_scheduled": schedule_timeout_retry,
+                                "timeout_retry_attempt": recorded_timeout_retries,
                             }
                         )
+                if schedule_timeout_retry:
+                    # The graph checkpoints this update before re-entering the
+                    # pure Composer node. Extraction and previously merged
+                    # batches are therefore reused, and a second timeout fails
+                    # closed instead of looping indefinitely.
+                    failure_update.update(
+                        {
+                            "outcome": "",
+                            "response": "",
+                            "needs_response": False,
+                        }
+                    )
             return failure_update
         model_update = model_observability_update(
             state,
@@ -2042,6 +2083,7 @@ def build_graph(
                 "next_batch_index": next_batch_index,
                 "processed_batches": processed,
                 "active_batch": {},
+                "active_batch_timeout_retries": 0,
                 "complete": not compose_more,
                 "merged_record_count": len(
                     normalized_arguments.get("table", {}).get("rows", [])

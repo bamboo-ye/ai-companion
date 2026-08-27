@@ -19,7 +19,7 @@ var (
 
 const (
 	GraphName         = "ai-companion-supervisor"
-	GraphVersion      = "3.11.4"
+	GraphVersion      = "3.11.5"
 	DefaultRunTimeout = 15 * time.Minute
 )
 

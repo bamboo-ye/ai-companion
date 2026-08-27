@@ -113,16 +113,20 @@ class OpenRouterConfig:
     repairer_models: tuple[str, ...] = ()
     timeout_seconds: float = 30
     attempt_timeout_seconds: float = 15
-    composer_timeout_seconds: float = 45
-    composer_attempt_timeout_seconds: float = 30
+    composer_timeout_seconds: float = 90
+    composer_attempt_timeout_seconds: float = 60
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
     composer_max_tokens: int = 12288
+    composer_batch_max_tokens: int = 4096
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
     reasoning_effort: str = "minimal"
+    planner_reasoning_effort: str = "high"
+    router_reasoning_effort: str = "low"
     composer_reasoning_effort: str = "minimal"
+    assessor_reasoning_effort: str = "minimal"
     fallback_reasoning_effort: str = "minimal"
     reasoning_exclude: bool = True
     http_referer: str = ""
@@ -180,21 +184,36 @@ class OpenRouterConfig:
             repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,)),
             timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "30")),
             attempt_timeout_seconds=float(os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
-            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "45")),
+            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "90")),
             composer_attempt_timeout_seconds=float(
-                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "30")
+                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "60")
             ),
             min_fallback_timeout_seconds=float(
                 os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
+            composer_batch_max_tokens=int(
+                os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")
+            ),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
             reasoning_effort=os.getenv("MODEL_REASONING_EFFORT", "minimal"),
+            planner_reasoning_effort=os.getenv(
+                "MODEL_PLANNER_REASONING_EFFORT",
+                "high",
+            ),
+            router_reasoning_effort=os.getenv(
+                "MODEL_ROUTER_REASONING_EFFORT",
+                "low",
+            ),
             composer_reasoning_effort=os.getenv(
                 "MODEL_COMPOSER_REASONING_EFFORT",
+                "minimal",
+            ),
+            assessor_reasoning_effort=os.getenv(
+                "MODEL_ASSESSOR_REASONING_EFFORT",
                 "minimal",
             ),
             fallback_reasoning_effort=os.getenv(
@@ -271,6 +290,14 @@ class OpenRouterConfig:
             raise ValueError("MODEL_MAX_TOKENS must be between 64 and 32768")
         if self.composer_max_tokens < 64 or self.composer_max_tokens > 32768:
             raise ValueError("MODEL_COMPOSER_MAX_TOKENS must be between 64 and 32768")
+        if (
+            self.composer_batch_max_tokens < 64
+            or self.composer_batch_max_tokens > self.composer_max_tokens
+        ):
+            raise ValueError(
+                "MODEL_COMPOSER_BATCH_MAX_TOKENS must be between 64 and "
+                "MODEL_COMPOSER_MAX_TOKENS"
+            )
         if self.repairer_max_tokens < 64 or self.repairer_max_tokens > 1024:
             raise ValueError("MODEL_REPAIRER_MAX_TOKENS must be between 64 and 1024")
         if self.data_collection not in ("allow", "deny"):
@@ -286,7 +313,10 @@ class OpenRouterConfig:
         }
         for name, value in (
             ("MODEL_REASONING_EFFORT", self.reasoning_effort),
+            ("MODEL_PLANNER_REASONING_EFFORT", self.planner_reasoning_effort),
+            ("MODEL_ROUTER_REASONING_EFFORT", self.router_reasoning_effort),
             ("MODEL_COMPOSER_REASONING_EFFORT", self.composer_reasoning_effort),
+            ("MODEL_ASSESSOR_REASONING_EFFORT", self.assessor_reasoning_effort),
             ("MODEL_FALLBACK_REASONING_EFFORT", self.fallback_reasoning_effort),
         ):
             if value not in valid_reasoning_efforts:
@@ -401,6 +431,7 @@ class OpenRouterDecisionPort:
                 "composer": {
                     "models": list(self._config.models_for("composer")),
                     "max_output_tokens": self._config.composer_max_tokens,
+                    "batch_max_output_tokens": self._config.composer_batch_max_tokens,
                 },
                 "assessor": {
                     "models": list(self._config.models_for("assessor")),
@@ -447,7 +478,10 @@ class OpenRouterDecisionPort:
             },
             "inference": {
                 "reasoning_effort": self._config.reasoning_effort,
+                "planner_reasoning_effort": self._config.planner_reasoning_effort,
+                "router_reasoning_effort": self._config.router_reasoning_effort,
                 "composer_reasoning_effort": self._config.composer_reasoning_effort,
+                "assessor_reasoning_effort": self._config.assessor_reasoning_effort,
                 "fallback_reasoning_effort": self._config.fallback_reasoning_effort,
                 "reasoning_exclude": self._config.reasoning_exclude,
             },
@@ -845,7 +879,14 @@ class OpenRouterDecisionPort:
                 "max_tokens": (
                     min(self._config.composer_max_tokens, 1200)
                     if tool_name == "work_draft_email"
-                    else self._config.composer_max_tokens
+                    else (
+                        min(
+                            self._config.composer_max_tokens,
+                            self._config.composer_batch_max_tokens,
+                        )
+                        if isinstance(document_round, Mapping)
+                        else self._config.composer_max_tokens
+                    )
                 ),
             }
         )
@@ -1400,11 +1441,7 @@ class OpenRouterDecisionPort:
                 ),
             },
             "reasoning": {
-                "effort": (
-                    self._config.composer_reasoning_effort
-                    if role == "composer"
-                    else self._config.reasoning_effort
-                ),
+                "effort": self._primary_reasoning_effort(role),
                 "exclude": self._config.reasoning_exclude,
             },
         }
@@ -1476,15 +1513,19 @@ class OpenRouterDecisionPort:
         reasoning["effort"] = (
             self._config.fallback_reasoning_effort
             if fallback_model
-            else (
-                self._config.composer_reasoning_effort
-                if role == "composer"
-                else self._config.reasoning_effort
-            )
+            else self._primary_reasoning_effort(role)
         )
         reasoning["exclude"] = self._config.reasoning_exclude
         attempt["reasoning"] = reasoning
         return attempt
+
+    def _primary_reasoning_effort(self, role: str) -> str:
+        return {
+            "planner": self._config.planner_reasoning_effort,
+            "router": self._config.router_reasoning_effort,
+            "composer": self._config.composer_reasoning_effort,
+            "assessor": self._config.assessor_reasoning_effort,
+        }.get(role, self._config.reasoning_effort)
 
     def _annotate_latest_contract_error(self, error: OpenRouterError) -> None:
         if error.status_code != 0 or not self._observability:

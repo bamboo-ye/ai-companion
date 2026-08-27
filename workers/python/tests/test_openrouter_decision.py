@@ -135,11 +135,15 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(config.preferred_max_latency_p90, 8)
         self.assertEqual(config.timeout_seconds, 30)
         self.assertEqual(config.attempt_timeout_seconds, 15)
-        self.assertEqual(config.composer_timeout_seconds, 45)
-        self.assertEqual(config.composer_attempt_timeout_seconds, 30)
+        self.assertEqual(config.composer_timeout_seconds, 90)
+        self.assertEqual(config.composer_attempt_timeout_seconds, 60)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
+        self.assertEqual(config.composer_batch_max_tokens, 4096)
         self.assertEqual(config.reasoning_effort, "minimal")
+        self.assertEqual(config.planner_reasoning_effort, "high")
+        self.assertEqual(config.router_reasoning_effort, "low")
         self.assertEqual(config.composer_reasoning_effort, "minimal")
+        self.assertEqual(config.assessor_reasoning_effort, "minimal")
         self.assertEqual(config.fallback_reasoning_effort, "minimal")
 
     def test_model_generates_structured_execution_plan(self) -> None:
@@ -175,6 +179,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             port.requests[0]["response_format"],
             {"type": "json_object"},
         )
+        self.assertEqual(port.requests[0]["reasoning"]["effort"], "high")
 
     def test_life_completion_plan_requires_lookup_disambiguation_and_confirmation(self) -> None:
         port = StubOpenRouter(
@@ -815,6 +820,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         routed = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")
         self.assertIn("PED1101", routed["completed_observations"][0]["data"]["output"]["text"])
+        self.assertEqual(port.requests[0]["max_tokens"], 4096)
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
@@ -976,12 +982,16 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             {
                 "fallback_deadline_seconds": 30,
                 "attempt_timeout_seconds": 15,
-                "composer_fallback_deadline_seconds": 45,
-                "composer_attempt_timeout_seconds": 30,
+                "composer_fallback_deadline_seconds": 90,
+                "composer_attempt_timeout_seconds": 60,
                 "min_fallback_timeout_seconds": 5,
             },
         )
+        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 4096)
+        self.assertEqual(manifest["inference"]["planner_reasoning_effort"], "high")
+        self.assertEqual(manifest["inference"]["router_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "minimal")
+        self.assertEqual(manifest["inference"]["assessor_reasoning_effort"], "minimal")
         self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "minimal")
 
     def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
