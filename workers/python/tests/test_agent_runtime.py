@@ -531,6 +531,8 @@ class AgentRuntimeTest(unittest.TestCase):
             ["a1:r1:s1", "a1:r1:s2", "a1:r1:s3"],
         )
         self.assertTrue(all(item["segment_count"] == 3 for item in batches))
+        self.assertTrue(all(len(item["text"]) <= 9_000 for item in batches))
+        self.assertTrue(all(item["token_count"] <= 1_400 for item in batches))
         for index in range(1, 121):
             code = f"PED{1100 + index}"
             self.assertEqual(sum(code in item["text"] for item in batches), 1)
