@@ -468,9 +468,12 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
                         "cost_micros",
                         "latency_ms",
                         "timeout_ms",
+                        "reasoning_effort",
                         "error_status",
                         "retryable",
                         "retry_after",
+                        "contract_valid",
+                        "contract_error",
                     )
                 }
             )

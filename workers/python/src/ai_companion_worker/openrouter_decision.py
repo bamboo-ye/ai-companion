@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
+import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any, Callable, Iterator, Mapping, cast
@@ -45,6 +48,50 @@ class OpenRouterError(RuntimeError):
         self.retryable = status_code in (0, 408, 409, 429) or status_code >= 500
 
 
+class _WallClockDeadlineExceeded(TimeoutError):
+    pass
+
+
+@contextmanager
+def _wall_clock_deadline(timeout_seconds: float) -> Iterator[None]:
+    """Enforce one HTTP-attempt deadline, including DNS, connect and body reads."""
+    if (
+        not hasattr(signal, "setitimer")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        # Agent requests execute on the persistent worker's main thread. Keep
+        # the socket timeout as a portable fallback for non-POSIX test hosts.
+        yield
+        return
+    started = time.monotonic()
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def deadline_handler(_signum: int, _frame: Any) -> None:
+        raise _WallClockDeadlineExceeded("OpenRouter HTTP attempt exceeded its deadline")
+
+    signal.signal(signal.SIGALRM, deadline_handler)
+    try:
+        previous_delay, previous_interval = signal.setitimer(
+            signal.ITIMER_REAL,
+            timeout_seconds,
+        )
+    except Exception:
+        signal.signal(signal.SIGALRM, previous_handler)
+        raise
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_delay > 0:
+            elapsed = max(0.0, time.monotonic() - started)
+            signal.setitimer(
+                signal.ITIMER_REAL,
+                max(0.000001, previous_delay - elapsed),
+                previous_interval,
+            )
+
+
 @dataclass(frozen=True)
 class _FallbackTimeoutPolicy:
     deadline_seconds: float
@@ -75,6 +122,8 @@ class OpenRouterConfig:
     data_collection: str = "deny"
     zdr_required: bool = False
     reasoning_effort: str = "minimal"
+    composer_reasoning_effort: str = "low"
+    fallback_reasoning_effort: str = "minimal"
     reasoning_exclude: bool = True
     http_referer: str = ""
     app_title: str = "AI Companion"
@@ -144,6 +193,14 @@ class OpenRouterConfig:
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
             reasoning_effort=os.getenv("MODEL_REASONING_EFFORT", "minimal"),
+            composer_reasoning_effort=os.getenv(
+                "MODEL_COMPOSER_REASONING_EFFORT",
+                "low",
+            ),
+            fallback_reasoning_effort=os.getenv(
+                "MODEL_FALLBACK_REASONING_EFFORT",
+                "minimal",
+            ),
             reasoning_exclude=_env_bool("MODEL_REASONING_EXCLUDE", True),
             http_referer=os.getenv("MODEL_HTTP_REFERER", ""),
             app_title=os.getenv("MODEL_APP_TITLE", "AI Companion"),
@@ -218,6 +275,24 @@ class OpenRouterConfig:
             raise ValueError("MODEL_REPAIRER_MAX_TOKENS must be between 64 and 1024")
         if self.data_collection not in ("allow", "deny"):
             raise ValueError("MODEL_DATA_COLLECTION must be allow or deny")
+        valid_reasoning_efforts = {
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }
+        for name, value in (
+            ("MODEL_REASONING_EFFORT", self.reasoning_effort),
+            ("MODEL_COMPOSER_REASONING_EFFORT", self.composer_reasoning_effort),
+            ("MODEL_FALLBACK_REASONING_EFFORT", self.fallback_reasoning_effort),
+        ):
+            if value not in valid_reasoning_efforts:
+                raise ValueError(
+                    f"{name} must be none, minimal, low, medium, high, xhigh or max"
+                )
         if not self.config_version.strip():
             raise ValueError("MODEL_CONFIG_VERSION is required")
         if self.provider_sort not in ("price", "latency", "throughput"):
@@ -372,6 +447,8 @@ class OpenRouterDecisionPort:
             },
             "inference": {
                 "reasoning_effort": self._config.reasoning_effort,
+                "composer_reasoning_effort": self._config.composer_reasoning_effort,
+                "fallback_reasoning_effort": self._config.fallback_reasoning_effort,
                 "reasoning_exclude": self._config.reasoning_exclude,
             },
         }
@@ -1016,13 +1093,16 @@ class OpenRouterDecisionPort:
         )
         max_attempts = self._apply_model_allowance(payload, context, role)
         last_error: OpenRouterError | None = None
-        for model, request_timeout in self._fallback_attempts(
+        for attempt_index, model, request_timeout in self._fallback_attempts(
             role=role,
             max_attempts=max_attempts,
         ):
-            attempt = dict(payload)
-            attempt.pop("models", None)
-            attempt["model"] = model
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
             try:
                 result = self._observed_request(
                     attempt,
@@ -1035,6 +1115,7 @@ class OpenRouterDecisionPort:
                     raise OpenRouterError("OpenRouter returned an empty revised response")
                 return content.strip()
             except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
                 last_error = exc
                 if exc.status_code in (401, 403):
                     raise
@@ -1113,13 +1194,16 @@ class OpenRouterDecisionPort:
         allow_direct: bool,
     ) -> tuple[str, dict[str, Any], str]:
         last_error: OpenRouterError | None = None
-        for model, request_timeout in self._fallback_attempts(
+        for attempt_index, model, request_timeout in self._fallback_attempts(
             role=role,
             max_attempts=max_attempts,
         ):
-            attempt = dict(payload)
-            attempt.pop("models", None)
-            attempt["model"] = model
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
             try:
                 result = self._observed_request(
                     attempt,
@@ -1143,6 +1227,7 @@ class OpenRouterDecisionPort:
                     "OpenRouter returned neither a tool call nor a direct response"
                 )
             except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
                 last_error = exc
                 if exc.status_code in (401, 403):
                     raise
@@ -1160,14 +1245,17 @@ class OpenRouterDecisionPort:
         model_order: tuple[str, ...] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         last_error: OpenRouterError | None = None
-        for model, request_timeout in self._fallback_attempts(
+        for attempt_index, model, request_timeout in self._fallback_attempts(
             role=role,
             max_attempts=max_attempts,
             model_order=model_order,
         ):
-            attempt = dict(payload)
-            attempt.pop("models", None)
-            attempt["model"] = model
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
             try:
                 return _selected_tool(
                     self._observed_request(
@@ -1179,6 +1267,7 @@ class OpenRouterDecisionPort:
                     tool_names,
                 )
             except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
                 last_error = exc
                 # Authentication and authorization failures apply to every
                 # model. Other 4xx responses can be model-specific (for
@@ -1198,13 +1287,16 @@ class OpenRouterDecisionPort:
         max_attempts: int,
     ) -> dict[str, Any]:
         last_error: OpenRouterError | None = None
-        for model, request_timeout in self._fallback_attempts(
+        for attempt_index, model, request_timeout in self._fallback_attempts(
             role=role,
             max_attempts=max_attempts,
         ):
-            attempt = dict(payload)
-            attempt.pop("models", None)
-            attempt["model"] = model
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
             try:
                 result = self._observed_request(
                     attempt,
@@ -1215,6 +1307,7 @@ class OpenRouterDecisionPort:
                 content = _choice_message(result).get("content")
                 return _plan_arguments(content)
             except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
                 last_error = exc
                 if exc.status_code in (401, 403):
                     raise
@@ -1256,13 +1349,16 @@ class OpenRouterDecisionPort:
         )
         max_attempts = self._apply_model_allowance(payload, context, role)
         last_error: OpenRouterError | None = None
-        for model, request_timeout in self._fallback_attempts(
+        for attempt_index, model, request_timeout in self._fallback_attempts(
             role=role,
             max_attempts=max_attempts,
         ):
-            attempt = dict(payload)
-            attempt.pop("models", None)
-            attempt["model"] = model
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
             try:
                 result = self._observed_request(
                     attempt,
@@ -1275,6 +1371,7 @@ class OpenRouterDecisionPort:
                     raise OpenRouterError("OpenRouter returned an empty conversational response")
                 return content.strip()
             except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
                 last_error = exc
                 if exc.status_code in (401, 403):
                     raise
@@ -1303,7 +1400,11 @@ class OpenRouterDecisionPort:
                 ),
             },
             "reasoning": {
-                "effort": self._config.reasoning_effort,
+                "effort": (
+                    self._config.composer_reasoning_effort
+                    if role == "composer"
+                    else self._config.reasoning_effort
+                ),
                 "exclude": self._config.reasoning_exclude,
             },
         }
@@ -1319,7 +1420,7 @@ class OpenRouterDecisionPort:
         role: str,
         max_attempts: int,
         model_order: tuple[str, ...] | None = None,
-    ) -> Iterator[tuple[str, float]]:
+    ) -> Iterator[tuple[int, str, float]]:
         models = tuple((model_order or self._config.models_for(role))[:max_attempts])
         if role == "composer":
             policy = _FallbackTimeoutPolicy(
@@ -1357,7 +1458,42 @@ class OpenRouterDecisionPort:
                     "OpenRouter fallback deadline exhausted",
                     status_code=408,
                 )
-            yield model, timeout_seconds
+            yield index, model, timeout_seconds
+
+    def _attempt_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str,
+        model: str,
+        attempt_index: int,
+    ) -> dict[str, Any]:
+        attempt = dict(payload)
+        attempt.pop("models", None)
+        attempt["model"] = model
+        reasoning = dict(attempt.get("reasoning", {}))
+        fallback_model = attempt_index > 0 or model != self._config.models_for(role)[0]
+        reasoning["effort"] = (
+            self._config.fallback_reasoning_effort
+            if fallback_model
+            else (
+                self._config.composer_reasoning_effort
+                if role == "composer"
+                else self._config.reasoning_effort
+            )
+        )
+        reasoning["exclude"] = self._config.reasoning_exclude
+        attempt["reasoning"] = reasoning
+        return attempt
+
+    def _annotate_latest_contract_error(self, error: OpenRouterError) -> None:
+        if error.status_code != 0 or not self._observability:
+            return
+        latest = self._observability[-1]
+        if latest.get("kind") != "model_call" or latest.get("status") != "succeeded":
+            return
+        latest["contract_valid"] = False
+        latest["contract_error"] = _model_contract_error_code(error)
 
     def _apply_model_allowance(
         self,
@@ -1425,6 +1561,12 @@ class OpenRouterDecisionPort:
         timeout_seconds: float,
     ) -> dict[str, Any]:
         started = time.perf_counter_ns()
+        reasoning = payload.get("reasoning")
+        reasoning_effort = (
+            str(reasoning.get("effort") or "")
+            if isinstance(reasoning, Mapping)
+            else ""
+        )
         try:
             result = self._request(payload, timeout_seconds=timeout_seconds)
         except OpenRouterError as exc:
@@ -1445,6 +1587,7 @@ class OpenRouterDecisionPort:
                     "cost_micros": 0,
                     "latency_ms": _elapsed_ms(started),
                     "timeout_ms": math.ceil(timeout_seconds * 1000),
+                    "reasoning_effort": reasoning_effort,
                     "error_status": exc.status_code,
                     "retryable": exc.retryable,
                     "retry_after": exc.retry_after[:128],
@@ -1479,6 +1622,7 @@ class OpenRouterDecisionPort:
                 "cost_micros": _cost_micros(usage.get("cost")),
                 "latency_ms": _elapsed_ms(started),
                 "timeout_ms": math.ceil(timeout_seconds * 1000),
+                "reasoning_effort": reasoning_effort,
                 "error_status": 0,
                 "retryable": False,
             }
@@ -1513,11 +1657,12 @@ class OpenRouterDecisionPort:
             },
         )
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=timeout_seconds,
-            ) as response:
-                raw = response.read(_MAX_RESPONSE_BYTES + 1)
+            with _wall_clock_deadline(timeout_seconds):
+                with urllib.request.urlopen(
+                    request,
+                    timeout=timeout_seconds,
+                ) as response:
+                    raw = response.read(_MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as exc:
             retry_after = exc.headers.get("Retry-After", "")
             raise OpenRouterError(
@@ -1525,7 +1670,14 @@ class OpenRouterDecisionPort:
                 status_code=exc.code,
                 retry_after=retry_after,
             ) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except _WallClockDeadlineExceeded as exc:
+            raise OpenRouterError(
+                "OpenRouter HTTP attempt exceeded its wall-clock deadline",
+                status_code=408,
+            ) from exc
+        except TimeoutError as exc:
+            raise OpenRouterError("OpenRouter request timed out", status_code=408) from exc
+        except urllib.error.URLError as exc:
             raise OpenRouterError("OpenRouter is unavailable") from exc
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise OpenRouterError("OpenRouter response exceeded the size limit")
@@ -1619,6 +1771,25 @@ def _selected_tool(
     if not isinstance(name, str) or name not in tool_names:
         raise OpenRouterError("OpenRouter selected a tool outside the supplied catalog")
     return name, _arguments(function.get("arguments", "{}"))
+
+
+def _model_contract_error_code(error: OpenRouterError) -> str:
+    message = str(error)
+    if "exactly one tool call" in message:
+        return "model_tool_call_count"
+    if "empty" in message:
+        return "model_empty_content"
+    if "outside the supplied catalog" in message:
+        return "model_tool_outside_catalog"
+    if "tool arguments" in message or "function call" in message:
+        return "model_tool_arguments_invalid"
+    if "choice" in message or "choices" in message:
+        return "model_choice_invalid"
+    if "invalid agent plan" in message or "agent plan must" in message:
+        return "model_json_contract_invalid"
+    if "direct response is forbidden" in message:
+        return "model_direct_response_forbidden"
+    return "model_contract_invalid"
 
 
 def _tool_definitions(value: Any) -> list[dict[str, Any]]:

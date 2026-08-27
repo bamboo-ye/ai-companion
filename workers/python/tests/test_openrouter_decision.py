@@ -138,6 +138,9 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(config.composer_timeout_seconds, 45)
         self.assertEqual(config.composer_attempt_timeout_seconds, 30)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
+        self.assertEqual(config.reasoning_effort, "minimal")
+        self.assertEqual(config.composer_reasoning_effort, "low")
+        self.assertEqual(config.fallback_reasoning_effort, "minimal")
 
     def test_model_generates_structured_execution_plan(self) -> None:
         port = StubOpenRouter(
@@ -574,6 +577,63 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(port.requests[1]["max_tokens"], 12288)
 
+    def test_composer_and_cross_model_fallback_use_bounded_reasoning(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": ""}}]},
+                tool_response(
+                    "work_create_markdown_document",
+                    '{"title":"方案","content":"完整正文"}',
+                ),
+            ]
+        )
+        port._config = OpenRouterConfig(
+            base_url="https://openrouter.ai/api/v1",
+            api_key="test-key",
+            models=("deepseek/pinned", "openai/pinned"),
+            composer_models=("deepseek/pinned", "openai/pinned"),
+            reasoning_effort="high",
+            composer_reasoning_effort="low",
+            fallback_reasoning_effort="minimal",
+        )
+        complex_context = {
+            "tools": [
+                {
+                    "name": "work_create_markdown_document",
+                    "description": "创建 Markdown 文档",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "content"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                    },
+                    "compose_arguments": True,
+                }
+            ]
+        }
+
+        arguments = port.compose_arguments(
+            module="work",
+            message="创建一份方案文档",
+            tool_name="work_create_markdown_document",
+            context=complex_context,
+        )
+
+        self.assertEqual(arguments["title"], "方案")
+        self.assertEqual(
+            [request["reasoning"]["effort"] for request in port.requests],
+            ["low", "minimal"],
+        )
+        events = port.consume_observability()
+        self.assertEqual(events[0]["contract_error"], "model_tool_call_count")
+        self.assertFalse(events[0]["contract_valid"])
+        self.assertEqual(
+            [event["reasoning_effort"] for event in events],
+            ["low", "minimal"],
+        )
+
     def test_email_composer_uses_profile_language_contract_and_quality_fallback(self) -> None:
         arguments = {
             "to": [],
@@ -921,6 +981,8 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "min_fallback_timeout_seconds": 5,
             },
         )
+        self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
+        self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "minimal")
 
     def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
         port = StubOpenRouter([tool_response("life_query_today_plan")])
@@ -1216,6 +1278,34 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertLessEqual(sum(observed_timeouts), 0.31)
         self.assertGreaterEqual(elapsed, 0.25)
         self.assertLess(elapsed, 0.6)
+
+    def test_http_attempt_has_a_true_wall_clock_deadline(self) -> None:
+        port = OpenRouterDecisionPort(
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openrouter/free",),
+                companion_responder_models=("openrouter/free",),
+                timeout_seconds=0.2,
+                attempt_timeout_seconds=0.05,
+                min_fallback_timeout_seconds=0.01,
+            )
+        )
+
+        def ignore_socket_timeout(*_args: Any, **_kwargs: Any) -> None:
+            time.sleep(0.5)
+
+        started = time.monotonic()
+        with patch("urllib.request.urlopen", side_effect=ignore_socket_timeout):
+            with self.assertRaisesRegex(OpenRouterError, "wall-clock deadline") as raised:
+                port.respond(module="companion", message="你好", context=context())
+        elapsed = time.monotonic() - started
+
+        self.assertEqual(raised.exception.status_code, 408)
+        self.assertLess(elapsed, 0.25)
+        events = port.consume_observability()
+        self.assertEqual(events[0]["error_status"], 408)
+        self.assertLess(events[0]["latency_ms"], 250)
 
     def test_zero_provider_latency_preference_omits_request_hint(self) -> None:
         port = StubOpenRouter([tool_response("life_query_today_plan")])
