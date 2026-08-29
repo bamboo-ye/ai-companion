@@ -15,6 +15,8 @@ from ai_companion_worker.agent_runtime import (
     RepairDecision,
     ToolOutcome,
     ToolPreparation,
+    _composer_circuit_breaker_models,
+    _composer_previous_arguments,
     _document_source_coverage,
     _deterministic_presentation_mapping,
     _latest_document_continuation,
@@ -599,9 +601,57 @@ class AgentRuntimeTest(unittest.TestCase):
         }
         batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
         self.assertGreater(len(batches), 1)
-        self.assertTrue(all(len(str(batch["text"])) <= 18_000 for batch in batches))
+        self.assertTrue(all(len(str(batch["text"])) <= 9_000 for batch in batches))
+        self.assertTrue(
+            all(
+                len(batch["source_ir"]["table"]["rows"]) <= 16
+                for batch in batches
+            )
+        )
         for index in range(1, 31):
             self.assertEqual(sum(f'"id":"a1:r{index}"' in batch["text"] for batch in batches), 1)
+
+    def test_structured_composer_context_does_not_replay_merged_rows(self) -> None:
+        compact = _composer_previous_arguments(
+            {
+                "title": "课程表",
+                "brief": "已经合并 48 条记录",
+                "mapping_contract": {"version": "target-mapping-v1"},
+                "table": {
+                    "title": "课程",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [{"cells": ["PED1001", "游泳", "周一"]}] * 48,
+                },
+            }
+        )
+        self.assertEqual(compact["title"], "课程表")
+        self.assertEqual(compact["mapping_contract"]["version"], "target-mapping-v1")
+        self.assertNotIn("brief", compact)
+        self.assertNotIn("rows", compact["table"])
+
+    def test_composer_circuit_breaker_requires_two_timeouts(self) -> None:
+        timeout = {
+            "role": "composer",
+            "requested_model": "deepseek/deepseek-v4-flash-0731",
+            "status": "error",
+            "error_status": 408,
+        }
+        fallback = {
+            "role": "composer",
+            "requested_model": "openai/gpt-5-mini",
+            "status": "succeeded",
+            "error_status": 0,
+        }
+        self.assertEqual(
+            _composer_circuit_breaker_models({"model_events": [timeout, fallback]}),
+            [],
+        )
+        self.assertEqual(
+            _composer_circuit_breaker_models(
+                {"model_events": [timeout, timeout, fallback]}
+            ),
+            ["deepseek/deepseek-v4-flash-0731"],
+        )
 
     def test_dense_extraction_round_is_split_into_lossless_composer_sub_batches(self) -> None:
         page_text = "\n".join(

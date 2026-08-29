@@ -70,7 +70,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ModelCircuitFailureThreshold != 3 || cfg.ModelCircuitCooldown != 30*time.Second {
 		t.Fatalf("model circuit defaults = %d/%s", cfg.ModelCircuitFailureThreshold, cfg.ModelCircuitCooldown)
 	}
-	if cfg.ModelConfigVersion != "2026-08-bounded-fallback-v1" {
+	if cfg.ModelConfigVersion != "2026-08-structured-composer-v2" {
 		t.Fatalf("ModelConfigVersion = %q", cfg.ModelConfigVersion)
 	}
 	if cfg.MCPStdioServersJSON != "[]" {

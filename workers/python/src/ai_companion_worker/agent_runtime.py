@@ -621,7 +621,8 @@ _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
-_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 18_000
+_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 9_000
+_STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 16
 
 
 def _split_document_round_for_composer(text: str, token_count: int) -> list[str]:
@@ -1162,7 +1163,10 @@ def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
             current: list[dict[str, Any]] = []
             for row in group_rows:
                 candidate = [*current, row]
-                if current and _structured_rows_size(candidate) > maximum_characters:
+                if current and (
+                    _structured_rows_size(candidate) > maximum_characters
+                    or len(candidate) > _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
+                ):
                     bundles.append(
                         {
                             "group": {**dict(raw_group), "partial": True},
@@ -1191,7 +1195,11 @@ def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
         for bundle in fitted_bundles:
             candidate = [*current_bundles, bundle]
             preview = _structured_batch(table, candidate, len(batches) + 1)
-            if current_bundles and len(str(preview.get("text") or "")) > payload_limit:
+            candidate_row_count = sum(len(item.get("rows", [])) for item in candidate)
+            if current_bundles and (
+                len(str(preview.get("text") or "")) > payload_limit
+                or candidate_row_count > _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
+            ):
                 batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
                 current_bundles = []
             current_bundles.append(bundle)
@@ -1216,7 +1224,10 @@ def _fit_structured_bundle(
         current = pending.pop(0)
         preview = _structured_batch(table, [current], 1)
         rows = current["rows"]
-        if len(str(preview.get("text") or "")) <= maximum_characters or len(rows) <= 1:
+        if (
+            len(str(preview.get("text") or "")) <= maximum_characters
+            and len(rows) <= _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
+        ) or len(rows) <= 1:
             fitted.append(current)
             continue
         midpoint = max(1, len(rows) // 2)
@@ -1346,7 +1357,7 @@ def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
 
 
 def _composer_circuit_breaker_models(state: AgentState) -> list[str]:
-    failed: set[str] = set()
+    timeout_counts: dict[str, int] = {}
     succeeded: set[str] = set()
     for event in state.get("model_events", []):
         if not isinstance(event, Mapping) or event.get("role") != "composer":
@@ -1357,10 +1368,37 @@ def _composer_circuit_breaker_models(state: AgentState) -> list[str]:
         if event.get("status") == "succeeded":
             succeeded.add(model)
         elif int(event.get("error_status") or 0) == 408:
-            failed.add(model)
-    # Open the circuit only after this run has demonstrated a healthy fallback.
-    # If every model failed, retain the configured order for the checkpointed retry.
-    return sorted(failed - succeeded) if succeeded else []
+            timeout_counts[model] = timeout_counts.get(model, 0) + 1
+    # One slow batch is not enough evidence to evict the primary model for the
+    # rest of a large document. Open the circuit only after two timeouts and a
+    # healthy fallback; smaller later batches can therefore return to the
+    # configured primary while genuinely unhealthy models are still bounded.
+    return (
+        sorted(
+            model
+            for model, count in timeout_counts.items()
+            if count >= 2 and model not in succeeded
+        )
+        if succeeded
+        else []
+    )
+
+
+def _composer_previous_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep stable presentation metadata without replaying all merged rows."""
+
+    compact = {
+        key: value
+        for key, value in arguments.items()
+        if key not in ("table", "brief", "source_coverage", "task_contract")
+    }
+    table = arguments.get("table")
+    if isinstance(table, Mapping):
+        compact["table"] = {
+            "title": str(table.get("title") or "").strip(),
+            "columns": list(table.get("columns") or []),
+        }
+    return compact
 
 
 def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
@@ -2672,7 +2710,18 @@ def build_graph(
         composition_context["email_validation"] = dict(state.get("email_validation", {}))
         composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         composition_context["source_coverage"] = _document_source_coverage(state)
-        composition_context["previous_arguments"] = base_arguments
+        if batch is not None:
+            composition_context["previous_arguments"] = _composer_previous_arguments(
+                base_arguments
+            )
+            previous_table = base_arguments.get("table")
+            composition_context["previous_merged_record_count"] = len(
+                previous_table.get("rows", [])
+                if isinstance(previous_table, Mapping)
+                else []
+            )
+        else:
+            composition_context["previous_arguments"] = base_arguments
         composition_context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
         locked_mapping = base_arguments.get("mapping_contract")
         if isinstance(locked_mapping, Mapping):

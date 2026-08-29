@@ -130,7 +130,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(
             config.config_version,
-            "2026-08-bounded-fallback-v1",
+            "2026-08-structured-composer-v2",
         )
         self.assertEqual(config.preferred_max_latency_p90, 8)
         self.assertEqual(config.timeout_seconds, 30)
@@ -138,13 +138,13 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(config.composer_timeout_seconds, 90)
         self.assertEqual(config.composer_attempt_timeout_seconds, 60)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
-        self.assertEqual(config.composer_batch_max_tokens, 4096)
+        self.assertEqual(config.composer_batch_max_tokens, 8192)
         self.assertEqual(config.reasoning_effort, "minimal")
         self.assertEqual(config.planner_reasoning_effort, "high")
         self.assertEqual(config.router_reasoning_effort, "low")
-        self.assertEqual(config.composer_reasoning_effort, "minimal")
+        self.assertEqual(config.composer_reasoning_effort, "low")
         self.assertEqual(config.assessor_reasoning_effort, "minimal")
-        self.assertEqual(config.fallback_reasoning_effort, "minimal")
+        self.assertEqual(config.fallback_reasoning_effort, "low")
 
     def test_model_generates_structured_execution_plan(self) -> None:
         port = StubOpenRouter(
@@ -820,7 +820,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         routed = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")
         self.assertIn("PED1101", routed["completed_observations"][0]["data"]["output"]["text"])
-        self.assertEqual(port.requests[0]["max_tokens"], 4096)
+        self.assertEqual(port.requests[0]["max_tokens"], 8192)
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
@@ -987,12 +987,12 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "min_fallback_timeout_seconds": 5,
             },
         )
-        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 4096)
+        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 8192)
         self.assertEqual(manifest["inference"]["planner_reasoning_effort"], "high")
         self.assertEqual(manifest["inference"]["router_reasoning_effort"], "low")
-        self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "minimal")
+        self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["assessor_reasoning_effort"], "minimal")
-        self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "minimal")
+        self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "low")
 
     def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
         port = StubOpenRouter([tool_response("life_query_today_plan")])

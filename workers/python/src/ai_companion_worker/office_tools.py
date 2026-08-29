@@ -680,7 +680,7 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
     latency_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
     model_usage = {
         "provider": "openrouter",
-        "config_version": os.environ.get("MODEL_CONFIG_VERSION", "2026-08-bounded-fallback-v1"),
+        "config_version": os.environ.get("MODEL_CONFIG_VERSION", "2026-08-structured-composer-v2"),
         "requested_model": model,
         "returned_model": "",
         "upstream_provider": "",
