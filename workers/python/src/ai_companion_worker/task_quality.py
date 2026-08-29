@@ -239,6 +239,7 @@ def validate_presentation_arguments(
             vague_rows: list[int] = []
             vague_pattern = re.compile(
                 r"(?:详见|见(?:课程表|原表|原文)|(?:\betc\.?\b)|\.{3}|…|\bvarious\b|\bmultiple\b|"
+                r"见(?:下列(?:来源|内容)?|下方|后文)|see\s+(?:below|source|original)|"
                 r"times?\s+vary|不同时段|多(?:个|组|种)(?:时段|时间|组次))",
                 re.IGNORECASE,
             )

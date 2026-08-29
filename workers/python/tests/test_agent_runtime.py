@@ -600,7 +600,8 @@ class AgentRuntimeTest(unittest.TestCase):
                             "cells": [
                                 "PED1305",
                                 "Physical Fitness",
-                                "T13 周一 09:00-09:50；；T14 周三 10:00-10:50；同上；",
+                                "T13 周一 09:00-09:50；；T14 周三 10:00-10:50；"
+                                "（多节，见下列来源）；同上；",
                             ],
                             "source_locator": "Page 3",
                             "entity_id": "course:PED1305",
@@ -618,6 +619,7 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("T14 周三 10:00-10:50", rows[0]["cells"][2])
         self.assertNotIn("；；", rows[0]["cells"][2])
         self.assertNotIn("同上", rows[0]["cells"][2])
+        self.assertNotIn("见下列来源", rows[0]["cells"][2])
 
     def test_chinese_presentation_normalization_canonicalizes_code_spacing(self) -> None:
         state: dict[str, Any] = {

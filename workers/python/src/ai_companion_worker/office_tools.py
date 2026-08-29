@@ -1355,6 +1355,18 @@ def _presentation_quality_report(
         ]
     )
     if re.search(
+        r"(?:详?见(?:下列(?:来源|内容)?|下方|后文|原文|来源|课程表)|"
+        r"see\s+(?:below|source|original))",
+        visible_text,
+        re.I,
+    ):
+        violations.append(
+            {
+                "code": "presentation_reference_guidance_visible",
+                "message": "最终演示文稿不得用来源指引或“见下方”占位替代结构化字段值",
+            }
+        )
+    if re.search(
         r"(?:\battachment\s*:\s*\d+|\bround\s*:\s*\d+|\bsegment\s*:\s*\d+|"
         r"source\s*ir|source_locator|本轮观测|当前轮次|harness)",
         visible_text,

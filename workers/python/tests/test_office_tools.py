@@ -513,6 +513,38 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertIn("duplicate_logical_entities", codes)
         self.assertIn("presentation_cell_delimiter_noise", codes)
 
+    def test_pptx_quality_rejects_visible_reference_guidance(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "所有课程",
+                "slide_count": 4,
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "（多节，见下列来源）"],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "presentation_reference_guidance_visible",
+            {item["code"] for item in report["violations"]},
+        )
+
     def test_pptx_explicit_filename_still_rejects_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid_output_filename"):
             execute(
