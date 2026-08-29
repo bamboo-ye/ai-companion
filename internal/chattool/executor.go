@@ -1662,7 +1662,13 @@ func (e *Executor) runSkillWithInput(ctx context.Context, request conversation.T
 	}
 	if err != nil {
 		if errors.Is(err, skill.ErrValidation) {
-			return handled(skillName, "工具参数不完整或格式不正确，请补充必要信息后重试。", map[string]any{"input": input}), nil
+			return handled(skillName, "工具参数不完整或格式不正确，请补充必要信息后重试。", map[string]any{
+				"status":        "failed",
+				"skill_name":    skillName,
+				"error_code":    "invalid_input",
+				"error_message": err.Error(),
+				"input":         input,
+			}), nil
 		}
 		return conversation.ToolResult{}, err
 	}

@@ -97,9 +97,9 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 	definitions := []Definition{
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_outline", Version: "1.1.0", DisplayName: "PPTX 大纲", Category: "office",
+				Name: "office.pptx_outline", Version: "1.2.0", DisplayName: "PPTX 大纲", Category: "office",
 				Description: "根据受众、页数、风格和简报预览逐页大纲，不创建文件。", RiskLevel: "none", Enabled: true,
-				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, ExecutionMode: "worker",
+				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, MaxInputBytes: 2 << 20, ExecutionMode: "worker",
 				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
 				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
@@ -122,9 +122,9 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.3.0", DisplayName: "PPTX 生成", Category: "office",
+				Name: "office.pptx_generate", Version: "1.4.0", DisplayName: "PPTX 生成", Category: "office",
 				Description: "根据受众、页数、风格和简报直接生成新的演示文稿，不覆盖已有文件。", RiskLevel: "none", Enabled: true,
-				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, ExecutionMode: "worker",
+				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, MaxInputBytes: 2 << 20, ExecutionMode: "worker",
 				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
 				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
