@@ -45,8 +45,32 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 			"outline": []any{}, "source_coverage": map[string]any{"coverage_ratio": float64(1), "truncated": false},
 			"quality_report": map[string]any{"passed": true, "violations": []any{}}, "source_overwritten": false,
 		}, Files: []FileOutput{{Name: "课程介绍.pptx", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")}}}, nil
+	case "document_extract":
+		return ToolResult{Output: map[string]any{
+			"source_filename": "source.pdf", "media_type": "application/pdf", "format": "markdown", "parser_version": "document-parser-v1",
+			"page_count": float64(2), "character_count": float64(120), "token_count": float64(40),
+			"selected_chunk_count": float64(2), "total_chunk_count": float64(2), "text": "正文", "truncated": false,
+			"round_count": float64(1), "completed_rounds": float64(1), "round_start": float64(1), "next_round": float64(2), "has_more": false,
+			"coverage_ratio": float64(1), "rounds": []any{}, "source_ir": map[string]any{"version": "document-source-ir-v1"},
+			"cleaning_report": map[string]any{}, "low_quality_pages": []any{}, "source_overwritten": false,
+		}}, nil
 	default:
 		return ToolResult{}, ErrNotFound
+	}
+}
+
+func TestDocumentExtractOutputContractMatchesWorker(t *testing.T) {
+	worker := &fakeOfficeWorker{}
+	registry := NewRegistry()
+	if err := RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	run, _, err := service.Start(context.Background(), "u1", "office.document_extract", "extract-create", map[string]any{
+		"source_filename": "source.pdf", "source_base64": base64.StdEncoding.EncodeToString([]byte("source")), "media_type": "application/pdf",
+	})
+	if err != nil || run.Status != "succeeded" || len(worker.calls) != 1 {
+		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
 	}
 }
 
@@ -120,5 +144,20 @@ func TestPythonOfficeWorkerIntegration(t *testing.T) {
 	})
 	if err != nil || len(profile.Files) != 1 || profile.Output["row_count"] != float64(2) {
 		t.Fatalf("profile = %#v err=%v", profile, err)
+	}
+
+	// Run the real Python extractor through the Go Skill service instead of
+	// testing both halves independently. This guards the release boundary where
+	// a worker output change can otherwise drift from its strict manifest.
+	registry := NewRegistry()
+	if err = RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	extraction, _, err := service.Start(context.Background(), "u1", "office.document_extract", "python-contract-extract", map[string]any{
+		"source_filename": "sample.txt", "source_base64": base64.StdEncoding.EncodeToString([]byte("第一节\n课程代码：PE1001\n上课时间：周一 09:00")), "media_type": "text/plain",
+	})
+	if err != nil || extraction.Status != "succeeded" || extraction.SkillVersion != "1.2.0" {
+		t.Fatalf("extraction = %#v err=%v", extraction, err)
 	}
 }
