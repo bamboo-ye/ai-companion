@@ -14,7 +14,7 @@ const (
 	defaultQualityFallback    = "openai/gpt-5-mini"
 	defaultLightFallback      = "openai/gpt-5-nano"
 	defaultCompanionFreeModel = "openai/gpt-oss-20b:free"
-	defaultModelConfigVersion = "2026-08-structured-composer-v2"
+	defaultModelConfigVersion = "2026-08-structured-composer-v3"
 )
 
 type Config struct {

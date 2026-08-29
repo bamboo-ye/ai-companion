@@ -113,12 +113,12 @@ class OpenRouterConfig:
     repairer_models: tuple[str, ...] = ()
     timeout_seconds: float = 30
     attempt_timeout_seconds: float = 15
-    composer_timeout_seconds: float = 90
-    composer_attempt_timeout_seconds: float = 60
+    composer_timeout_seconds: float = 120
+    composer_attempt_timeout_seconds: float = 75
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
     composer_max_tokens: int = 12288
-    composer_batch_max_tokens: int = 8192
+    composer_batch_max_tokens: int = 4096
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
@@ -184,16 +184,16 @@ class OpenRouterConfig:
             repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,)),
             timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "30")),
             attempt_timeout_seconds=float(os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
-            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "90")),
+            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "120")),
             composer_attempt_timeout_seconds=float(
-                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "60")
+                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "75")
             ),
             min_fallback_timeout_seconds=float(
                 os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "8192")),
+            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),

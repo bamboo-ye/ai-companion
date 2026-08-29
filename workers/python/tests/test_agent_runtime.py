@@ -601,10 +601,10 @@ class AgentRuntimeTest(unittest.TestCase):
         }
         batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
         self.assertGreater(len(batches), 1)
-        self.assertTrue(all(len(str(batch["text"])) <= 9_000 for batch in batches))
+        self.assertTrue(all(len(str(batch["text"])) <= 6_000 for batch in batches))
         self.assertTrue(
             all(
-                len(batch["source_ir"]["table"]["rows"]) <= 16
+                len(batch["source_ir"]["table"]["rows"]) <= 8
                 for batch in batches
             )
         )

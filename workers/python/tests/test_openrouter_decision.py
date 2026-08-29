@@ -130,15 +130,15 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(
             config.config_version,
-            "2026-08-structured-composer-v2",
+            "2026-08-structured-composer-v3",
         )
         self.assertEqual(config.preferred_max_latency_p90, 8)
         self.assertEqual(config.timeout_seconds, 30)
         self.assertEqual(config.attempt_timeout_seconds, 15)
-        self.assertEqual(config.composer_timeout_seconds, 90)
-        self.assertEqual(config.composer_attempt_timeout_seconds, 60)
+        self.assertEqual(config.composer_timeout_seconds, 120)
+        self.assertEqual(config.composer_attempt_timeout_seconds, 75)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
-        self.assertEqual(config.composer_batch_max_tokens, 8192)
+        self.assertEqual(config.composer_batch_max_tokens, 4096)
         self.assertEqual(config.reasoning_effort, "minimal")
         self.assertEqual(config.planner_reasoning_effort, "high")
         self.assertEqual(config.router_reasoning_effort, "low")
@@ -820,7 +820,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         routed = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")
         self.assertIn("PED1101", routed["completed_observations"][0]["data"]["output"]["text"])
-        self.assertEqual(port.requests[0]["max_tokens"], 8192)
+        self.assertEqual(port.requests[0]["max_tokens"], 4096)
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
@@ -982,12 +982,12 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             {
                 "fallback_deadline_seconds": 30,
                 "attempt_timeout_seconds": 15,
-                "composer_fallback_deadline_seconds": 90,
-                "composer_attempt_timeout_seconds": 60,
+                "composer_fallback_deadline_seconds": 120,
+                "composer_attempt_timeout_seconds": 75,
                 "min_fallback_timeout_seconds": 5,
             },
         )
-        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 8192)
+        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 4096)
         self.assertEqual(manifest["inference"]["planner_reasoning_effort"], "high")
         self.assertEqual(manifest["inference"]["router_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
