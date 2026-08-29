@@ -133,20 +133,26 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.document_extract", Version: "1.1.0", DisplayName: "附件正文提取", Category: "office",
+				Name: "office.document_extract", Version: "1.2.0", DisplayName: "附件正文提取", Category: "office",
 				Description: "从受支持的文本或 PDF 附件中提取结构化正文，供 Agent 独立规划后续任务。", RiskLevel: "none", Enabled: true,
 				ToolName: "document.extract_text", TimeoutMS: 120_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
 				InputSchema: objectSchema([]string{"source_filename", "source_base64", "media_type"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"}, "round_start": map[string]any{"type": "integer"},
 				}),
-				OutputSchema: objectSchema([]string{"source_filename", "media_type", "page_count", "character_count", "text", "truncated", "round_count", "completed_rounds", "coverage_ratio", "rounds", "source_ir", "cleaning_report", "source_overwritten"}, map[string]any{
+				OutputSchema: objectSchema([]string{"source_filename", "media_type", "format", "parser_version", "page_count", "character_count", "token_count", "selected_chunk_count", "total_chunk_count", "text", "truncated", "round_count", "completed_rounds", "round_start", "next_round", "has_more", "coverage_ratio", "rounds", "source_ir", "cleaning_report", "low_quality_pages", "source_overwritten"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"},
+					"format": map[string]any{"type": "string"}, "parser_version": map[string]any{"type": "string"},
 					"page_count": map[string]any{"type": "integer"}, "character_count": map[string]any{"type": "integer"},
-					"text": map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"},
+					"token_count": map[string]any{"type": "integer"}, "selected_chunk_count": map[string]any{"type": "integer"},
+					"total_chunk_count": map[string]any{"type": "integer"},
+					"text":              map[string]any{"type": "string"}, "truncated": map[string]any{"type": "boolean"},
 					"round_count": map[string]any{"type": "integer"}, "completed_rounds": map[string]any{"type": "integer"},
+					"round_start": map[string]any{"type": "integer"}, "next_round": map[string]any{"type": "integer"},
+					"has_more":       map[string]any{"type": "boolean"},
 					"coverage_ratio": map[string]any{"type": "number"}, "rounds": map[string]any{"type": "array"},
 					"source_ir":       map[string]any{"type": "object"},
-					"cleaning_report": map[string]any{"type": "object"}, "source_overwritten": map[string]any{"type": "boolean"},
+					"cleaning_report": map[string]any{"type": "object"}, "low_quality_pages": map[string]any{"type": "array"},
+					"source_overwritten": map[string]any{"type": "boolean"},
 				}),
 			},
 			Handler: officeWorkerHandler(worker, "document_extract"),
