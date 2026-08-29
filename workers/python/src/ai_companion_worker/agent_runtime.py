@@ -450,7 +450,10 @@ def _normalize_presentation_arguments(
                             str(value).strip() for value in source_refs if str(value).strip()
                         )
                     )
-                normalized_rows.append(normalized_row)
+                for expanded_cells in _expand_presentation_cells(visible_cells):
+                    expanded_row = dict(normalized_row)
+                    expanded_row["cells"] = expanded_cells
+                    normalized_rows.append(expanded_row)
             chinese = isinstance(task_contract, Mapping) and str(
                 task_contract.get("output_language") or ""
             ).casefold().startswith("zh")
@@ -665,9 +668,7 @@ def _split_document_round_for_composer(text: str, token_count: int) -> list[str]
         page_candidates = [
             value for value in page_boundaries if preferred_minimum <= value <= maximum
         ]
-        line_candidates = [
-            value for value in line_boundaries if safe_minimum <= value <= maximum
-        ]
+        line_candidates = [value for value in line_boundaries if safe_minimum <= value <= maximum]
         if page_candidates:
             cut = page_candidates[-1]
         elif line_candidates:
@@ -787,9 +788,7 @@ def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
             continue
         arguments = observation.get("arguments")
         attachment_index = (
-            int(arguments.get("attachment_index") or 1)
-            if isinstance(arguments, Mapping)
-            else 1
+            int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
         )
         data = observation.get("data")
         output = data.get("output") if isinstance(data, Mapping) else None
@@ -850,9 +849,7 @@ def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
                             ]
                         )
                     )
-                    existing["partial"] = bool(
-                        existing.get("partial") and raw_group.get("partial")
-                    )
+                    existing["partial"] = bool(existing.get("partial") and raw_group.get("partial"))
             target["page_start"] = min(
                 int(target.get("page_start") or 1), int(table.get("page_start") or 1)
             )
@@ -865,9 +862,7 @@ def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
             table.get("rows", []),
             key=lambda row: (int(row.get("page") or 0), int(row.get("line") or 0)),
         )
-        row_order = {
-            str(row.get("id") or ""): index for index, row in enumerate(table["rows"])
-        }
+        row_order = {str(row.get("id") or ""): index for index, row in enumerate(table["rows"])}
         table["row_groups"] = sorted(
             table.get("row_groups", []),
             key=lambda group: min(
@@ -916,9 +911,7 @@ def _unify_source_row_groups(tables: list[dict[str, Any]]) -> None:
             first_cell = cells[0] if isinstance(cells, list) and cells else None
             parent_value = ""
             if isinstance(first_cell, Mapping):
-                parent_value = str(
-                    first_cell.get("text") or first_cell.get("inherited_text") or ""
-                )
+                parent_value = str(first_cell.get("text") or first_cell.get("inherited_text") or "")
             normalized_parent = re.sub(r"\s+", " ", parent_value).strip().casefold()
             if not normalized_parent:
                 continue
@@ -942,7 +935,9 @@ def _namespace_source_table(raw_table: Mapping[str, Any], attachment_index: int)
 
     def source_id(value: Any) -> str:
         normalized = str(value or "")
-        return prefix + normalized if normalized and not normalized.startswith(prefix) else normalized
+        return (
+            prefix + normalized if normalized and not normalized.startswith(prefix) else normalized
+        )
 
     table = dict(raw_table)
     table["id"] = source_id(table.get("id"))
@@ -1016,6 +1011,125 @@ def _relevant_source_tables(
     return [table for score, table in scored if score == best] if best > 0 else tables
 
 
+def _source_column_matches_field(label: Any, field: str) -> bool:
+    normalized = re.sub(r"[\s_\-/:：()]+", "", str(label or "").casefold())
+    if field == "code":
+        return any(value in normalized for value in ("coursecode", "课程代码", "课程编号")) or (
+            normalized in ("code", "subjectcode")
+        )
+    if field == "name":
+        return (
+            any(
+                value in normalized
+                for value in ("coursename", "coursetitle", "课程名称", "科目名称")
+            )
+            or normalized in ("name", "title", "course")
+            or ("course" in normalized and "code" not in normalized and "section" not in normalized)
+        )
+    if field == "time":
+        return any(
+            value in normalized
+            for value in (
+                "time",
+                "date",
+                "day",
+                "schedule",
+                "meeting",
+                "时间",
+                "日期",
+                "星期",
+                "时段",
+            )
+        )
+    if field == "venue":
+        return any(
+            value in normalized
+            for value in ("venue", "location", "place", "room", "地点", "场地", "教室")
+        )
+    return False
+
+
+def _deterministic_presentation_mapping(
+    source_ir: Mapping[str, Any], task_contract: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Compile a model-independent source-to-target mapping contract."""
+
+    tables = _relevant_source_tables(source_ir, task_contract)
+    requested = _presentation_requested_columns(task_contract)
+    violations: list[dict[str, Any]] = []
+    field_mappings: list[dict[str, Any]] = []
+    for target_index, (target_field, _) in enumerate(requested):
+        source_ids: list[str] = []
+        missing_tables: list[str] = []
+        for table in tables:
+            table_id = str(table.get("id") or "")
+            matching = [
+                str(column.get("id") or "")
+                for column in table.get("columns", [])
+                if isinstance(column, Mapping)
+                and str(column.get("id") or "")
+                and _source_column_matches_field(column.get("label"), target_field)
+            ]
+            if not matching:
+                missing_tables.append(table_id)
+            source_ids.extend(matching)
+        source_ids = list(dict.fromkeys(source_ids))
+        if not source_ids or missing_tables:
+            violations.append(
+                {
+                    "code": "source_field_mapping_unavailable",
+                    "message": "Harness 无法从真实来源表头确定目标字段映射",
+                    "target_field": target_field,
+                    "missing_table_ids": missing_tables,
+                }
+            )
+            continue
+        field_mappings.append(
+            {
+                "target_index": target_index,
+                "source_column_ids": source_ids,
+                "mode": "aggregate"
+                if target_field == "time" or len(source_ids) > len(tables)
+                else "direct",
+            }
+        )
+    table_ids = list(
+        dict.fromkeys(str(table.get("id") or "") for table in tables if str(table.get("id") or ""))
+    )
+    if not table_ids:
+        violations.append(
+            {
+                "code": "source_structure_unavailable",
+                "message": "完整结构化任务没有可用的真实来源表",
+            }
+        )
+    group_counts = [
+        [
+            len(group.get("row_ids", []))
+            for group in table.get("row_groups", [])
+            if isinstance(group, Mapping) and str(group.get("id") or "")
+        ]
+        for table in tables
+    ]
+    entity_level = (
+        "row_group"
+        if group_counts
+        and all(counts for counts in group_counts)
+        and any(count > 1 for counts in group_counts for count in counts)
+        else "row"
+    )
+    return (
+        {
+            "version": "target-mapping-v1",
+            "source_table_ids": table_ids,
+            "entity_level": entity_level,
+            "field_mappings": field_mappings,
+            "compiled_by": "artifact-harness",
+        },
+        violations,
+    )
+
+
 def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
     task_contract = state.get("task_contract", {})
     source_ir = _presentation_source_ir(state)
@@ -1024,6 +1138,7 @@ def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
     )
     batches: list[dict[str, Any]] = []
     maximum_characters = _STRUCTURED_COMPOSER_BATCH_MAX_CHARS
+    payload_limit = max(1_000, maximum_characters - 256)
     for raw_table in tables:
         table = _project_source_table(
             raw_table, task_contract if isinstance(task_contract, Mapping) else {}
@@ -1068,17 +1183,48 @@ def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
                     }
                 )
         current_bundles: list[dict[str, Any]] = []
-        for bundle in bundles:
+        fitted_bundles = [
+            fitted
+            for bundle in bundles
+            for fitted in _fit_structured_bundle(table, bundle, payload_limit)
+        ]
+        for bundle in fitted_bundles:
             candidate = [*current_bundles, bundle]
-            if current_bundles and sum(
-                _structured_rows_size(value["rows"]) + 300 for value in candidate
-            ) > maximum_characters:
+            preview = _structured_batch(table, candidate, len(batches) + 1)
+            if current_bundles and len(str(preview.get("text") or "")) > payload_limit:
                 batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
                 current_bundles = []
             current_bundles.append(bundle)
         if current_bundles:
             batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
     return batches
+
+
+def _fit_structured_bundle(
+    table: Mapping[str, Any], bundle: Mapping[str, Any], maximum_characters: int
+) -> list[dict[str, Any]]:
+    """Split a logical group only when its serialized payload exceeds the hard bound."""
+
+    pending = [
+        {
+            "group": dict(bundle.get("group") or {}),
+            "rows": [dict(row) for row in bundle.get("rows", []) if isinstance(row, Mapping)],
+        }
+    ]
+    fitted: list[dict[str, Any]] = []
+    while pending:
+        current = pending.pop(0)
+        preview = _structured_batch(table, [current], 1)
+        rows = current["rows"]
+        if len(str(preview.get("text") or "")) <= maximum_characters or len(rows) <= 1:
+            fitted.append(current)
+            continue
+        midpoint = max(1, len(rows) // 2)
+        pending[0:0] = [
+            {"group": {**dict(current["group"]), "partial": True}, "rows": rows[:midpoint]},
+            {"group": {**dict(current["group"]), "partial": True}, "rows": rows[midpoint:]},
+        ]
+    return fitted
 
 
 def _structured_rows_size(rows: list[Mapping[str, Any]]) -> int:
@@ -1107,11 +1253,7 @@ def _project_source_table(
     selected: set[int] = set()
     for index, column in enumerate(columns):
         label = str(column.get("label") or "").casefold()
-        if any(
-            alias in label
-            for field in requested
-            for alias in aliases.get(field, (field,))
-        ):
+        if any(alias in label for field in requested for alias in aliases.get(field, (field,))):
             selected.update((index - 1, index, index + 1))
     selected.update((0, 1))
     selected = {index for index in selected if 0 <= index < len(columns)}
@@ -1224,9 +1366,7 @@ def _composer_circuit_breaker_models(state: AgentState) -> list[str]:
 def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
     if int(batch.get("segment_count") or 1) > 1:
-        locator += (
-            f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
-        )
+        locator += f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
     structured = batch.get("structured") is True
     output = {
         "source_filename": str(batch.get("source_filename") or ""),
@@ -1250,9 +1390,7 @@ def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
         },
         "status": "completed",
         "response": f"正在处理文档分轮 {locator}",
-        "data": {
-            "output": output
-        },
+        "data": {"output": output},
     }
 
 
@@ -1305,9 +1443,7 @@ def _merge_presentation_arguments(
             source_refs = raw.get("source_refs")
             if isinstance(source_refs, list):
                 row["source_refs"] = list(
-                    dict.fromkeys(
-                        str(value).strip() for value in source_refs if str(value).strip()
-                    )
+                    dict.fromkeys(str(value).strip() for value in source_refs if str(value).strip())
                 )
             key = _presentation_row_key(row)
             if not key:
@@ -2090,9 +2226,7 @@ def build_graph(
             response = "模型服务当前不可用，任务已安全停止；已有工具结果和预算账本均已保留。"
         else:
             outcome = "model_invalid_response"
-            error_hint = (
-                f"（错误代码：{contract_errors[-1]}）" if contract_errors else ""
-            )
+            error_hint = f"（错误代码：{contract_errors[-1]}）" if contract_errors else ""
             response = (
                 f"模型返回内容未通过节点契约校验{error_hint}，任务已安全停止；"
                 "调用成本和已有结果均已保留。"
@@ -2371,6 +2505,70 @@ def build_graph(
             "work_generate_pptx",
         )
         task_contract = state.get("task_contract", {})
+        source_ir = _presentation_source_ir(state) if presentation_tool else {}
+        structural_mapping: dict[str, Any] = {}
+        structural_violations: list[dict[str, Any]] = []
+        requires_structural_source = (
+            presentation_tool
+            and isinstance(task_contract, Mapping)
+            and task_contract.get("exhaustive") is True
+            and task_contract.get("source_required") is True
+            and bool(_presentation_requested_columns(task_contract))
+        )
+        if requires_structural_source:
+            coverage = _document_source_coverage(state)
+            coverage_complete = (
+                coverage.get("truncated") is False
+                and float(coverage.get("coverage_ratio") or 0.0) >= 1.0
+            )
+            if source_ir.get("structure_preserved") is True:
+                structural_mapping, structural_violations = _deterministic_presentation_mapping(
+                    source_ir, task_contract
+                )
+            elif coverage_complete:
+                structural_violations = [
+                    {
+                        "code": "source_structure_unavailable",
+                        "message": ("完整结构化任务的附件没有可用 Source IR，禁止退回自由文本合并"),
+                        "source_ir_version": source_ir.get("version"),
+                        "source_table_count": len(source_ir.get("tables", [])),
+                    }
+                ]
+            if structural_violations:
+                report = {
+                    "policy_version": "presentation-arguments-v1",
+                    "applicable": True,
+                    "passed": False,
+                    "violations": structural_violations,
+                    "rewrite_attempt": int(state.get("presentation_rewrite_attempts", 0)),
+                }
+                return {
+                    "proposed_tool": {
+                        **dict(proposed),
+                        "compose_arguments": False,
+                    },
+                    "presentation_validation": report,
+                    "artifact_validation": report,
+                    "outcome": "artifact_quality_failed",
+                    "response": (
+                        "附件结构未达到完整制品要求，已停止不可靠的文本推测；"
+                        "请重新解析原附件后继续。"
+                    ),
+                    "node_trace": [
+                        *state.get("node_trace", []),
+                        _trace_event(
+                            "compose_arguments",
+                            "blocked",
+                            details={
+                                "reason": "source_structure_unavailable",
+                                "source_ir_version": source_ir.get("version"),
+                                "source_ir_table_count": len(source_ir.get("tables", [])),
+                                "text_fallback_disabled": True,
+                            },
+                        ),
+                    ],
+                    "steps": state.get("steps", 0) + 1,
+                }
         all_document_batches = (
             _presentation_document_batches(state)
             if presentation_tool
@@ -2387,6 +2585,8 @@ def build_graph(
         processing = dict(raw_processing) if isinstance(raw_processing, Mapping) else {}
         raw_base_arguments = proposed.get("arguments")
         base_arguments = dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
+        if structural_mapping:
+            base_arguments["mapping_contract"] = structural_mapping
         selected_batches = all_document_batches
         missing_keys: list[str] = []
         if round_processing and rewrite_attempt > 0:
@@ -2397,6 +2597,8 @@ def build_graph(
                 ),
                 state,
             )
+            if structural_mapping:
+                base_arguments["mapping_contract"] = structural_mapping
             selected_batches, missing_keys = _repair_document_batches(
                 all_document_batches,
                 base_arguments,
@@ -2471,13 +2673,10 @@ def build_graph(
         composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         composition_context["source_coverage"] = _document_source_coverage(state)
         composition_context["previous_arguments"] = base_arguments
-        composition_context["composer_model_exclusions"] = _composer_circuit_breaker_models(
-            state
-        )
+        composition_context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
         locked_mapping = base_arguments.get("mapping_contract")
         if isinstance(locked_mapping, Mapping):
             composition_context["locked_mapping_contract"] = dict(locked_mapping)
-        source_ir = _presentation_source_ir(state) if presentation_tool else {}
         if source_ir:
             source_tables = _relevant_source_tables(
                 source_ir, task_contract if isinstance(task_contract, Mapping) else {}
@@ -2512,9 +2711,7 @@ def build_graph(
                 "source_segment_count": int(batch.get("segment_count") or 1),
                 "attachment_index": int(batch.get("attachment_index") or 1),
                 "rewrite_attempt": rewrite_attempt,
-                "timeout_retry_attempt": int(
-                    processing.get("active_batch_timeout_retries") or 0
-                ),
+                "timeout_retry_attempt": int(processing.get("active_batch_timeout_retries") or 0),
                 "missing_record_keys": missing_keys,
             }
         try:
@@ -2535,6 +2732,8 @@ def build_graph(
                     normalized_arguments,
                     state,
                 )
+                if structural_mapping:
+                    normalized_arguments["mapping_contract"] = structural_mapping
                 if batch is not None:
                     normalized_arguments = _merge_presentation_arguments(
                         base_arguments,
@@ -2567,9 +2766,7 @@ def build_graph(
                 error=exc,
             )
             if batch is not None:
-                timeout_retry_count = int(
-                    processing.get("active_batch_timeout_retries") or 0
-                )
+                timeout_retry_count = int(processing.get("active_batch_timeout_retries") or 0)
                 schedule_timeout_retry = (
                     getattr(exc, "status_code", 0) == 408 and timeout_retry_count < 1
                 )
@@ -2579,9 +2776,7 @@ def build_graph(
                         int(processing.get("timeout_retry_total") or 0) + 1
                     )
                 recorded_timeout_retries = (
-                    timeout_retry_count + 1
-                    if schedule_timeout_retry
-                    else timeout_retry_count
+                    timeout_retry_count + 1 if schedule_timeout_retry else timeout_retry_count
                 )
                 processing["active_batch"] = {
                     **processing.get("active_batch", {}),
@@ -2599,8 +2794,7 @@ def build_graph(
                             {
                                 "document_processing": True,
                                 "batch_id": batch.get("batch_id"),
-                                "batch_number": int(processing.get("next_batch_index") or 0)
-                                + 1,
+                                "batch_number": int(processing.get("next_batch_index") or 0) + 1,
                                 "batch_count": len(selected_batches),
                                 "timeout_retry_scheduled": schedule_timeout_retry,
                                 "timeout_retry_attempt": recorded_timeout_retries,
@@ -2686,6 +2880,8 @@ def build_graph(
         }
 
     def after_composition(state: AgentState) -> str:
+        if state.get("outcome") == "artifact_quality_failed":
+            return "finalize"
         if state.get("outcome") in (
             "model_budget_exhausted",
             "model_version_mismatch",

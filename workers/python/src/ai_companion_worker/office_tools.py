@@ -118,9 +118,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     source_coverage = _presentation_source_coverage(payload.get("source_coverage"))
     display_rows = _presentation_display_rows(table["rows"]) if table else []
     if table:
-        required_table_slides = math.ceil(
-            len(display_rows) / PRESENTATION_ROWS_PER_SLIDE
-        )
+        required_table_slides = math.ceil(len(display_rows) / PRESENTATION_ROWS_PER_SLIDE)
         slide_count = min(
             MAX_PRESENTATION_SLIDES,
             max(requested_slide_count, required_table_slides + 2),
@@ -460,9 +458,7 @@ def _source_ir_slice(source_ir: dict[str, Any], manifest: dict[str, Any]) -> dic
             if not isinstance(raw_group, dict):
                 continue
             selected_ids = [
-                str(value)
-                for value in raw_group.get("row_ids", [])
-                if str(value) in row_ids
+                str(value) for value in raw_group.get("row_ids", []) if str(value) in row_ids
             ]
             if not selected_ids:
                 continue
@@ -1165,10 +1161,7 @@ def _split_visible_cell(value: Any) -> list[str]:
     result: list[str] = []
     while len(remaining) > PRESENTATION_DISPLAY_CELL_CHARS:
         window = remaining[:PRESENTATION_DISPLAY_CELL_CHARS]
-        positions = [
-            window.rfind(separator)
-            for separator in ("；", ";", "，", ",", " ")
-        ]
+        positions = [window.rfind(separator) for separator in ("；", ";", "，", ",", " ")]
         boundary = max(positions)
         cut = (
             boundary + 1
@@ -1213,8 +1206,8 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
         table.columns[column_index].width = Inches(12.43 * weight / total_weight)
     table.rows[0].height = Inches(0.52)
     body_height = 4.63 / max(1, len(rows))
-    for row in table.rows[1:]:
-        row.height = Inches(body_height)
+    for row_index in range(1, len(table.rows)):
+        table.rows[row_index].height = Inches(body_height)
     for column_index, column in enumerate(columns):
         cell = table.cell(0, column_index)
         cell.text = column

@@ -13,6 +13,7 @@ type MemoryStore struct {
 	jobs            map[string]memoryJob
 	pages           map[string][]Page
 	chunks          map[string][]Chunk
+	sourceIR        map[string]map[string]any
 	workspaceShares map[string]map[string]time.Time
 }
 
@@ -23,7 +24,7 @@ type memoryJob struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}, workspaceShares: map[string]map[string]time.Time{}}
+	return &MemoryStore{items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}, sourceIR: map[string]map[string]any{}, workspaceShares: map[string]map[string]time.Time{}}
 }
 
 func (s *MemoryStore) CreateDocument(_ context.Context, item Document) (Document, bool, error) {
@@ -83,6 +84,24 @@ func (s *MemoryStore) ListDocumentChunks(
 		chunks = chunks[:limit]
 	}
 	return chunks, nil
+}
+
+func (s *MemoryStore) GetDocumentSourceIR(
+	_ context.Context,
+	userID string,
+	documentID string,
+) (map[string]any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.items[documentID]
+	if !ok || item.UserID != userID || item.Status == "deleted" {
+		return nil, ErrNotFound
+	}
+	sourceIR := s.sourceIR[documentID]
+	if sourceIR == nil {
+		return nil, ErrParsedContentUnavailable
+	}
+	return sourceIR, nil
 }
 
 func (s *MemoryStore) DeleteDocument(_ context.Context, userID, documentID string, now time.Time) error {
@@ -195,6 +214,11 @@ func (s *MemoryStore) SaveParsedDocument(_ context.Context, job IngestJob, resul
 	}
 	s.pages[item.ID] = append([]Page(nil), result.Pages...)
 	s.chunks[item.ID] = append([]Chunk(nil), result.Chunks...)
+	if result.SourceIR == nil {
+		delete(s.sourceIR, item.ID)
+	} else {
+		s.sourceIR[item.ID] = result.SourceIR
+	}
 	item.ParserVersion = result.ParserVersion
 	item.PageCount = len(result.Pages)
 	item.ChunkCount = len(result.Chunks)

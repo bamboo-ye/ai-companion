@@ -15,6 +15,12 @@ func (fixedParser) Parse(_ context.Context, mediaType string, data []byte) (Pars
 		ParserVersion: "test-parser-v1",
 		Pages:         []Page{{PageNo: 1, Text: content, Quality: 1, ContentHash: "page-hash"}},
 		Chunks:        []Chunk{{Ordinal: 1, PageStart: 1, PageEnd: 1, SectionPath: "结论", Content: content, TokenCount: 8, ContentHash: "chunk-hash"}},
+		SourceIR: map[string]any{
+			"version": SourceIRVersion, "structure_preserved": true,
+			"tables": []any{map[string]any{
+				"id": "table:test", "rows": []any{map[string]any{"id": "row:test", "page": 1}},
+			}},
+		},
 	}, nil
 }
 
@@ -86,6 +92,10 @@ func TestIngestQueryAndDeleteLifecycle(t *testing.T) {
 	ready, err := service.Get(ctx, "user-1", item.ID)
 	if err != nil || ready.Status != "ready" || ready.PageCount != 1 || ready.ChunkCount != 1 {
 		t.Fatalf("ready document = %#v, %v", ready, err)
+	}
+	parsed, err := service.ReadParsedContextRounds(ctx, "user-1", item.ID, 1_000, 1)
+	if err != nil || !HasUsableSourceIR(parsed.SourceIR) {
+		t.Fatalf("persisted source IR = %#v, %v", parsed.SourceIR, err)
 	}
 	answer, err := service.Query(ctx, "user-1", QueryInput{Query: "火星计划什么时候启动？"})
 	if err != nil || !answer.Sufficient || len(answer.Citations) != 1 || answer.Citations[0].PageStart != 1 {

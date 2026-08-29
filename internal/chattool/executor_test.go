@@ -1206,13 +1206,26 @@ func TestWorkAttachmentExtractionReusesReadyParsedChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	parseResult := document.ParseResult{
-		ParserVersion: "text-markdown-v2",
+		ParserVersion: "text-markdown-v3",
 		Pages:         []document.Page{{PageNo: 1, Text: "## Summary\n\nTrusted evidence", Quality: 1}},
 		Chunks: []document.Chunk{{
 			Ordinal: 1, PageStart: 1, PageEnd: 1, SectionPath: "Summary",
 			Content: "## Summary\n\nTrusted evidence", TokenCount: 12,
-			ParserVersion: "text-markdown-v2",
+			ParserVersion: "text-markdown-v3",
 		}},
+		SourceIR: map[string]any{
+			"version": document.SourceIRVersion, "structure_preserved": true,
+			"tables": []any{map[string]any{
+				"id": "table:summary",
+				"columns": []any{
+					map[string]any{"id": "c1", "label": "Course Code"},
+					map[string]any{"id": "c2", "label": "Course Name"},
+					map[string]any{"id": "c3", "label": "Time"},
+				},
+				"rows":       []any{map[string]any{"id": "r1", "page": 1}},
+				"row_groups": []any{map[string]any{"id": "g1", "row_ids": []any{"r1"}}},
+			}},
+		},
 	}
 	if err = documentStore.SaveParsedDocument(ctx, job, parseResult, time.Now()); err != nil {
 		t.Fatal(err)
@@ -1251,5 +1264,56 @@ func TestWorkAttachmentExtractionReusesReadyParsedChunks(t *testing.T) {
 	parsed, ok := data["output"].(document.DocumentContext)
 	if !ok || !strings.Contains(parsed.Text, "Trusted evidence") || parsed.Format != "markdown" {
 		t.Fatalf("parsed output = %#v", data["output"])
+	}
+}
+
+func TestWorkAttachmentExtractionReparsesReadyDocumentWithoutSourceIR(t *testing.T) {
+	ctx := context.Background()
+	documentStore := document.NewMemoryStore()
+	documentService := document.NewService(documentStore, document.NewMemoryBlobStore(), 20<<20)
+	item, _, err := documentService.Upload(ctx, "user-1", "legacy.txt", []byte("legacy source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := documentStore.ClaimIngestJobByID(ctx, item.JobID, "worker", time.Now(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = documentStore.SaveParsedDocument(ctx, job, document.ParseResult{
+		ParserVersion: "text-markdown-v2",
+		Pages:         []document.Page{{PageNo: 1, Text: "legacy source", Quality: 1}},
+		Chunks: []document.Chunk{{
+			Ordinal: 1, PageStart: 1, PageEnd: 1, Content: "legacy source", TokenCount: 4,
+			ParserVersion: "text-markdown-v2",
+		}},
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err = documentStore.CompleteIngestJob(ctx, item.JobID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worker := &pdfWorker{}
+	registry := skill.NewRegistry()
+	if err = skill.RegisterBuiltins(registry); err != nil {
+		t.Fatal(err)
+	}
+	if err = skill.RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	executor := New(
+		ledger.NewService(ledger.NewMemoryStore()), planner.NewService(planner.NewMemoryStore()),
+		documentService, skill.NewService(skill.NewMemoryStore(), skill.NewMemoryFileStore(), registry),
+	)
+	text := chatattachment.AppendDocument("根据附件制作 PPT", item.ID, item.Name)
+	_, err = executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "legacy-document", Module: "work", Text: text,
+	}, conversation.ModelToolCall{
+		Name: "work_extract_attached_document", Arguments: map[string]any{"attachment_index": 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.operation != "document_extract" {
+		t.Fatalf("legacy document was not reparsed: %s", worker.operation)
 	}
 }

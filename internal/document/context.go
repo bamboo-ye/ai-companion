@@ -2,6 +2,7 @@ package document
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,8 +12,14 @@ import (
 
 var ErrParsedContentUnavailable = errors.New("parsed document content unavailable")
 
+const SourceIRVersion = "document-source-ir-v1"
+
 type ParsedStore interface {
 	ListDocumentChunks(context.Context, string, string, int) ([]Chunk, error)
+}
+
+type SourceIRStore interface {
+	GetDocumentSourceIR(context.Context, string, string) (map[string]any, error)
 }
 
 type DocumentContext struct {
@@ -35,6 +42,7 @@ type DocumentContext struct {
 	CoverageRatio     float64        `json:"coverage_ratio"`
 	CleaningReport    CleaningReport `json:"cleaning_report"`
 	Rounds            []ContextRound `json:"rounds"`
+	SourceIR          map[string]any `json:"source_ir,omitempty"`
 	SourceOverwritten bool           `json:"source_overwritten"`
 }
 
@@ -101,6 +109,10 @@ func (s *Service) ReadParsedContext(
 		blocks = append(blocks, strings.TrimSpace(marker+"\n"+section+chunk.Content))
 		estimatedTokens += contextChunkTokens(chunk) + 16
 	}
+	sourceIR, err := s.readSourceIR(ctx, userID, documentID, selected)
+	if err != nil {
+		return DocumentContext{}, err
+	}
 	return DocumentContext{
 		DocumentID: item.ID, SourceFilename: item.Name, MediaType: item.MediaType,
 		Format: "markdown", ParserVersion: item.ParserVersion, PageCount: item.PageCount,
@@ -110,6 +122,7 @@ func (s *Service) ReadParsedContext(
 		CoverageRatio:     float64(len(selected)) / float64(len(chunks)),
 		CleaningReport:    CleaningReport{PolicyVersion: "document-cleaning-v1"},
 		Rounds:            []ContextRound{{RoundNo: 1, ChunkStart: selected[0].Ordinal, ChunkEnd: selected[len(selected)-1].Ordinal, ChunkCount: len(selected), TokenCount: estimatedTokens}},
+		SourceIR:          sourceIR,
 		SourceOverwritten: false,
 	}, nil
 }
@@ -209,6 +222,10 @@ func (s *Service) ReadParsedContextRoundWindow(
 		})
 	}
 	coverage := float64(len(selected)) / float64(len(chunks))
+	sourceIR, err := s.readSourceIR(ctx, userID, documentID, selected)
+	if err != nil {
+		return DocumentContext{}, err
+	}
 	return DocumentContext{
 		DocumentID: item.ID, SourceFilename: item.Name, MediaType: item.MediaType,
 		Format: "markdown", ParserVersion: item.ParserVersion, PageCount: item.PageCount,
@@ -217,8 +234,169 @@ func (s *Service) ReadParsedContextRoundWindow(
 		RoundCount: len(roundChunks), CompletedRounds: completedRounds,
 		RoundStart: roundStart, NextRound: endIndex + 1, HasMore: endIndex < len(roundChunks),
 		CoverageRatio:  coverage,
-		CleaningReport: report, Rounds: manifest, SourceOverwritten: false,
+		CleaningReport: report, Rounds: manifest, SourceIR: sourceIR, SourceOverwritten: false,
 	}, nil
+}
+
+func (s *Service) readSourceIR(
+	ctx context.Context,
+	userID string,
+	documentID string,
+	chunks []Chunk,
+) (map[string]any, error) {
+	store, ok := s.store.(SourceIRStore)
+	if !ok {
+		return nil, nil
+	}
+	sourceIR, err := store.GetDocumentSourceIR(ctx, userID, documentID)
+	if errors.Is(err, ErrParsedContentUnavailable) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sliceSourceIR(sourceIR, chunks), nil
+}
+
+// HasUsableSourceIR reports whether an extraction result contains a current,
+// non-empty structural representation. Artifact extraction may safely reuse a
+// stored context only when this is true; older indexed documents are reparsed
+// from their original blob on demand.
+func HasUsableSourceIR(sourceIR map[string]any) bool {
+	if sourceIR == nil || stringValue(sourceIR["version"]) != SourceIRVersion {
+		return false
+	}
+	preserved, _ := sourceIR["structure_preserved"].(bool)
+	tables, _ := sourceIR["tables"].([]any)
+	if len(tables) == 0 {
+		// In-memory tests and callers may construct []map[string]any directly.
+		if typed, ok := sourceIR["tables"].([]map[string]any); ok {
+			return preserved && len(typed) > 0
+		}
+	}
+	return preserved && len(tables) > 0
+}
+
+func sliceSourceIR(sourceIR map[string]any, chunks []Chunk) map[string]any {
+	if sourceIR == nil {
+		return nil
+	}
+	// Normalize concrete map/slice types and detach the returned payload from
+	// the store so round slicing cannot mutate persisted state.
+	encoded, err := json.Marshal(sourceIR)
+	if err != nil {
+		return nil
+	}
+	var normalized map[string]any
+	if json.Unmarshal(encoded, &normalized) != nil {
+		return nil
+	}
+	selectedPages := map[int]bool{}
+	for _, chunk := range chunks {
+		for page := chunk.PageStart; page <= chunk.PageEnd; page++ {
+			selectedPages[page] = true
+		}
+	}
+	tables := make([]any, 0)
+	for _, raw := range anySlice(normalized["tables"]) {
+		table, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		rows := make([]any, 0)
+		rowIDs := map[string]bool{}
+		for _, rawRow := range anySlice(table["rows"]) {
+			row, ok := rawRow.(map[string]any)
+			if !ok || !selectedPages[intValue(row["page"])] {
+				continue
+			}
+			rows = append(rows, row)
+			rowIDs[stringValue(row["id"])] = true
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		groups := make([]any, 0)
+		for _, rawGroup := range anySlice(table["row_groups"]) {
+			group, ok := rawGroup.(map[string]any)
+			if !ok {
+				continue
+			}
+			selectedIDs := make([]any, 0)
+			for _, rawID := range anySlice(group["row_ids"]) {
+				if id := stringValue(rawID); rowIDs[id] {
+					selectedIDs = append(selectedIDs, id)
+				}
+			}
+			if len(selectedIDs) == 0 {
+				continue
+			}
+			group["partial"] = len(selectedIDs) < len(anySlice(group["row_ids"]))
+			group["row_ids"] = selectedIDs
+			groups = append(groups, group)
+		}
+		table["partial"] = len(rows) < len(anySlice(table["rows"]))
+		table["rows"] = rows
+		table["row_groups"] = groups
+		tables = append(tables, table)
+	}
+	blocks := make([]any, 0)
+	for _, raw := range anySlice(normalized["blocks"]) {
+		block, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		start := intValue(block["page_start"])
+		end := intValue(block["page_end"])
+		if end < start {
+			end = start
+		}
+		for page := start; page <= end; page++ {
+			if selectedPages[page] {
+				blocks = append(blocks, block)
+				break
+			}
+		}
+	}
+	pages := make([]int, 0, len(selectedPages))
+	for page := range selectedPages {
+		pages = append(pages, page)
+	}
+	sort.Ints(pages)
+	selected := make([]any, len(pages))
+	for index, page := range pages {
+		selected[index] = page
+	}
+	return map[string]any{
+		"version":             stringValue(normalized["version"]),
+		"structure_preserved": len(tables) > 0,
+		"selected_pages":      selected,
+		"tables":              tables,
+		"blocks":              blocks,
+	}
+}
+
+func anySlice(value any) []any {
+	items, _ := value.([]any)
+	return items
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func intValue(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
 }
 
 func partitionContextRounds(chunks []Chunk, maxTokens int) [][]Chunk {

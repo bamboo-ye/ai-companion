@@ -654,14 +654,14 @@ func (e *Executor) extractAttachedDocument(ctx context.Context, request conversa
 		parsed, parsedErr := e.documents.ReadParsedContextRoundWindow(
 			ctx, request.UserID, item.ID, 4_000, roundStart, 4,
 		)
-		if parsedErr == nil {
+		if parsedErr == nil && document.HasUsableSourceIR(parsed.SourceIR) {
 			return handled(
 				"work.document.extract",
 				fmt.Sprintf("已从文档库读取《%s》的结构化内容。", item.Name),
 				map[string]any{"output": parsed},
 			), nil
 		}
-		if !errors.Is(parsedErr, document.ErrParsedContentUnavailable) {
+		if parsedErr != nil && !errors.Is(parsedErr, document.ErrParsedContentUnavailable) {
 			return conversation.ToolResult{}, parsedErr
 		}
 	}

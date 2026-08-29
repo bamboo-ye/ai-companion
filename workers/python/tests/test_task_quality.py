@@ -65,6 +65,56 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_exhaustive_attached_table_rejects_missing_source_ir(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
+            "\n<!--ai-document:doc-1|courses.pdf-->",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                }
+            },
+            contract,
+            source_ir={"version": "document-source-ir-v1", "tables": []},
+        )
+        self.assertIn(
+            "source_structure_unavailable",
+            {item["code"] for item in violations},
+        )
+
+    def test_exhaustive_time_rejects_see_original_placeholder(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "见课程表与网页"],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        self.assertIn(
+            "requested_time_values_incomplete",
+            {item["code"] for item in violations},
+        )
+
     def test_structured_presentation_rejects_column_cell_mismatch_before_worker(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

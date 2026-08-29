@@ -89,6 +89,26 @@ func TestReadParsedContextRoundsMergesSequentialCoverageAndCleaning(t *testing.T
 	}
 	if err = store.SaveParsedDocument(ctx, job, ParseResult{
 		ParserVersion: "pypdf-6.14.2-markdown-v2", Pages: pages, Chunks: chunks,
+		SourceIR: map[string]any{
+			"version": SourceIRVersion, "structure_preserved": true,
+			"tables": []any{map[string]any{
+				"id": "table:courses", "columns": []any{
+					map[string]any{"id": "c1", "label": "Course Code"},
+					map[string]any{"id": "c2", "label": "Course Name"},
+					map[string]any{"id": "c3", "label": "Time"},
+				},
+				"rows": []any{
+					map[string]any{"id": "r1", "page": 1},
+					map[string]any{"id": "r2", "page": 2},
+					map[string]any{"id": "r3", "page": 3},
+					map[string]any{"id": "r4", "page": 4},
+					map[string]any{"id": "r5", "page": 5},
+				},
+				"row_groups": []any{
+					map[string]any{"id": "g1", "row_ids": []any{"r1", "r2", "r3", "r4", "r5"}},
+				},
+			}},
+		},
 	}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -116,5 +136,13 @@ func TestReadParsedContextRoundsMergesSequentialCoverageAndCleaning(t *testing.T
 	}
 	if parsed.CleaningReport.DuplicateLinesRemoved != 4 || parsed.CleaningReport.BlankLinesCollapsed != 4 {
 		t.Fatalf("cleaning report = %#v", parsed.CleaningReport)
+	}
+	if !HasUsableSourceIR(parsed.SourceIR) {
+		t.Fatalf("source IR was not preserved: %#v", parsed.SourceIR)
+	}
+	tables := anySlice(parsed.SourceIR["tables"])
+	rows := anySlice(tables[0].(map[string]any)["rows"])
+	if len(rows) != 4 || rows[3].(map[string]any)["id"] != "r4" {
+		t.Fatalf("source IR round slice = %#v", rows)
 	}
 }

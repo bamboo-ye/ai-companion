@@ -43,9 +43,10 @@ type Chunk struct {
 }
 
 type ParseResult struct {
-	ParserVersion string  `json:"parser_version"`
-	Pages         []Page  `json:"pages"`
-	Chunks        []Chunk `json:"chunks"`
+	ParserVersion string         `json:"parser_version"`
+	Pages         []Page         `json:"pages"`
+	Chunks        []Chunk        `json:"chunks"`
+	SourceIR      map[string]any `json:"source_ir"`
 }
 
 type Parser interface {

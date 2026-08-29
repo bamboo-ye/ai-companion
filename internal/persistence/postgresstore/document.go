@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,10 +14,11 @@ import (
 )
 
 var (
-	_ document.Store        = (*Store)(nil)
-	_ document.ParsedStore  = (*Store)(nil)
-	_ document.IngestStore  = (*Store)(nil)
-	_ document.CleanupStore = (*Store)(nil)
+	_ document.Store         = (*Store)(nil)
+	_ document.ParsedStore   = (*Store)(nil)
+	_ document.SourceIRStore = (*Store)(nil)
+	_ document.IngestStore   = (*Store)(nil)
+	_ document.CleanupStore  = (*Store)(nil)
 )
 
 func (s *Store) CreateDocument(ctx context.Context, item document.Document) (document.Document, bool, error) {
@@ -169,6 +171,33 @@ func (s *Store) ListDocumentChunks(
 		chunks = append(chunks, chunk)
 	}
 	return chunks, rows.Err()
+}
+
+func (s *Store) GetDocumentSourceIR(
+	ctx context.Context,
+	userID string,
+	documentID string,
+) (map[string]any, error) {
+	var encoded []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.source_ir
+		FROM app.documents d
+		JOIN app.files f ON f.id=d.file_id
+		WHERE d.id=$1 AND d.user_id=$2 AND d.ingest_status='ready'
+			AND f.status='active' AND d.source_ir IS NOT NULL`,
+		documentID, userID,
+	).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, document.ErrParsedContentUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sourceIR map[string]any
+	if err = json.Unmarshal(encoded, &sourceIR); err != nil {
+		return nil, err
+	}
+	return sourceIR, nil
 }
 
 func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, now time.Time) error {
@@ -523,11 +552,23 @@ func (s *Store) SaveParsedDocument(ctx context.Context, job document.IngestJob, 
 			return err
 		}
 	}
+	var sourceIRJSON any
+	sourceIRVersion := ""
+	if result.SourceIR != nil {
+		encoded, marshalErr := json.Marshal(result.SourceIR)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		sourceIRJSON = string(encoded)
+		sourceIRVersion = strings.TrimSpace(stringValue(result.SourceIR["version"]))
+	}
 	resultExec, err := tx.ExecContext(ctx, `
 		UPDATE app.documents SET
-			parser_version=$1,page_count=$2,chunk_count=$3,updated_at=$4
-		WHERE id=$5 AND ingest_status='processing'`,
-		result.ParserVersion, len(result.Pages), len(result.Chunks), now, job.Document.ID,
+			parser_version=$1,page_count=$2,chunk_count=$3,source_ir_version=$4,
+			source_ir=$5,updated_at=$6
+		WHERE id=$7 AND ingest_status='processing'`,
+		result.ParserVersion, len(result.Pages), len(result.Chunks), sourceIRVersion,
+		sourceIRJSON, now, job.Document.ID,
 	)
 	if err != nil {
 		return err
@@ -536,6 +577,13 @@ func (s *Store) SaveParsedDocument(ctx context.Context, job document.IngestJob, 
 		return document.ErrNotFound
 	}
 	return tx.Commit()
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func (s *Store) CompleteIngestJob(ctx context.Context, jobID string, now time.Time) error {
