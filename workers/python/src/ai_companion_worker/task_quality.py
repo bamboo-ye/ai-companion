@@ -33,6 +33,7 @@ _REQUESTED_FIELD_ALIASES = {
 }
 
 _PRESENTATION_FIELD_FRAGMENT_SPLIT = re.compile(r"[；;]+")
+_PRESENTATION_PARENTHETICAL = re.compile(r"[（(]([^（）()]*)[）)]")
 _PRESENTATION_TEMPORAL_EVIDENCE = re.compile(
     r"(?:"
     r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
@@ -65,6 +66,36 @@ def presentation_field_fragment_has_evidence(field: str, value: Any) -> bool:
     return True
 
 
+def presentation_field_parenthetical_mismatches(field: str, value: Any) -> list[str]:
+    """Return parenthetical clauses that do not match their target field."""
+
+    if str(field or "").strip().casefold() != "time":
+        return []
+    return [
+        match.group(1).strip()
+        for match in _PRESENTATION_PARENTHETICAL.finditer(str(value or ""))
+        if match.group(1).strip()
+        and not presentation_field_fragment_has_evidence(field, match.group(1))
+    ]
+
+
+def clean_presentation_field_fragment(field: str, value: Any) -> str:
+    """Remove embedded subclauses that lack evidence for the target field."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if str(field or "").strip().casefold() != "time":
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        return (
+            match.group(0)
+            if presentation_field_fragment_has_evidence(field, match.group(1))
+            else ""
+        )
+
+    return re.sub(r"\s+", " ", _PRESENTATION_PARENTHETICAL.sub(replace, text)).strip()
+
+
 def presentation_field_semantic_mismatches(field: str, value: Any) -> list[str]:
     """Return list fragments that do not carry evidence for the target field."""
 
@@ -72,11 +103,15 @@ def presentation_field_semantic_mismatches(field: str, value: Any) -> list[str]:
         fragment.strip(" \t\r\n；;,，、")
         for fragment in _PRESENTATION_FIELD_FRAGMENT_SPLIT.split(str(value or ""))
     ]
-    return [
-        fragment
-        for fragment in fragments
-        if fragment and not presentation_field_fragment_has_evidence(field, fragment)
-    ]
+    mismatches: list[str] = []
+    for fragment in fragments:
+        if not fragment:
+            continue
+        mismatches.extend(presentation_field_parenthetical_mismatches(field, fragment))
+        cleaned = clean_presentation_field_fragment(field, fragment)
+        if cleaned and not presentation_field_fragment_has_evidence(field, cleaned):
+            mismatches.append(fragment)
+    return list(dict.fromkeys(mismatches))
 
 
 def presentation_table_field_semantic_violations(
