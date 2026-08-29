@@ -531,7 +531,7 @@ class AgentRuntimeTest(unittest.TestCase):
             {"requested_fields": ["code", "name", "time"]},
         )
         self.assertEqual(violations, [])
-        self.assertEqual(mapping["compiled_by"], "artifact-harness")
+        self.assertNotIn("compiled_by", mapping)
         self.assertEqual(mapping["source_table_ids"], ["a1:table:courses"])
         self.assertEqual(mapping["entity_level"], "row_group")
         self.assertEqual(
@@ -1094,10 +1094,7 @@ class AgentRuntimeTest(unittest.TestCase):
             [row["cells"][0] for row in ppt_arguments["table"]["rows"]],
             ["PED1101", "PED1102"],
         )
-        self.assertEqual(
-            ppt_arguments["mapping_contract"]["compiled_by"],
-            "artifact-harness",
-        )
+        self.assertNotIn("compiled_by", ppt_arguments["mapping_contract"])
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(result["document_processing"]["merged_record_count"], 2)
         self.assertEqual(result["document_processing"]["timeout_retry_total"], 1)
