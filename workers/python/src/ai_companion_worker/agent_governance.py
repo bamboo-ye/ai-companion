@@ -7,8 +7,8 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.16.0"
-DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v3"
+GRAPH_VERSION = "3.17.0"
+DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
 

@@ -130,15 +130,15 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(
             config.config_version,
-            "2026-08-structured-composer-v3",
+            "2026-08-structured-composer-v4",
         )
         self.assertEqual(config.preferred_max_latency_p90, 8)
         self.assertEqual(config.timeout_seconds, 30)
         self.assertEqual(config.attempt_timeout_seconds, 15)
-        self.assertEqual(config.composer_timeout_seconds, 120)
-        self.assertEqual(config.composer_attempt_timeout_seconds, 75)
+        self.assertEqual(config.composer_timeout_seconds, 90)
+        self.assertEqual(config.composer_attempt_timeout_seconds, 30)
         self.assertEqual(config.min_fallback_timeout_seconds, 5)
-        self.assertEqual(config.composer_batch_max_tokens, 4096)
+        self.assertEqual(config.composer_batch_max_tokens, 6144)
         self.assertEqual(config.reasoning_effort, "minimal")
         self.assertEqual(config.planner_reasoning_effort, "high")
         self.assertEqual(config.router_reasoning_effort, "low")
@@ -733,7 +733,25 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                     "name": "work_generate_pptx",
                     "description": "生成 PPTX",
                     "compose_arguments": True,
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
+                            "mapping_contract": {"type": "object"},
+                            "task_contract": {"type": "object"},
+                            "source_coverage": {"type": "object"},
+                            "table": {
+                                "type": "object",
+                                "properties": {"rows": {"type": "array"}},
+                            },
+                        },
+                    },
                 }
             ],
             "artifact_validation": {
@@ -787,7 +805,25 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                     "name": "work_generate_pptx",
                     "description": "生成 PPTX",
                     "compose_arguments": True,
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
+                            "mapping_contract": {"type": "object"},
+                            "task_contract": {"type": "object"},
+                            "source_coverage": {"type": "object"},
+                            "table": {
+                                "type": "object",
+                                "properties": {"rows": {"type": "array"}},
+                            },
+                        },
+                    },
                 }
             ],
             "document_processing_round": {
@@ -820,7 +856,17 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         routed = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(routed["document_processing_round"]["batch_id"], "a1:r1")
         self.assertIn("PED1101", routed["completed_observations"][0]["data"]["output"]["text"])
-        self.assertEqual(port.requests[0]["max_tokens"], 4096)
+        self.assertEqual(port.requests[0]["max_tokens"], 6144)
+        batch_schema = port.requests[0]["tools"][0]["function"]["parameters"]
+        self.assertEqual(
+            set(batch_schema["properties"]),
+            {"title", "audience", "style", "table"},
+        )
+        self.assertEqual(
+            batch_schema["required"],
+            ["title", "audience", "style", "table"],
+        )
+        self.assertIn("紧凑中间格式", system_prompt)
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
@@ -982,12 +1028,12 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             {
                 "fallback_deadline_seconds": 30,
                 "attempt_timeout_seconds": 15,
-                "composer_fallback_deadline_seconds": 120,
-                "composer_attempt_timeout_seconds": 75,
+                "composer_fallback_deadline_seconds": 90,
+                "composer_attempt_timeout_seconds": 30,
                 "min_fallback_timeout_seconds": 5,
             },
         )
-        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 4096)
+        self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 6144)
         self.assertEqual(manifest["inference"]["planner_reasoning_effort"], "high")
         self.assertEqual(manifest["inference"]["router_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
