@@ -81,6 +81,15 @@ func TestPPTXGenerationRunsWithoutConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	manifests, err := service.Skills(context.Background(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		if manifest.Name == "office.pptx_generate" && manifest.MaxInputBytes != 2<<20 {
+			t.Fatalf("pptx max input bytes = %d", manifest.MaxInputBytes)
+		}
+	}
 	run, _, err := service.Start(context.Background(), "u1", "office.pptx_generate", "pptx-create", map[string]any{
 		"title": "课程介绍", "audience": "学生", "style": "简洁", "brief": "课程目标与安排", "slide_count": float64(4),
 	})
