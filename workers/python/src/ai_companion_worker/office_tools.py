@@ -26,6 +26,7 @@ from pptx.util import Inches, Pt
 from xml.sax.saxutils import escape
 
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
+from ai_companion_worker.task_quality import presentation_table_field_semantic_violations
 
 MAX_SOURCE_BYTES = 700 * 1024
 MAX_PDF_SOURCE_BYTES = 8 * 1024 * 1024
@@ -1343,6 +1344,13 @@ def _presentation_quality_report(
                     "affected_rows": contextless_rows[:20],
                 }
             )
+        violations.extend(
+            presentation_table_field_semantic_violations(
+                table.get("columns", []),
+                table.get("rows", []),
+                requested_fields,
+            )
+        )
     visible_text = " ".join(
         [
             str(outline[0].get("title") or "") if outline else "",

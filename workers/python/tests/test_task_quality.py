@@ -165,6 +165,38 @@ class TaskQualityTests(unittest.TestCase):
             {item["code"] for item in below_violations},
         )
 
+    def test_time_field_rejects_non_temporal_metadata_fragments(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "PED1402",
+                                "Golf",
+                                "周三 09:30-11:20；(部分节次标注有容量/场地信息)",
+                            ],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        mismatch = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_field_semantic_mismatch"
+        )
+        self.assertEqual(mismatch["field"], "time")
+        self.assertEqual(mismatch["affected_rows"], [1])
+        self.assertIn("容量/场地信息", mismatch["examples"][0])
+
     def test_structured_presentation_rejects_column_cell_mismatch_before_worker(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

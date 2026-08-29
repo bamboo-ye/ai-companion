@@ -26,6 +26,7 @@ from ai_companion_worker.response_quality import inspect_and_repair_response
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
+    presentation_field_fragment_has_evidence,
     presentation_source_record_keys,
     task_contract_artifact_satisfied,
     validate_artifact_observation,
@@ -436,6 +437,9 @@ def _normalize_presentation_arguments(
                     _clean_presentation_cell(
                         value,
                         aggregate=mapping_modes.get(index) == "aggregate",
+                        field=requested_fields[index]
+                        if index < len(requested_fields)
+                        else "",
                     )
                     for index, value in enumerate(visible_cells)
                 ]
@@ -1570,7 +1574,7 @@ _PRESENTATION_REFERENCE_ONLY = re.compile(
 )
 
 
-def _presentation_aggregate_fragments(value: Any) -> list[str]:
+def _presentation_aggregate_fragments(value: Any, *, field: str = "") -> list[str]:
     """Return stable, meaningful aggregate fragments without separator noise."""
 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -1585,6 +1589,8 @@ def _presentation_aggregate_fragments(value: Any) -> list[str]:
             continue
         if _PRESENTATION_EMPTY_FRAGMENT.fullmatch(fragment):
             continue
+        if field and not presentation_field_fragment_has_evidence(field, fragment):
+            continue
         identity = fragment.casefold()
         if identity in seen:
             continue
@@ -1593,10 +1599,10 @@ def _presentation_aggregate_fragments(value: Any) -> list[str]:
     return fragments
 
 
-def _clean_presentation_cell(value: Any, *, aggregate: bool) -> str:
+def _clean_presentation_cell(value: Any, *, aggregate: bool, field: str = "") -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if aggregate:
-        return "；".join(_presentation_aggregate_fragments(text))
+        return "；".join(_presentation_aggregate_fragments(text, field=field))
     # Direct fields are not list-valued, but provider output can still contain
     # duplicated delimiters at a batch boundary.  Collapse only that obvious
     # transport noise without rewriting source semantics.
