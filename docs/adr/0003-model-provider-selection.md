@@ -37,7 +37,7 @@ can be required by deployment policy. Production accepts only the canonical
 OpenRouter API endpoint; the generic OpenAI-compatible provider is not a
 runtime configuration option.
 
-Graph runs persist config version `2026-08-bounded-fallback-v1`, the
+Graph runs persist config version `2026-08-structured-composer-v2`, the
 concrete role manifest and its canonical fingerprint, then enforce trusted
 action, call, prompt-token, completion-token and cost
 ceilings. Model changes require the project evaluation set, an explicit config

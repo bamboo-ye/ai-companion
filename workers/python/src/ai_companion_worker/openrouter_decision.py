@@ -118,16 +118,16 @@ class OpenRouterConfig:
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
     composer_max_tokens: int = 12288
-    composer_batch_max_tokens: int = 4096
+    composer_batch_max_tokens: int = 8192
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
     reasoning_effort: str = "minimal"
     planner_reasoning_effort: str = "high"
     router_reasoning_effort: str = "low"
-    composer_reasoning_effort: str = "minimal"
+    composer_reasoning_effort: str = "low"
     assessor_reasoning_effort: str = "minimal"
-    fallback_reasoning_effort: str = "minimal"
+    fallback_reasoning_effort: str = "low"
     reasoning_exclude: bool = True
     http_referer: str = ""
     app_title: str = "AI Companion"
@@ -193,7 +193,7 @@ class OpenRouterConfig:
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")),
+            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "8192")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -208,7 +208,7 @@ class OpenRouterConfig:
             ),
             composer_reasoning_effort=os.getenv(
                 "MODEL_COMPOSER_REASONING_EFFORT",
-                "minimal",
+                "low",
             ),
             assessor_reasoning_effort=os.getenv(
                 "MODEL_ASSESSOR_REASONING_EFFORT",
@@ -216,7 +216,7 @@ class OpenRouterConfig:
             ),
             fallback_reasoning_effort=os.getenv(
                 "MODEL_FALLBACK_REASONING_EFFORT",
-                "minimal",
+                "low",
             ),
             reasoning_exclude=_env_bool("MODEL_REASONING_EXCLUDE", True),
             http_referer=os.getenv("MODEL_HTTP_REFERER", ""),
