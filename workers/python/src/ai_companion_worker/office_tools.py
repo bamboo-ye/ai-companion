@@ -1293,6 +1293,41 @@ def _presentation_quality_report(
                         "message": f"缺少字段：{field}",
                     }
                 )
+    if table:
+        entity_rows: dict[str, list[int]] = {}
+        delimiter_noise_rows: list[int] = []
+        repeated_delimiter = re.compile(r"(?:[；;]\s*){2,}")
+        punctuation_only = re.compile(r"^[\s；;,，、|/\\:：.。·•↳\-–—]+$")
+        for index, row in enumerate(table["rows"], start=1):
+            entity_id = str(row.get("entity_id") or "").strip()
+            if entity_id:
+                entity_rows.setdefault(entity_id, []).append(index)
+            if any(
+                repeated_delimiter.search(str(value or ""))
+                or punctuation_only.fullmatch(str(value or "").strip())
+                for value in row.get("cells", [])
+                if str(value or "").strip()
+            ):
+                delimiter_noise_rows.append(index)
+        duplicates = {
+            entity_id: positions for entity_id, positions in entity_rows.items() if len(positions) > 1
+        }
+        if duplicates:
+            violations.append(
+                {
+                    "code": "duplicate_logical_entities",
+                    "message": "同一来源实体在最终表格中出现了多条逻辑记录",
+                    "entity_ids": list(duplicates)[:20],
+                }
+            )
+        if delimiter_noise_rows:
+            violations.append(
+                {
+                    "code": "presentation_cell_delimiter_noise",
+                    "message": "最终表格包含重复分隔符或纯标点碎片",
+                    "affected_rows": delimiter_noise_rows[:20],
+                }
+            )
     visible_text = " ".join(
         [
             str(outline[0].get("title") or "") if outline else "",

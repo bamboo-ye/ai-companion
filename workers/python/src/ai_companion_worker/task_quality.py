@@ -158,6 +158,63 @@ def validate_presentation_arguments(
                     "affected_count": len(mismatched_rows),
                 }
             )
+        entity_rows: dict[str, list[int]] = {}
+        delimiter_noise_rows: list[int] = []
+        empty_cell_rows: list[int] = []
+        repeated_delimiter = re.compile(r"(?:[；;]\s*){2,}")
+        punctuation_only = re.compile(r"^[\s；;,，、|/\\:：.。·•↳\-–—]+$")
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, Mapping):
+                continue
+            entity_id = str(row.get("entity_id") or "").strip()
+            if entity_id:
+                entity_rows.setdefault(entity_id, []).append(index)
+            cells = row.get("cells")
+            if not isinstance(cells, list):
+                continue
+            if any(not str(value or "").strip() for value in cells):
+                empty_cell_rows.append(index)
+            if any(
+                repeated_delimiter.search(str(value or ""))
+                or punctuation_only.fullmatch(str(value or "").strip())
+                for value in cells
+                if str(value or "").strip()
+            ):
+                delimiter_noise_rows.append(index)
+        duplicate_entities = {
+            entity_id: positions for entity_id, positions in entity_rows.items() if len(positions) > 1
+        }
+        if duplicate_entities:
+            violations.append(
+                {
+                    "code": "duplicate_output_entities",
+                    "message": "同一来源实体只能对应一条逻辑输出记录，续行只能在最终渲染时生成",
+                    "entity_ids": list(duplicate_entities)[:20],
+                    "affected_rows": [
+                        row_index
+                        for positions in list(duplicate_entities.values())[:20]
+                        for row_index in positions
+                    ][:40],
+                }
+            )
+        if delimiter_noise_rows:
+            violations.append(
+                {
+                    "code": "presentation_cell_delimiter_noise",
+                    "message": "表格单元格包含重复分隔符或纯标点碎片",
+                    "affected_rows": delimiter_noise_rows[:20],
+                    "affected_count": len(delimiter_noise_rows),
+                }
+            )
+        if empty_cell_rows:
+            violations.append(
+                {
+                    "code": "presentation_cell_empty",
+                    "message": "结构化表格的逻辑记录不得包含空单元格",
+                    "affected_rows": empty_cell_rows[:20],
+                    "affected_count": len(empty_cell_rows),
+                }
+            )
     if isinstance(rows, list) and rows and task_contract.get("exhaustive") is True:
         missing_locators = sum(
             1
