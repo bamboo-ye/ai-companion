@@ -17,6 +17,7 @@ from ai_companion_worker.agent_runtime import (
     ToolPreparation,
     _composer_circuit_breaker_models,
     _composer_previous_arguments,
+    _completed_presentation_continuation,
     _document_source_coverage,
     _deterministic_presentation_mapping,
     _latest_document_continuation,
@@ -750,6 +751,46 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(
             _latest_document_continuation(state),  # type: ignore[arg-type]
             {"attachment_index": 2, "round_start": 9},
+        )
+
+    def test_completed_extraction_deterministically_selects_ppt_generator(self) -> None:
+        state = {
+            "module": "work",
+            "task_contract": {
+                "artifact_types": ["pptx"],
+                "source_required": True,
+                "source_document_ids": ["document-1"],
+            },
+            "context": {
+                "tools": [
+                    {
+                        "name": "work_generate_pptx",
+                        "compose_arguments": True,
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ]
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "succeeded",
+                    "arguments": {"attachment_index": 1},
+                    "data": {
+                        "output": {
+                            "truncated": False,
+                            "coverage_ratio": 1.0,
+                            "completed_rounds": 3,
+                            "round_count": 3,
+                            "selected_chunk_count": 16,
+                            "total_chunk_count": 16,
+                        }
+                    },
+                }
+            ],
+        }
+        self.assertEqual(
+            _completed_presentation_continuation(state),  # type: ignore[arg-type]
+            "work_generate_pptx",
         )
 
     def test_exhaustive_ppt_composition_checkpoints_each_document_round(self) -> None:
