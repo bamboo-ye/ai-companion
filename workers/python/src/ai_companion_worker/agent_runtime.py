@@ -2397,6 +2397,41 @@ def build_graph(
                 "steps": state.get("steps", 0) + 1,
             }
         node = state["module"]
+        continuation_tool = _completed_presentation_continuation(state)
+        if continuation_tool:
+            definition = _trusted_tool_definition(state, continuation_tool)
+            execution_mode, execution_mode_reason = _classify_execution_mode(
+                state,
+                tool_name=continuation_tool,
+                definition=definition,
+            )
+            return {
+                "intent": continuation_tool,
+                "execution_mode": execution_mode,
+                "execution_mode_reason": execution_mode_reason,
+                "proposed_tool": {
+                    "name": continuation_tool,
+                    "arguments": {},
+                    "compose_arguments": True,
+                },
+                "preparation": {},
+                "tool_result": {},
+                "needs_response": False,
+                "node_trace": [
+                    *state.get("node_trace", []),
+                    _trace_event(
+                        node,
+                        "succeeded",
+                        details={
+                            "routing": "deterministic_artifact_continuation",
+                            "tool_name": continuation_tool,
+                            "source_coverage_complete": True,
+                            "model_calls": 0,
+                        },
+                    ),
+                ],
+                "steps": state.get("steps", 0) + 1,
+            }
         reason = model_access_reason(state, node)
         if reason:
             return model_terminal_update(state, node=node, reason=reason)
@@ -4861,6 +4896,39 @@ def _latest_document_continuation(state: AgentState) -> dict[str, int]:
         int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
     )
     return {"attachment_index": attachment_index, "round_start": next_round}
+
+
+def _completed_presentation_continuation(state: AgentState) -> str:
+    """Select the requested generator after trusted extraction is complete."""
+
+    if state.get("module") != "work":
+        return ""
+    task_contract = state.get("task_contract")
+    if not isinstance(task_contract, Mapping):
+        return ""
+    artifact_types = task_contract.get("artifact_types")
+    if not isinstance(artifact_types, list) or "pptx" not in artifact_types:
+        return ""
+    observations = state.get("observations")
+    if not isinstance(observations, list) or not observations:
+        return ""
+    latest = observations[-1]
+    if (
+        not isinstance(latest, Mapping)
+        or latest.get("tool_name") != "work_extract_attached_document"
+        or latest.get("status") not in ("completed", "succeeded")
+    ):
+        return ""
+    coverage = _document_source_coverage(state)
+    if coverage.get("truncated") is not False or float(
+        coverage.get("coverage_ratio") or 0.0
+    ) < 1.0:
+        return ""
+    tool_name = "work_generate_pptx"
+    definition = _trusted_tool_definition(state, tool_name)
+    if not isinstance(definition, Mapping) or definition.get("compose_arguments") is not True:
+        return ""
+    return tool_name
 
 
 def _document_source_coverage(state: AgentState) -> dict[str, Any]:
