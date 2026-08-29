@@ -14,7 +14,7 @@ const (
 	defaultQualityFallback    = "openai/gpt-5-mini"
 	defaultLightFallback      = "openai/gpt-5-nano"
 	defaultCompanionFreeModel = "openai/gpt-oss-20b:free"
-	defaultModelConfigVersion = "2026-08-structured-composer-v3"
+	defaultModelConfigVersion = "2026-08-structured-composer-v4"
 )
 
 type Config struct {
@@ -430,7 +430,7 @@ func Load(serviceName string) (Config, error) {
 	if err != nil || agentConfirmationTTL <= 0 {
 		return Config{}, fmt.Errorf("AGENT_CONFIRMATION_TTL must be a positive duration")
 	}
-	agentWorkerLeaseDuration, err := time.ParseDuration(value("AGENT_WORKER_LEASE_DURATION", "10m"))
+	agentWorkerLeaseDuration, err := time.ParseDuration(value("AGENT_WORKER_LEASE_DURATION", "14m"))
 	if err != nil || agentWorkerLeaseDuration <= 0 {
 		return Config{}, fmt.Errorf("AGENT_WORKER_LEASE_DURATION must be a positive duration")
 	}
@@ -470,7 +470,7 @@ func Load(serviceName string) (Config, error) {
 	if _, err := fmt.Sscanf(value("AGENT_PYTHON_POOL_WARM_SIZE", "1"), "%d", &agentPythonPoolWarmSize); err != nil || agentPythonPoolWarmSize < 0 || agentPythonPoolWarmSize > agentWorkerConcurrency {
 		return Config{}, fmt.Errorf("AGENT_PYTHON_POOL_WARM_SIZE must be between 0 and AGENT_WORKER_CONCURRENCY")
 	}
-	agentWorkerTimeout, err := time.ParseDuration(value("AGENT_WORKER_TIMEOUT", "7m"))
+	agentWorkerTimeout, err := time.ParseDuration(value("AGENT_WORKER_TIMEOUT", "12m"))
 	if err != nil || agentWorkerTimeout <= 0 || agentWorkerTimeout >= agentWorkerLeaseDuration {
 		return Config{}, fmt.Errorf("AGENT_WORKER_TIMEOUT must be positive and shorter than AGENT_WORKER_LEASE_DURATION")
 	}

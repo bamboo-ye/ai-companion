@@ -70,7 +70,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ModelCircuitFailureThreshold != 3 || cfg.ModelCircuitCooldown != 30*time.Second {
 		t.Fatalf("model circuit defaults = %d/%s", cfg.ModelCircuitFailureThreshold, cfg.ModelCircuitCooldown)
 	}
-	if cfg.ModelConfigVersion != "2026-08-structured-composer-v3" {
+	if cfg.ModelConfigVersion != "2026-08-structured-composer-v4" {
 		t.Fatalf("ModelConfigVersion = %q", cfg.ModelConfigVersion)
 	}
 	if cfg.MCPStdioServersJSON != "[]" {
@@ -86,7 +86,7 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.AgentKafkaConsumerGroup != "ai-companion-agent-v1" ||
 		cfg.AgentMetricsAddr != ":9467" ||
-		cfg.AgentWorkerLeaseDuration != 10*time.Minute ||
+		cfg.AgentWorkerLeaseDuration != 14*time.Minute ||
 		cfg.AgentWorkerPollInterval != 30*time.Second ||
 		cfg.AgentWorkerRetryDelay != 30*time.Second ||
 		cfg.AgentWorkerRetryMaxDelay != 2*time.Minute ||
@@ -96,7 +96,7 @@ func TestLoadDefaults(t *testing.T) {
 		cfg.AgentDispatchQueueSize != 32 ||
 		!cfg.AgentPythonPoolEnabled ||
 		cfg.AgentPythonPoolWarmSize != 1 ||
-		cfg.AgentWorkerTimeout != 7*time.Minute ||
+		cfg.AgentWorkerTimeout != 12*time.Minute ||
 		cfg.AgentRunTimeout != 15*time.Minute ||
 		cfg.AgentControlPollInterval != 500*time.Millisecond {
 		t.Fatalf(

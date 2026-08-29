@@ -113,12 +113,12 @@ class OpenRouterConfig:
     repairer_models: tuple[str, ...] = ()
     timeout_seconds: float = 30
     attempt_timeout_seconds: float = 15
-    composer_timeout_seconds: float = 120
-    composer_attempt_timeout_seconds: float = 75
+    composer_timeout_seconds: float = 90
+    composer_attempt_timeout_seconds: float = 30
     min_fallback_timeout_seconds: float = 5
     max_tokens: int = 1024
     composer_max_tokens: int = 12288
-    composer_batch_max_tokens: int = 4096
+    composer_batch_max_tokens: int = 6144
     repairer_max_tokens: int = 256
     data_collection: str = "deny"
     zdr_required: bool = False
@@ -184,16 +184,18 @@ class OpenRouterConfig:
             repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,)),
             timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "30")),
             attempt_timeout_seconds=float(os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
-            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "120")),
+            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "90")),
             composer_attempt_timeout_seconds=float(
-                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "75")
+                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "30")
             ),
             min_fallback_timeout_seconds=float(
                 os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")),
+            composer_batch_max_tokens=int(
+                os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "6144")
+            ),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -830,6 +832,12 @@ class OpenRouterDecisionPort:
                     "不要总结整份文件，也不要声称未看到的轮次已完成。"
                     f"分轮信息：{encoded_round}。"
                 )
+                system_prompt += (
+                    "本轮工具 schema 是 Harness 提供的紧凑中间格式：只返回 title、audience、"
+                    "style、可选 filename 与当前轮次 table；不要返回 brief、slide_count、"
+                    "mapping_contract、task_contract 或 source_coverage。Harness 会在全部轮次"
+                    "完成后确定性合并记录、注入锁定映射并补齐最终 PPT 参数。"
+                )
                 locked_mapping = context.get("locked_mapping_contract")
                 if isinstance(locked_mapping, Mapping) and locked_mapping:
                     encoded_mapping = json.dumps(
@@ -883,7 +891,13 @@ class OpenRouterDecisionPort:
                         "function": {
                             "name": selected["name"],
                             "description": selected["description"],
-                            "parameters": selected["parameters"],
+                            "parameters": (
+                                _presentation_batch_parameters(selected["parameters"])
+                                if tool_name
+                                in ("work_create_pptx_outline", "work_generate_pptx")
+                                and isinstance(document_round, Mapping)
+                                else selected["parameters"]
+                            ),
                         },
                     }
                 ],
@@ -1910,6 +1924,37 @@ def _router_parameters(definition: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {},
+        "additionalProperties": False,
+    }
+
+
+def _presentation_batch_parameters(parameters: Any) -> dict[str, Any]:
+    """Restrict oversized-source Composer calls to compact mergeable data.
+
+    Harness owns the mapping contract, task contract, source coverage, brief,
+    and final slide count. Requiring the model to repeat those fields in every
+    batch wastes output tokens and can truncate otherwise valid table rows.
+    """
+
+    if not isinstance(parameters, Mapping):
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+    properties = parameters.get("properties")
+    if not isinstance(properties, Mapping) or not isinstance(
+        properties.get("table"), Mapping
+    ):
+        return dict(parameters)
+    selected = {
+        key: dict(properties[key])
+        for key in ("title", "audience", "style", "filename", "table")
+        if isinstance(properties.get(key), Mapping)
+    }
+    required = [
+        key for key in ("title", "audience", "style", "table") if key in selected
+    ]
+    return {
+        "type": "object",
+        "required": required,
+        "properties": selected,
         "additionalProperties": False,
     }
 
