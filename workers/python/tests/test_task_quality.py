@@ -65,6 +65,37 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertEqual(violations, [])
 
+    def test_structured_presentation_rejects_duplicate_entities_and_delimiter_noise(
+        self,
+    ) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "周一；；周三"],
+                            "source_locator": "page:2",
+                            "entity_id": "course:PED1305",
+                        },
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "周五"],
+                            "source_locator": "page:3",
+                            "entity_id": "course:PED1305",
+                        },
+                    ],
+                }
+            },
+            contract,
+        )
+        codes = {item["code"] for item in violations}
+        self.assertIn("duplicate_output_entities", codes)
+        self.assertIn("presentation_cell_delimiter_noise", codes)
+
     def test_exhaustive_attached_table_rejects_missing_source_ir(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"

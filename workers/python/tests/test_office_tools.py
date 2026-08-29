@@ -455,6 +455,44 @@ class OfficeToolsTest(unittest.TestCase):
             {item["code"] for item in result["output"]["quality_report"]["violations"]},
         )
 
+    def test_pptx_quality_rejects_duplicate_entities_and_delimiter_noise(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "所有课程",
+                "slide_count": 4,
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "周一；；周三"],
+                            "source_locator": "page:2",
+                            "entity_id": "course:PED1305",
+                        },
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "周五"],
+                            "source_locator": "page:3",
+                            "entity_id": "course:PED1305",
+                        },
+                    ],
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertEqual(result["files"], [])
+        codes = {item["code"] for item in report["violations"]}
+        self.assertIn("duplicate_logical_entities", codes)
+        self.assertIn("presentation_cell_delimiter_noise", codes)
+
     def test_pptx_explicit_filename_still_rejects_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid_output_filename"):
             execute(

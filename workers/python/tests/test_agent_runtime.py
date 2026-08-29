@@ -547,6 +547,77 @@ class AgentRuntimeTest(unittest.TestCase):
             ],
         )
 
+    def test_presentation_merge_keeps_one_logical_entity_and_cleans_aggregate_noise(
+        self,
+    ) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "exhaustive": True,
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "plan": {"objective": "整理全部体育课程"},
+            "observations": [],
+        }
+        mapping = {
+            "field_mappings": [
+                {"target_index": 0, "mode": "direct"},
+                {"target_index": 1, "mode": "direct"},
+                {"target_index": 2, "mode": "aggregate"},
+            ]
+        }
+        long_schedule = "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(1, 14))
+        first = _normalize_presentation_arguments(
+            {
+                "title": "体育课程表",
+                "mapping_contract": mapping,
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", long_schedule],
+                            "source_locator": "Page 2",
+                            "entity_id": "course:PED1305",
+                            "source_refs": ["row:1"],
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        self.assertEqual(len(first["table"]["rows"]), 1)
+        self.assertGreater(len(first["table"]["rows"][0]["cells"][2]), 120)
+
+        merged = _merge_presentation_arguments(
+            first,
+            {
+                "mapping_contract": mapping,
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "PED1305",
+                                "Physical Fitness",
+                                "T13 周一 09:00-09:50；；T14 周三 10:00-10:50；同上；",
+                            ],
+                            "source_locator": "Page 3",
+                            "entity_id": "course:PED1305",
+                            "source_refs": ["row:2"],
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        rows = merged["table"]["rows"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_refs"], ["row:1", "row:2"])
+        self.assertEqual(rows[0]["cells"][2].count("T13 周一 09:00-09:50"), 1)
+        self.assertIn("T14 周三 10:00-10:50", rows[0]["cells"][2])
+        self.assertNotIn("；；", rows[0]["cells"][2])
+        self.assertNotIn("同上", rows[0]["cells"][2])
+
     def test_structured_batches_hard_bound_serialized_source_ir(self) -> None:
         columns = [
             {"id": "c1", "label": "Course Code"},
@@ -688,7 +759,7 @@ class AgentRuntimeTest(unittest.TestCase):
             self.assertEqual(sum(code in item["text"] for item in batches), 1)
         self.assertIn("[[PREVIOUS ROUND OVERLAP", batches[1]["processing_text"])
 
-    def test_presentation_normalization_recovers_locator_and_splits_dense_cells(self) -> None:
+    def test_presentation_normalization_recovers_locator_without_early_splitting(self) -> None:
         schedule = "; ".join(
             f"T{index:02d} 8/9, 15/9, 22/9, 29/9 (Tue) {900 + index:04d}-0950"
             for index in range(1, 9)
@@ -731,10 +802,10 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         table = normalized["table"]
         self.assertEqual(set(table), {"columns", "rows"})
-        self.assertGreater(len(table["rows"]), 1)
-        self.assertTrue(all(len(cell) <= 120 for row in table["rows"] for cell in row["cells"]))
-        self.assertTrue(all(row["source_locator"] == "Page 2" for row in table["rows"]))
-        rebuilt_schedule = " ".join(row["cells"][2] for row in table["rows"])
+        self.assertEqual(len(table["rows"]), 1)
+        self.assertGreater(len(table["rows"][0]["cells"][2]), 120)
+        self.assertEqual(table["rows"][0]["source_locator"], "Page 2")
+        rebuilt_schedule = table["rows"][0]["cells"][2]
         for index in range(1, 9):
             self.assertIn(f"T{index:02d}", rebuilt_schedule)
 

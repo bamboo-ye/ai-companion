@@ -403,6 +403,7 @@ def _normalize_presentation_arguments(
         columns = table_copy.get("columns")
         rows = table_copy.get("rows")
         if requested and isinstance(columns, list) and isinstance(rows, list):
+            mapping_modes = _presentation_mapping_modes(normalized.get("mapping_contract"))
             column_fields = [_presentation_column_field(value) for value in columns]
             requested_fields = [field for field, _ in requested]
             selected_indices: list[int] = []
@@ -431,6 +432,13 @@ def _normalize_presentation_arguments(
                     visible_cells = [str(value).strip() for value in cells[: len(requested_fields)]]
                 else:
                     visible_cells = [str(value).strip() for value in cells]
+                visible_cells = [
+                    _clean_presentation_cell(
+                        value,
+                        aggregate=mapping_modes.get(index) == "aggregate",
+                    )
+                    for index, value in enumerate(visible_cells)
+                ]
                 locator = str(raw_row.get("source_locator") or "").strip()
                 if not locator and 0 <= source_index < len(cells):
                     locator = str(cells[source_index] or "").strip()
@@ -450,10 +458,12 @@ def _normalize_presentation_arguments(
                             str(value).strip() for value in source_refs if str(value).strip()
                         )
                     )
-                for expanded_cells in _expand_presentation_cells(visible_cells):
-                    expanded_row = dict(normalized_row)
-                    expanded_row["cells"] = expanded_cells
-                    normalized_rows.append(expanded_row)
+                # Keep one logical row per source entity throughout Composer
+                # batching.  Readability splitting belongs to the final PPTX
+                # renderer; doing it here makes continuation fragments look
+                # like independent source records and corrupts later
+                # aggregate-field merging.
+                normalized_rows.append(normalized_row)
             chinese = isinstance(task_contract, Mapping) and str(
                 task_contract.get("output_language") or ""
             ).casefold().startswith("zh")
@@ -534,7 +544,6 @@ def _presentation_column_field(value: Any) -> str:
     return aliases.get(normalized, normalized)
 
 
-_PRESENTATION_CELL_RENDER_LIMIT = 120
 _PRESENTATION_PAGE_MARKER = re.compile(r"\[\[(?P<page>PAGES?\s+\d+(?:-\d+)?)\]\]", re.I)
 
 
@@ -568,53 +577,6 @@ def _presentation_source_locator(cells: list[str], state: AgentState) -> str:
         if filename:
             return f"{filename}, round {round_start}"[:160]
     return ""
-
-
-def _split_presentation_cell(value: Any) -> list[str]:
-    """Split dense cell text without dropping non-whitespace source content."""
-
-    remaining = re.sub(r"\s+", " ", str(value or "")).strip()
-    if len(remaining) <= _PRESENTATION_CELL_RENDER_LIMIT:
-        return [remaining]
-    result: list[str] = []
-    while len(remaining) > _PRESENTATION_CELL_RENDER_LIMIT:
-        window = remaining[:_PRESENTATION_CELL_RENDER_LIMIT]
-        candidates = [
-            (window.rfind(";"), 1),
-            (window.rfind("；"), 1),
-            (window.rfind(" "), 0),
-        ]
-        boundary, suffix = max(candidates, key=lambda item: item[0])
-        if boundary < _PRESENTATION_CELL_RENDER_LIMIT // 2:
-            cut = _PRESENTATION_CELL_RENDER_LIMIT
-        else:
-            cut = boundary + suffix
-        segment = remaining[:cut].strip()
-        if segment:
-            result.append(segment)
-        remaining = remaining[cut:].strip()
-    if remaining:
-        result.append(remaining)
-    return result or [""]
-
-
-def _expand_presentation_cells(cells: list[str]) -> list[list[str]]:
-    """Expand one dense record into readable continuation rows losslessly."""
-
-    segmented = [_split_presentation_cell(value) for value in cells]
-    row_count = max((len(items) for items in segmented), default=1)
-    result: list[list[str]] = []
-    for index in range(row_count):
-        row: list[str] = []
-        for items in segmented:
-            if len(items) == 1:
-                row.append(items[0])
-            elif index < len(items):
-                row.append(items[index])
-            else:
-                row.append("同上")
-        result.append(row)
-    return result
 
 
 _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]\s*$")
@@ -1530,6 +1492,35 @@ def _merge_presentation_arguments(
 def _merge_presentation_cells(
     base_cells: list[Any], addition_cells: list[Any], mapping_contract: Any
 ) -> list[str]:
+    modes = _presentation_mapping_modes(mapping_contract)
+
+    size = max(len(base_cells), len(addition_cells))
+    merged: list[str] = []
+    for index in range(size):
+        mode = modes.get(index, "direct")
+        first = _clean_presentation_cell(
+            base_cells[index] if index < len(base_cells) else "",
+            aggregate=mode == "aggregate",
+        )
+        second = _clean_presentation_cell(
+            addition_cells[index] if index < len(addition_cells) else "",
+            aggregate=mode == "aggregate",
+        )
+        if not first:
+            merged.append(second)
+        elif not second or second.casefold() == first.casefold():
+            merged.append(first)
+        elif mode == "aggregate":
+            merged.append(_merge_presentation_aggregate_values(first, second))
+        else:
+            # Direct fields are locked by the first grounded occurrence.  A
+            # later batch may add provenance, but it cannot silently remap or
+            # rename the same source entity.
+            merged.append(first)
+    return merged
+
+
+def _presentation_mapping_modes(mapping_contract: Any) -> dict[int, str]:
     modes: dict[int, str] = {}
     if isinstance(mapping_contract, Mapping):
         for raw_mapping in mapping_contract.get("field_mappings", []):
@@ -1538,23 +1529,53 @@ def _merge_presentation_cells(
             index = raw_mapping.get("target_index")
             if isinstance(index, int) and not isinstance(index, bool):
                 modes[index] = str(raw_mapping.get("mode") or "direct").casefold()
-    size = max(len(base_cells), len(addition_cells))
-    merged: list[str] = []
-    for index in range(size):
-        first = str(base_cells[index] if index < len(base_cells) else "").strip()
-        second = str(addition_cells[index] if index < len(addition_cells) else "").strip()
-        if not first:
-            merged.append(second)
-        elif not second or second.casefold() == first.casefold():
-            merged.append(first)
-        elif modes.get(index) == "aggregate":
-            merged.append("；".join(dict.fromkeys((first, second))))
-        else:
-            # Direct fields are locked by the first grounded occurrence.  A
-            # later batch may add provenance, but it cannot silently remap or
-            # rename the same source entity.
-            merged.append(first)
-    return merged
+    return modes
+
+
+_PRESENTATION_EMPTY_FRAGMENT = re.compile(r"^[\s；;,，、|/\\:：.。·•↳\-–—]+$")
+
+
+def _presentation_aggregate_fragments(value: Any) -> list[str]:
+    """Return stable, meaningful aggregate fragments without separator noise."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for raw in re.split(r"[；;]+", text):
+        fragment = raw.strip(" \t\r\n；;,，、")
+        if not fragment or fragment in {"同上", "↳"}:
+            continue
+        if _PRESENTATION_EMPTY_FRAGMENT.fullmatch(fragment):
+            continue
+        identity = fragment.casefold()
+        if identity in seen:
+            continue
+        seen.add(identity)
+        fragments.append(fragment)
+    return fragments
+
+
+def _clean_presentation_cell(value: Any, *, aggregate: bool) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if aggregate:
+        return "；".join(_presentation_aggregate_fragments(text))
+    # Direct fields are not list-valued, but provider output can still contain
+    # duplicated delimiters at a batch boundary.  Collapse only that obvious
+    # transport noise without rewriting source semantics.
+    return re.sub(r"(?:[；;]\s*){2,}", "；", text).strip("；; ")
+
+
+def _merge_presentation_aggregate_values(first: Any, second: Any) -> str:
+    fragments: list[str] = []
+    seen: set[str] = set()
+    for value in (first, second):
+        for fragment in _presentation_aggregate_fragments(value):
+            identity = fragment.casefold()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            fragments.append(fragment)
+    return "；".join(fragments)
 
 
 def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict[str, Any]:
