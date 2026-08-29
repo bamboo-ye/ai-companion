@@ -439,6 +439,11 @@ def _normalize_presentation_arguments(
                     )
                     for index, value in enumerate(visible_cells)
                 ]
+                for index, field in enumerate(requested_fields):
+                    if field == "code" and index < len(visible_cells):
+                        visible_cells[index] = _canonical_presentation_code(
+                            visible_cells[index]
+                        )
                 locator = str(raw_row.get("source_locator") or "").strip()
                 if not locator and 0 <= source_index < len(cells):
                     locator = str(cells[source_index] or "").strip()
@@ -468,6 +473,13 @@ def _normalize_presentation_arguments(
                 task_contract.get("output_language") or ""
             ).casefold().startswith("zh")
             table_copy["columns"] = [label if chinese else field for field, label in requested]
+            if chinese:
+                presentation_title = str(normalized.get("title") or "").strip()
+                table_copy["title"] = (
+                    presentation_title
+                    if re.search(r"[\u3400-\u9fff]", presentation_title)
+                    else "结构化数据一览"
+                )[:60]
             table_copy["rows"] = normalized_rows
         elif isinstance(columns, list):
             aliases = {
@@ -542,6 +554,17 @@ def _presentation_column_field(value: Any) -> str:
         "来源": "source_locator",
     }
     return aliases.get(normalized, normalized)
+
+
+def _canonical_presentation_code(value: Any) -> str:
+    """Normalize transport whitespace inside common alphanumeric identifiers."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return re.sub(
+        r"\b([A-Za-z]{2,8})\s+(\d{3,6}[A-Za-z]?)\b",
+        r"\1\2",
+        text,
+    )
 
 
 _PRESENTATION_PAGE_MARKER = re.compile(r"\[\[(?P<page>PAGES?\s+\d+(?:-\d+)?)\]\]", re.I)

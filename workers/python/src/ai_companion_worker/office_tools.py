@@ -1139,10 +1139,11 @@ def _presentation_display_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any
             for column_index, values in enumerate(split_cells):
                 if fragment_index < len(values):
                     cells.append(values[fragment_index])
-                elif fragment_index == 0:
-                    cells.append(values[0])
                 else:
-                    cells.append("↳" if column_index == 0 else "")
+                    # Repeat the shorter identifying fields on every visual
+                    # continuation row.  A continuation can land on the next
+                    # slide, where arrows or blank cells lose all context.
+                    cells.append(values[0])
             display.append(
                 {
                     "cells": cells,
@@ -1326,6 +1327,20 @@ def _presentation_quality_report(
                     "code": "presentation_cell_delimiter_noise",
                     "message": "最终表格包含重复分隔符或纯标点碎片",
                     "affected_rows": delimiter_noise_rows[:20],
+                }
+            )
+        contextless_rows = [
+            index
+            for index, row in enumerate(display_rows, start=1)
+            if row.get("continuation") is True
+            and any(not str(value or "").strip() or str(value).strip() == "↳" for value in row["cells"])
+        ]
+        if contextless_rows:
+            violations.append(
+                {
+                    "code": "continuation_row_context_missing",
+                    "message": "跨行展示必须重复关键字段，不能使用空白或箭头代替上下文",
+                    "affected_rows": contextless_rows[:20],
                 }
             )
     visible_text = " ".join(

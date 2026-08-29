@@ -15,6 +15,7 @@ from reportlab.pdfgen import canvas
 from ai_companion_worker.office_tools import (
     ModelBackedOperationError,
     _openrouter_translate,
+    _presentation_display_rows,
     _translated_content,
     execute,
     main,
@@ -22,6 +23,25 @@ from ai_companion_worker.office_tools import (
 
 
 class OfficeToolsTest(unittest.TestCase):
+    def test_presentation_display_rows_repeat_context_on_continuations(self) -> None:
+        rows = _presentation_display_rows(
+            [
+                {
+                    "cells": [
+                        "PED1305",
+                        "Physical Fitness",
+                        "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(12)),
+                    ],
+                    "source_locator": "page:2",
+                    "entity_id": "course:PED1305",
+                }
+            ]
+        )
+        self.assertGreater(len(rows), 1)
+        self.assertTrue(all(row["cells"][0] == "PED1305" for row in rows))
+        self.assertTrue(all(row["cells"][1] == "Physical Fitness" for row in rows))
+        self.assertFalse(any("↳" in row["cells"] for row in rows))
+
     def test_translation_response_rejects_null_content(self) -> None:
         with self.assertRaisesRegex(ValueError, "translation_model_returned_empty_text"):
             _translated_content({"choices": [{"message": {"content": None}}]})

@@ -587,6 +587,7 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(len(first["table"]["rows"]), 1)
         self.assertGreater(len(first["table"]["rows"][0]["cells"][2]), 120)
+        self.assertEqual(first["table"]["title"], "体育课程表")
 
         merged = _merge_presentation_arguments(
             first,
@@ -617,6 +618,34 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("T14 周三 10:00-10:50", rows[0]["cells"][2])
         self.assertNotIn("；；", rows[0]["cells"][2])
         self.assertNotIn("同上", rows[0]["cells"][2])
+
+    def test_chinese_presentation_normalization_canonicalizes_code_spacing(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "plan": {"objective": "整理课程"},
+            "observations": [],
+        }
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "体育课程一览",
+                "table": {
+                    "title": "Regular PE Courses (extracted)",
+                    "columns": ["Course Code", "Course Name", "Schedule"],
+                    "rows": [
+                        {
+                            "cells": ["PED 1204", "Hip Hop", "周一 15:00-16:50"],
+                            "source_locator": "Page 1",
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        self.assertEqual(normalized["table"]["title"], "体育课程一览")
+        self.assertEqual(normalized["table"]["rows"][0]["cells"][0], "PED1204")
 
     def test_structured_batches_hard_bound_serialized_source_ir(self) -> None:
         columns = [
@@ -801,7 +830,8 @@ class AgentRuntimeTest(unittest.TestCase):
             state,  # type: ignore[arg-type]
         )
         table = normalized["table"]
-        self.assertEqual(set(table), {"columns", "rows"})
+        self.assertEqual(set(table), {"title", "columns", "rows"})
+        self.assertEqual(table["title"], "课程表")
         self.assertEqual(len(table["rows"]), 1)
         self.assertGreater(len(table["rows"][0]["cells"][2]), 120)
         self.assertEqual(table["rows"][0]["source_locator"], "Page 2")
