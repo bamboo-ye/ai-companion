@@ -25,6 +25,7 @@ from ai_companion_worker.email_quality import (
 from ai_companion_worker.response_quality import inspect_and_repair_response
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
+    clean_presentation_field_fragment,
     compile_task_contract,
     presentation_field_fragment_has_evidence,
     presentation_source_record_keys,
@@ -1583,6 +1584,8 @@ def _presentation_aggregate_fragments(value: Any, *, field: str = "") -> list[st
     seen: set[str] = set()
     for raw in re.split(r"[；;]+", text):
         fragment = raw.strip(" \t\r\n；;,，、")
+        if field:
+            fragment = clean_presentation_field_fragment(field, fragment)
         if not fragment or fragment in {"同上", "↳"}:
             continue
         if _PRESENTATION_REFERENCE_ONLY.fullmatch(fragment):
@@ -1601,6 +1604,8 @@ def _presentation_aggregate_fragments(value: Any, *, field: str = "") -> list[st
 
 def _clean_presentation_cell(value: Any, *, aggregate: bool, field: str = "") -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if field:
+        text = clean_presentation_field_fragment(field, text)
     if aggregate:
         return "；".join(_presentation_aggregate_fragments(text, field=field))
     # Direct fields are not list-valued, but provider output can still contain
