@@ -42,7 +42,8 @@ func (p PythonParser) Parse(ctx context.Context, mediaType string, data []byte) 
 	if err := decoder.Decode(&result); err != nil {
 		return ParseResult{}, fmt.Errorf("decode parser result: %w", err)
 	}
-	if result.ParserVersion == "" || len(result.Pages) == 0 || len(result.Chunks) == 0 {
+	if result.ParserVersion == "" || len(result.Pages) == 0 || len(result.Chunks) == 0 ||
+		stringValue(result.SourceIR["version"]) != SourceIRVersion {
 		return ParseResult{}, fmt.Errorf("parser returned incomplete result")
 	}
 	return result, nil

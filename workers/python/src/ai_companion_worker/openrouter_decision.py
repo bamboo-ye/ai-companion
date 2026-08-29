@@ -193,9 +193,7 @@ class OpenRouterConfig:
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(
-                os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")
-            ),
+            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "4096")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -295,8 +293,7 @@ class OpenRouterConfig:
             or self.composer_batch_max_tokens > self.composer_max_tokens
         ):
             raise ValueError(
-                "MODEL_COMPOSER_BATCH_MAX_TOKENS must be between 64 and "
-                "MODEL_COMPOSER_MAX_TOKENS"
+                "MODEL_COMPOSER_BATCH_MAX_TOKENS must be between 64 and MODEL_COMPOSER_MAX_TOKENS"
             )
         if self.repairer_max_tokens < 64 or self.repairer_max_tokens > 1024:
             raise ValueError("MODEL_REPAIRER_MAX_TOKENS must be between 64 and 1024")
@@ -320,9 +317,7 @@ class OpenRouterConfig:
             ("MODEL_FALLBACK_REASONING_EFFORT", self.fallback_reasoning_effort),
         ):
             if value not in valid_reasoning_efforts:
-                raise ValueError(
-                    f"{name} must be none, minimal, low, medium, high, xhigh or max"
-                )
+                raise ValueError(f"{name} must be none, minimal, low, medium, high, xhigh or max")
         if not self.config_version.strip():
             raise ValueError("MODEL_CONFIG_VERSION is required")
         if self.provider_sort not in ("price", "latency", "throughput"):
@@ -779,6 +774,7 @@ class OpenRouterDecisionPort:
         )
         email_validation = context.get("email_validation")
         artifact_validation = context.get("artifact_validation")
+        document_round = context.get("document_processing_round")
         if tool_name == "work_draft_email":
             system_prompt += (
                 "当前是邮件专用编排：用户明确指定的语言优先级最高。英文邮件的主题、"
@@ -814,7 +810,6 @@ class OpenRouterDecisionPort:
                 "‘详见原文’、‘多个时段’或示例记录代替真实数据。不得把 Harness 的轮次、"
                 "附件索引、Source IR、来源定位器或质量门术语写入标题、表头或可见单元格。"
             )
-            document_round = context.get("document_processing_round")
             if isinstance(document_round, Mapping):
                 encoded_round = json.dumps(
                     dict(document_round),
@@ -831,7 +826,7 @@ class OpenRouterDecisionPort:
                     "目标列声明 target_index、source_column_ids 和 direct/aggregate 模式。"
                     "每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须是锁定粒度"
                     "下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行实际使用的"
-                    "来源 row ID。你只处理 completed_observations 中当前轮的全部逻辑实体，"
+                    "来源 row ID。你只处理 completed_observations 中当前这一轮的全部逻辑实体，"
                     "不要总结整份文件，也不要声称未看到的轮次已完成。"
                     f"分轮信息：{encoded_round}。"
                 )
@@ -1634,9 +1629,7 @@ class OpenRouterDecisionPort:
         started = time.perf_counter_ns()
         reasoning = payload.get("reasoning")
         reasoning_effort = (
-            str(reasoning.get("effort") or "")
-            if isinstance(reasoning, Mapping)
-            else ""
+            str(reasoning.get("effort") or "") if isinstance(reasoning, Mapping) else ""
         )
         try:
             result = self._request(payload, timeout_seconds=timeout_seconds)

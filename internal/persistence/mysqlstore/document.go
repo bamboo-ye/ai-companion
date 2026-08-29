@@ -112,6 +112,33 @@ func (s *Store) ListDocumentChunks(
 	return chunks, rows.Err()
 }
 
+func (s *Store) GetDocumentSourceIR(
+	ctx context.Context,
+	userID string,
+	documentID string,
+) (map[string]any, error) {
+	var encoded []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.source_ir
+		FROM documents d
+		JOIN files f ON f.id=d.file_id
+		WHERE d.id=UUID_TO_BIN(?) AND d.user_id=UUID_TO_BIN(?)
+			AND d.ingest_status='ready' AND f.status='active' AND d.source_ir IS NOT NULL`,
+		documentID, userID,
+	).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, document.ErrParsedContentUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sourceIR map[string]any
+	if err = json.Unmarshal(encoded, &sourceIR); err != nil {
+		return nil, err
+	}
+	return sourceIR, nil
+}
+
 func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -347,7 +374,19 @@ func (s *Store) SaveParsedDocument(ctx context.Context, job document.IngestJob, 
 			return err
 		}
 	}
-	resultExec, err := tx.ExecContext(ctx, `UPDATE documents SET parser_version=?,page_count=?,chunk_count=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND ingest_status='processing'`, result.ParserVersion, len(result.Pages), len(result.Chunks), now, job.Document.ID)
+	var sourceIRJSON any
+	sourceIRVersion := ""
+	if result.SourceIR != nil {
+		encoded, marshalErr := json.Marshal(result.SourceIR)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		sourceIRJSON = string(encoded)
+		if version, ok := result.SourceIR["version"].(string); ok {
+			sourceIRVersion = strings.TrimSpace(version)
+		}
+	}
+	resultExec, err := tx.ExecContext(ctx, `UPDATE documents SET parser_version=?,page_count=?,chunk_count=?,source_ir_version=?,source_ir=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND ingest_status='processing'`, result.ParserVersion, len(result.Pages), len(result.Chunks), sourceIRVersion, sourceIRJSON, now, job.Document.ID)
 	if err != nil {
 		return err
 	}

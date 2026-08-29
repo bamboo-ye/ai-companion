@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.12.0"
+GRAPH_VERSION = "3.13.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-bounded-fallback-v1"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]

@@ -126,6 +126,17 @@ def validate_presentation_arguments(
     columns = table.get("columns")
     rows = table.get("rows")
     violations = _requested_field_violations(columns, requested_fields)
+    if (
+        task_contract.get("exhaustive") is True
+        and task_contract.get("source_required") is True
+        and (not source_ir or source_ir.get("structure_preserved") is not True)
+    ):
+        violations.append(
+            {
+                "code": "source_structure_unavailable",
+                "message": "完整结构化来源任务必须使用真实 Source IR，不能退回自由文本推测",
+            }
+        )
     if not isinstance(rows, list) or not rows:
         violations.append(
             {"code": "structured_rows_missing", "message": "结构化字段任务没有记录行"}
@@ -170,7 +181,7 @@ def validate_presentation_arguments(
         if time_column >= 0:
             vague_rows: list[int] = []
             vague_pattern = re.compile(
-                r"(?:详见|(?:\betc\.?\b)|\.{3}|…|\bvarious\b|\bmultiple\b|"
+                r"(?:详见|见(?:课程表|原表|原文)|(?:\betc\.?\b)|\.{3}|…|\bvarious\b|\bmultiple\b|"
                 r"times?\s+vary|不同时段|多(?:个|组|种)(?:时段|时间|组次))",
                 re.IGNORECASE,
             )
@@ -384,9 +395,7 @@ def _source_mapping_violations(
                 if not group_id:
                     continue
                 expected_entities.add(group_id)
-                entity_rows.setdefault(group_id, set()).update(
-                    rows_by_group.get(group_id, set())
-                )
+                entity_rows.setdefault(group_id, set()).update(rows_by_group.get(group_id, set()))
 
     output_rows = table.get("rows")
     observed_entities: set[str] = set()

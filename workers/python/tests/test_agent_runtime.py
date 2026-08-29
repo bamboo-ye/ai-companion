@@ -16,10 +16,12 @@ from ai_companion_worker.agent_runtime import (
     ToolOutcome,
     ToolPreparation,
     _document_source_coverage,
+    _deterministic_presentation_mapping,
     _latest_document_continuation,
     _merge_presentation_arguments,
     _normalize_presentation_arguments,
     _presentation_document_batches,
+    _presentation_structured_batches,
     _validate_checkpoint_identity,
     _validate_tool_arguments,
     build_graph,
@@ -503,10 +505,107 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("Page 1 overlap", merged["table"]["rows"][0]["source_locator"])
         self.assertIn("2 条来源记录", merged["brief"])
 
+    def test_harness_compiles_mapping_from_real_source_ids(self) -> None:
+        source_ir = {
+            "version": "document-source-ir-v1",
+            "structure_preserved": True,
+            "tables": [
+                {
+                    "id": "a1:table:courses",
+                    "columns": [
+                        {"id": "a1:c1", "label": "Course Code"},
+                        {"id": "a1:c2", "label": "Course Name"},
+                        {"id": "a1:c3", "label": "Meeting Date"},
+                        {"id": "a1:c4", "label": "Day / Time"},
+                    ],
+                    "rows": [{"id": "a1:r1"}, {"id": "a1:r2"}],
+                    "row_groups": [{"id": "a1:g1", "row_ids": ["a1:r1", "a1:r2"]}],
+                }
+            ],
+        }
+        mapping, violations = _deterministic_presentation_mapping(
+            source_ir,
+            {"requested_fields": ["code", "name", "time"]},
+        )
+        self.assertEqual(violations, [])
+        self.assertEqual(mapping["compiled_by"], "artifact-harness")
+        self.assertEqual(mapping["source_table_ids"], ["a1:table:courses"])
+        self.assertEqual(mapping["entity_level"], "row_group")
+        self.assertEqual(
+            mapping["field_mappings"],
+            [
+                {"target_index": 0, "source_column_ids": ["a1:c1"], "mode": "direct"},
+                {"target_index": 1, "source_column_ids": ["a1:c2"], "mode": "direct"},
+                {
+                    "target_index": 2,
+                    "source_column_ids": ["a1:c3", "a1:c4"],
+                    "mode": "aggregate",
+                },
+            ],
+        )
+
+    def test_structured_batches_hard_bound_serialized_source_ir(self) -> None:
+        columns = [
+            {"id": "c1", "label": "Course Code"},
+            {"id": "c2", "label": "Regular PE Courses"},
+            {"id": "c3", "label": "Time"},
+        ]
+        rows = [
+            {
+                "id": f"r{index}",
+                "group_id": "g1",
+                "page": 1,
+                "line": index,
+                "source_locator": f"page 1, line {index}",
+                "cells": [
+                    {"id": f"r{index}:c1", "column_id": "c1", "text": f"PED{index:04d}"},
+                    {"id": f"r{index}:c2", "column_id": "c2", "text": f"Course {index}"},
+                    {
+                        "id": f"r{index}:c3",
+                        "column_id": "c3",
+                        "text": "；".join(f"T{value:02d} 09:00-09:50" for value in range(40)),
+                    },
+                ],
+            }
+            for index in range(1, 31)
+        ]
+        state = {
+            "task_contract": {"requested_fields": ["code", "name", "time"]},
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1},
+                    "data": {
+                        "output": {
+                            "source_filename": "courses.pdf",
+                            "source_ir": {
+                                "version": "document-source-ir-v1",
+                                "structure_preserved": True,
+                                "tables": [
+                                    {
+                                        "id": "table:courses",
+                                        "columns": columns,
+                                        "rows": rows,
+                                        "row_groups": [
+                                            {"id": "g1", "row_ids": [row["id"] for row in rows]}
+                                        ],
+                                    }
+                                ],
+                            },
+                        }
+                    },
+                }
+            ],
+        }
+        batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
+        self.assertGreater(len(batches), 1)
+        self.assertTrue(all(len(str(batch["text"])) <= 18_000 for batch in batches))
+        for index in range(1, 31):
+            self.assertEqual(sum(f'"id":"a1:r{index}"' in batch["text"] for batch in batches), 1)
+
     def test_dense_extraction_round_is_split_into_lossless_composer_sub_batches(self) -> None:
         page_text = "\n".join(
-            f"PED{1100 + index} Course {index} 周三 10:00-11:50"
-            for index in range(1, 121)
+            f"PED{1100 + index} Course {index} 周三 10:00-11:50" for index in range(1, 121)
         )
         state: dict[str, Any] = {
             "observations": [
@@ -652,19 +751,21 @@ class AgentRuntimeTest(unittest.TestCase):
                     )
                     raise ComposerTimeout("composer fallback deadline exhausted")
                 text = context["observations"][0]["data"]["output"]["text"]
-                if "PED1102" in text and "[[CURRENT ROUND]]" in text:
-                    code, name, schedule, locator = (
+                if "PED1102" in text:
+                    code, name, schedule, locator, entity_id = (
                         "PED1102",
                         "Swimming",
                         "周四 14:00-14:50",
                         "Page 2",
+                        "a1:r2",
                     )
                 else:
-                    code, name, schedule, locator = (
+                    code, name, schedule, locator, entity_id = (
                         "PED1101",
                         "Canoeing",
                         "周三 10:00-11:50",
                         "Page 1",
+                        "a1:r1",
                     )
                 return {
                     "title": "体育课课程表",
@@ -678,6 +779,8 @@ class AgentRuntimeTest(unittest.TestCase):
                             {
                                 "cells": [code, name, schedule],
                                 "source_locator": locator,
+                                "entity_id": entity_id,
+                                "source_refs": [entity_id],
                             }
                         ],
                     },
@@ -716,6 +819,83 @@ class AgentRuntimeTest(unittest.TestCase):
                                 "has_more": False,
                                 "truncated": False,
                                 "coverage_ratio": 1.0,
+                                "source_ir": {
+                                    "version": "document-source-ir-v1",
+                                    "structure_preserved": True,
+                                    "tables": [
+                                        {
+                                            "id": "table:one",
+                                            "columns": [
+                                                {"id": "c1", "label": "Course Code"},
+                                                {"id": "c2", "label": "Course Name"},
+                                                {"id": "c3", "label": "Time"},
+                                            ],
+                                            "rows": [
+                                                {
+                                                    "id": "r1",
+                                                    "group_id": "g1",
+                                                    "page": 1,
+                                                    "line": 1,
+                                                    "source_locator": "Page 1",
+                                                    "cells": [
+                                                        {
+                                                            "id": "r1:c1",
+                                                            "column_id": "c1",
+                                                            "text": "PED1101",
+                                                        },
+                                                        {
+                                                            "id": "r1:c2",
+                                                            "column_id": "c2",
+                                                            "text": "Canoeing",
+                                                        },
+                                                        {
+                                                            "id": "r1:c3",
+                                                            "column_id": "c3",
+                                                            "text": "周三 10:00-11:50",
+                                                        },
+                                                    ],
+                                                }
+                                            ],
+                                            "row_groups": [{"id": "g1", "row_ids": ["r1"]}],
+                                        },
+                                        {
+                                            "id": "table:two",
+                                            "columns": [
+                                                {"id": "c1", "label": "Course Code"},
+                                                {"id": "c2", "label": "Course Name"},
+                                                {"id": "c3", "label": "Time"},
+                                            ],
+                                            "rows": [
+                                                {
+                                                    "id": "r2",
+                                                    "group_id": "g2",
+                                                    "page": 2,
+                                                    "line": 1,
+                                                    "source_locator": "Page 2",
+                                                    "cells": [
+                                                        {
+                                                            "id": "r2:c1",
+                                                            "column_id": "c1",
+                                                            "text": "PED1102",
+                                                        },
+                                                        {
+                                                            "id": "r2:c2",
+                                                            "column_id": "c2",
+                                                            "text": "Swimming",
+                                                        },
+                                                        {
+                                                            "id": "r2:c3",
+                                                            "column_id": "c3",
+                                                            "text": "周四 14:00-14:50",
+                                                        },
+                                                    ],
+                                                }
+                                            ],
+                                            "row_groups": [{"id": "g2", "row_ids": ["r2"]}],
+                                        },
+                                    ],
+                                    "blocks": [],
+                                },
                             }
                         },
                     )
@@ -801,6 +981,7 @@ class AgentRuntimeTest(unittest.TestCase):
                         "slide_count": {"type": "integer"},
                         "table": {"type": "object"},
                         "task_contract": {"type": "object"},
+                        "mapping_contract": {"type": "object"},
                         "source_coverage": {"type": "object"},
                     },
                     "additionalProperties": False,
@@ -809,7 +990,10 @@ class AgentRuntimeTest(unittest.TestCase):
         ]
         result = runtime.start(payload)
         self.assertEqual(result["outcome"], "completed")
-        self.assertEqual(decisions.composed_batches, ["a1:r1", "a1:r1", "a1:r2"])
+        self.assertEqual(
+            decisions.composed_batches,
+            ["a1:table:one:b1", "a1:table:one:b1", "a1:table:two:b2"],
+        )
         ppt_arguments = next(
             item["arguments"]
             for item in tools.prepared
@@ -818,6 +1002,10 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(
             [row["cells"][0] for row in ppt_arguments["table"]["rows"]],
             ["PED1101", "PED1102"],
+        )
+        self.assertEqual(
+            ppt_arguments["mapping_contract"]["compiled_by"],
+            "artifact-harness",
         )
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(result["document_processing"]["merged_record_count"], 2)
@@ -1205,10 +1393,7 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
         payload = agent_input("run-presentation-quality-rewrite", "work")
-        payload["user_message"] = (
-            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
-            "\n<!--ai-document:doc-1|courses.pdf-->"
-        )
+        payload["user_message"] = "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
         payload["context"]["tools"] = [
             {
                 "name": "work_generate_pptx",
