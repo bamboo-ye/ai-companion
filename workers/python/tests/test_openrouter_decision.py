@@ -778,6 +778,22 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             "structured_table_missing",
             port.requests[0]["messages"][0]["content"],
         )
+        self.assertIn(
+            "课程名称必须翻译",
+            port.requests[0]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "task_contract.output_language",
+            port.requests[0]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "不得使用‘节选’、‘摘要’、‘示例’、‘部分’",
+            port.requests[0]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "不得保留夹杂在中文名称中的拉丁字母单词",
+            port.requests[0]["messages"][0]["content"],
+        )
 
     def test_presentation_composer_processes_only_the_current_document_round(self) -> None:
         arguments = {

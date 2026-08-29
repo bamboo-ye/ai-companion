@@ -47,6 +47,37 @@ _PRESENTATION_TEMPORAL_EVIDENCE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_PRESENTATION_CJK = re.compile(r"[\u3400-\u9fff]")
+_PRESENTATION_LATIN_LETTER = re.compile(r"[A-Za-z]")
+_PRESENTATION_ENGLISH_WEEKDAY = re.compile(
+    r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
+    re.IGNORECASE,
+)
+_PRESENTATION_ZH_TIME_REPLACEMENTS = (
+    (re.compile(r"\bmonday\b|\bmon\b", re.IGNORECASE), "周一"),
+    (re.compile(r"\btuesday\b|\btue\b", re.IGNORECASE), "周二"),
+    (re.compile(r"\bwednesday\b|\bwed\b", re.IGNORECASE), "周三"),
+    (re.compile(r"\bthursday\b|\bthu\b", re.IGNORECASE), "周四"),
+    (re.compile(r"\bfriday\b|\bfri\b", re.IGNORECASE), "周五"),
+    (re.compile(r"\bsaturday\b|\bsat\b", re.IGNORECASE), "周六"),
+    (re.compile(r"\bsunday\b|\bsun\b", re.IGNORECASE), "周日"),
+    (re.compile(r"\bcourse\s+dates?\s*[:：]", re.IGNORECASE), "课程日期："),
+    (re.compile(r"\btime\s*[:：]", re.IGNORECASE), "时间："),
+    (re.compile(r"\bam\b", re.IGNORECASE), "上午"),
+    (re.compile(r"\bpm\b", re.IGNORECASE), "下午"),
+)
+_PRESENTATION_PARTIAL_SCOPE_MARKER = (
+    r"(?:节选|摘要|摘录|示例|样例|部分|excerpt|summary|sample|partial)"
+)
+_PRESENTATION_PARTIAL_SCOPE_PARENTHETICAL = re.compile(
+    rf"[（(][^（）()]{{0,24}}{_PRESENTATION_PARTIAL_SCOPE_MARKER}[^（）()]{{0,24}}[）)]",
+    re.IGNORECASE,
+)
+_PRESENTATION_PARTIAL_SCOPE_SUFFIX = re.compile(
+    rf"(?:[\s_\-—–·：:]*){_PRESENTATION_PARTIAL_SCOPE_MARKER}(?:版)?\s*$",
+    re.IGNORECASE,
+)
 
 
 def presentation_field_fragment_has_evidence(field: str, value: Any) -> bool:
@@ -76,6 +107,68 @@ def presentation_field_parenthetical_mismatches(field: str, value: Any) -> list[
         for match in _PRESENTATION_PARENTHETICAL.finditer(str(value or ""))
         if match.group(1).strip()
         and not presentation_field_fragment_has_evidence(field, match.group(1))
+    ]
+
+
+def localize_presentation_field_value(field: str, value: Any, language: Any) -> str:
+    """Apply deterministic locale normalization to non-semantic field tokens."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not str(language or "").casefold().startswith("zh") or field != "time":
+        return text
+    for pattern, replacement in _PRESENTATION_ZH_TIME_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+    return re.sub(r"\s*&\s*", "、", text).strip()
+
+
+def normalize_presentation_scope_label(value: Any, exhaustive: bool) -> str:
+    """Remove partial-result labels when the task contract requires all records."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or not exhaustive:
+        return text
+    extension = ".pptx" if text.casefold().endswith(".pptx") else ""
+    stem = text[: -len(extension)] if extension else text
+    stem = _PRESENTATION_PARTIAL_SCOPE_PARENTHETICAL.sub("", stem).strip()
+    stem = _PRESENTATION_PARTIAL_SCOPE_SUFFIX.sub("", stem).strip(" _-—–·：:")
+    if not stem:
+        stem = "完整演示文稿"
+    return f"{stem}{extension}"
+
+
+def presentation_exhaustive_scope_violations(
+    arguments: Any,
+    task_contract: Any,
+) -> list[dict[str, Any]]:
+    """Reject titles and filenames that mislabel exhaustive output as partial."""
+
+    if (
+        not isinstance(arguments, Mapping)
+        or not isinstance(task_contract, Mapping)
+        or task_contract.get("exhaustive") is not True
+    ):
+        return []
+    table = arguments.get("table")
+    labels = {
+        "title": arguments.get("title"),
+        "filename": arguments.get("filename"),
+        "table.title": table.get("title") if isinstance(table, Mapping) else None,
+    }
+    affected = [
+        field
+        for field, raw_value in labels.items()
+        if isinstance(raw_value, str)
+        and raw_value.strip()
+        and normalize_presentation_scope_label(raw_value, True) != raw_value.strip()
+    ]
+    if not affected:
+        return []
+    return [
+        {
+            "code": "presentation_exhaustive_scope_mislabeled",
+            "message": "完整性任务不得在标题或文件名中标注为节选、摘要、示例或部分结果",
+            "fields": affected,
+        }
     ]
 
 
@@ -150,6 +243,70 @@ def presentation_table_field_semantic_violations(
                     "affected_rows": affected_rows[:20],
                     "affected_count": len(affected_rows),
                     "examples": list(dict.fromkeys(examples))[:10],
+                }
+            )
+    return violations
+
+
+def presentation_table_language_violations(
+    columns: Any,
+    rows: Any,
+    task_contract: Any,
+) -> list[dict[str, Any]]:
+    """Reject audience-facing fields that do not match the requested language."""
+
+    if (
+        not isinstance(columns, list)
+        or not isinstance(rows, list)
+        or not isinstance(task_contract, Mapping)
+        or not str(task_contract.get("output_language") or "").casefold().startswith("zh")
+    ):
+        return []
+    violations: list[dict[str, Any]] = []
+    name_column = _requested_field_column(columns, "name")
+    if name_column >= 0:
+        untranslated = [
+            index
+            for index, row in enumerate(rows, start=1)
+            if isinstance(row, Mapping)
+            and isinstance(row.get("cells"), list)
+            and name_column < len(row["cells"])
+            and (
+                _PRESENTATION_CJK.search(str(row["cells"][name_column] or "")) is None
+                or _PRESENTATION_LATIN_LETTER.search(
+                    str(row["cells"][name_column] or "")
+                )
+                is not None
+            )
+        ]
+        if untranslated:
+            violations.append(
+                {
+                    "code": "presentation_name_language_mismatch",
+                    "field": "name",
+                    "message": "中文演示文稿中的名称字段必须完整翻译，不得残留拉丁字母名称",
+                    "affected_rows": untranslated[:20],
+                    "affected_count": len(untranslated),
+                }
+            )
+    time_column = _requested_field_column(columns, "time")
+    if time_column >= 0:
+        untranslated_weekdays = [
+            index
+            for index, row in enumerate(rows, start=1)
+            if isinstance(row, Mapping)
+            and isinstance(row.get("cells"), list)
+            and time_column < len(row["cells"])
+            and _PRESENTATION_ENGLISH_WEEKDAY.search(str(row["cells"][time_column] or ""))
+        ]
+        if untranslated_weekdays:
+            violations.append(
+                {
+                    "code": "presentation_time_language_mismatch",
+                    "field": "time",
+                    "message": "中文演示文稿中的星期标记必须本地化为中文",
+                    "affected_rows": untranslated_weekdays[:20],
+                    "affected_count": len(untranslated_weekdays),
                 }
             )
     return violations
@@ -237,6 +394,10 @@ def validate_presentation_arguments(
     requested_fields = _requested_fields(task_contract)
     if not requested_fields:
         return []
+    scope_violations = presentation_exhaustive_scope_violations(
+        arguments,
+        task_contract,
+    )
     table = arguments.get("table")
     if not isinstance(table, Mapping):
         return [
@@ -247,7 +408,10 @@ def validate_presentation_arguments(
         ]
     columns = table.get("columns")
     rows = table.get("rows")
-    violations = _requested_field_violations(columns, requested_fields)
+    violations = [
+        *scope_violations,
+        *_requested_field_violations(columns, requested_fields),
+    ]
     if (
         task_contract.get("exhaustive") is True
         and task_contract.get("source_required") is True
@@ -342,6 +506,13 @@ def validate_presentation_arguments(
                 columns,
                 rows,
                 requested_fields,
+            )
+        )
+        violations.extend(
+            presentation_table_language_violations(
+                columns,
+                rows,
+                task_contract,
             )
         )
     if isinstance(rows, list) and rows and task_contract.get("exhaustive") is True:
@@ -1076,6 +1247,29 @@ def _requested_field_violations(
 
 
 def _requested_field_column(columns: list[Any], field: str) -> int:
+    normalized_field = str(field or "").strip().casefold()
+    exact_fields = {
+        "课程代码": "code",
+        "课程编号": "code",
+        "coursecode": "code",
+        "code": "code",
+        "课程名称": "name",
+        "课程名": "name",
+        "coursename": "name",
+        "name": "name",
+        "上课时间": "time",
+        "日期时间": "time",
+        "datetime": "time",
+        "schedule": "time",
+        "time": "time",
+        "上课地点": "venue",
+        "location": "venue",
+        "venue": "venue",
+    }
+    for index, value in enumerate(columns):
+        header = re.sub(r"[\s_\-/:：]+", "", str(value or "").strip().casefold())
+        if exact_fields.get(header) == normalized_field:
+            return index
     aliases = _REQUESTED_FIELD_ALIASES.get(field, (field,))
     for index, value in enumerate(columns):
         header = str(value).casefold()

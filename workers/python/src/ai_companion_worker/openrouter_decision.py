@@ -811,6 +811,12 @@ class OpenRouterDecisionPort:
                 "table 对象上；row.cells 的数量必须与 table.columns 完全相同。不得用省略号、"
                 "‘详见原文’、‘多个时段’或示例记录代替真实数据。不得把 Harness 的轮次、"
                 "附件索引、Source IR、来源定位器或质量门术语写入标题、表头或可见单元格。"
+                "输出语言由 task_contract.output_language 锁定。若为 zh-CN，所有面向读者的"
+                "标题、表头、课程名称和时间说明必须使用简体中文；课程名称必须翻译，不能"
+                "只照抄英文名称，也不得保留夹杂在中文名称中的拉丁字母单词。课程代码等"
+                "标识符必须原样保留，翻译不得改变代码与日期时间。"
+                "当 task_contract.exhaustive 为 true 或用户要求‘所有/全部/完整’时，标题、"
+                "表格标题和文件名不得使用‘节选’、‘摘要’、‘示例’、‘部分’等缩减范围标记。"
             )
             if isinstance(document_round, Mapping):
                 encoded_round = json.dumps(

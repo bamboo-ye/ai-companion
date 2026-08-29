@@ -55,7 +55,7 @@ class TaskQualityTests(unittest.TestCase):
                     "columns": ["课程代码", "课程名称", "上课时间"],
                     "rows": [
                         {
-                            "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                            "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
                             "source_locator": "page:1",
                         }
                     ],
@@ -64,6 +64,71 @@ class TaskQualityTests(unittest.TestCase):
             contract,
         )
         self.assertEqual(violations, [])
+
+    def test_chinese_presentation_rejects_untranslated_names_and_weekdays(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "Canoeing", "Monday 10:00-11:50"],
+                            "source_locator": "page:1",
+                        },
+                        {
+                            "cells": ["PED1315", "Tabata训练（初级）", "周一 14:00-14:50"],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        language_codes = {item["code"] for item in violations}
+        self.assertIn("presentation_name_language_mismatch", language_codes)
+        self.assertIn("presentation_time_language_mismatch", language_codes)
+        name_violation = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_name_language_mismatch"
+        )
+        self.assertEqual(name_violation["affected_count"], 2)
+
+    def test_exhaustive_presentation_rejects_partial_scope_labels(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "title": "体育课程时间表（节选）",
+                "filename": "体育课程时间表_摘要.pptx",
+                "table": {
+                    "title": "课程安排示例",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                },
+            },
+            contract,
+        )
+        scope = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_exhaustive_scope_mislabeled"
+        )
+        self.assertEqual(
+            set(scope["fields"]),
+            {"title", "filename", "table.title"},
+        )
 
     def test_structured_presentation_rejects_duplicate_entities_and_delimiter_noise(
         self,

@@ -10,6 +10,8 @@ from zipfile import ZipFile
 
 from docx import Document
 from openpyxl import Workbook
+from pptx import Presentation
+from pptx.util import Inches
 from reportlab.pdfgen import canvas
 
 from ai_companion_worker.office_tools import (
@@ -23,24 +25,24 @@ from ai_companion_worker.office_tools import (
 
 
 class OfficeToolsTest(unittest.TestCase):
-    def test_presentation_display_rows_repeat_context_on_continuations(self) -> None:
+    def test_presentation_display_rows_keep_one_logical_record(self) -> None:
+        schedule = "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(12))
         rows = _presentation_display_rows(
             [
                 {
                     "cells": [
                         "PED1305",
-                        "Physical Fitness",
-                        "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(12)),
+                        "体能训练",
+                        schedule,
                     ],
                     "source_locator": "page:2",
                     "entity_id": "course:PED1305",
                 }
             ]
         )
-        self.assertGreater(len(rows), 1)
-        self.assertTrue(all(row["cells"][0] == "PED1305" for row in rows))
-        self.assertTrue(all(row["cells"][1] == "Physical Fitness" for row in rows))
-        self.assertFalse(any("↳" in row["cells"] for row in rows))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cells"], ["PED1305", "体能训练", schedule])
+        self.assertFalse(rows[0]["continuation"])
 
     def test_translation_response_rejects_null_content(self) -> None:
         with self.assertRaisesRegex(ValueError, "translation_model_returned_empty_text"):
@@ -427,6 +429,111 @@ class OfficeToolsTest(unittest.TestCase):
         )
         signatures = [json.dumps(item, sort_keys=True) for item in output["outline"][1:-1]]
         self.assertEqual(len(signatures), len(set(signatures)))
+        deck = Presentation(io.BytesIO(base64.b64decode(result["files"][0]["data_base64"])))
+        for slide in list(deck.slides)[1:-1]:
+            table_shape = next(shape for shape in slide.shapes if shape.has_table)
+            footer = next(
+                shape
+                for shape in slide.shapes
+                if shape.has_text_frame and shape.text.startswith("来源：")
+            )
+            self.assertGreaterEqual(
+                footer.top,
+                table_shape.top + table_shape.height + Inches(0.25),
+            )
+
+    def test_pptx_long_schedule_uses_one_unsplit_detail_cell(self) -> None:
+        schedule = "；".join(
+            f"2026年{1 + index // 28}月{1 + index % 28}日 周一 09:00-09:50"
+            for index in range(72)
+        )
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表",
+                "audience": "选课同学",
+                "style": "简洁清晰，表格为主",
+                "brief": "完整展示课程代码、名称和上课时间",
+                "slide_count": 3,
+                "table": {
+                    "title": "课程安排",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "体能训练", schedule],
+                            "source_locator": "page:2",
+                            "entity_id": "course:PED1305",
+                        }
+                    ],
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                    "output_language": "zh-CN",
+                },
+                "source_coverage": {
+                    "coverage_ratio": 1.0,
+                    "truncated": False,
+                },
+            },
+        )
+        output = result["output"]
+        self.assertTrue(output["quality_report"]["passed"], output["quality_report"])
+        self.assertEqual(output["quality_report"]["table_row_count"], 1)
+        self.assertEqual(output["quality_report"]["display_row_count"], 1)
+        self.assertEqual(output["slide_count"], 3)
+        self.assertTrue(output["outline"][1]["table"]["detail"])
+        self.assertEqual(output["outline"][1]["table"]["display_row_count"], 1)
+        deck = Presentation(io.BytesIO(base64.b64decode(result["files"][0]["data_base64"])))
+        detail_slide = deck.slides[1]
+        table_shape = next(shape for shape in detail_slide.shapes if shape.has_table)
+        value_paragraph = table_shape.table.cell(0, 0).text_frame.paragraphs[1]
+        self.assertLessEqual(value_paragraph.font.size.pt, 10)
+        footer = next(
+            shape
+            for shape in detail_slide.shapes
+            if shape.has_text_frame and shape.text.startswith("来源：")
+        )
+        self.assertGreaterEqual(
+            footer.top,
+            table_shape.top + table_shape.height + Inches(0.25),
+        )
+
+    def test_pptx_exhaustive_quality_rejects_partial_scope_labels(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表（节选）",
+                "filename": "体育课程表_摘要.pptx",
+                "audience": "选课同学",
+                "style": "简洁表格",
+                "brief": "完整课程",
+                "slide_count": 3,
+                "table": {
+                    "title": "课程安排示例",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                    "output_language": "zh-CN",
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertEqual(result["files"], [])
+        self.assertIn(
+            "presentation_exhaustive_scope_mislabeled",
+            {item["code"] for item in report["violations"]},
+        )
 
     def test_pptx_structured_contract_rejects_brief_only_content(self) -> None:
         result = execute(

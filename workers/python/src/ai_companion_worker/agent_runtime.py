@@ -27,6 +27,8 @@ from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     clean_presentation_field_fragment,
     compile_task_contract,
+    localize_presentation_field_value,
+    normalize_presentation_scope_label,
     presentation_field_fragment_has_evidence,
     presentation_source_record_keys,
     task_contract_artifact_satisfied,
@@ -393,6 +395,19 @@ def _normalize_presentation_arguments(
         )
 
     task_contract = state.get("task_contract", {})
+    exhaustive = (
+        isinstance(task_contract, Mapping)
+        and task_contract.get("exhaustive") is True
+    )
+    normalized["title"] = normalize_presentation_scope_label(
+        normalized.get("title"),
+        exhaustive,
+    )
+    if isinstance(normalized.get("filename"), str):
+        normalized["filename"] = normalize_presentation_scope_label(
+            normalized["filename"],
+            exhaustive,
+        )
     if table_copy is not None:
         # Only the trusted table fields may cross the quality gate. Models
         # commonly nest harness-owned fields such as source_coverage inside the
@@ -401,10 +416,21 @@ def _normalize_presentation_arguments(
         table_copy = {
             key: table_copy[key] for key in ("title", "columns", "rows") if key in table_copy
         }
+        if isinstance(table_copy.get("title"), str):
+            table_copy["title"] = normalize_presentation_scope_label(
+                table_copy["title"],
+                exhaustive,
+            )
         requested = _presentation_requested_columns(task_contract)
         columns = table_copy.get("columns")
         rows = table_copy.get("rows")
         if requested and isinstance(columns, list) and isinstance(rows, list):
+            output_language = (
+                str(task_contract.get("output_language") or "")
+                if isinstance(task_contract, Mapping)
+                else ""
+            )
+            chinese = output_language.casefold().startswith("zh")
             mapping_modes = _presentation_mapping_modes(normalized.get("mapping_contract"))
             column_fields = [_presentation_column_field(value) for value in columns]
             requested_fields = [field for field, _ in requested]
@@ -435,12 +461,16 @@ def _normalize_presentation_arguments(
                 else:
                     visible_cells = [str(value).strip() for value in cells]
                 visible_cells = [
-                    _clean_presentation_cell(
-                        value,
-                        aggregate=mapping_modes.get(index) == "aggregate",
-                        field=requested_fields[index]
-                        if index < len(requested_fields)
-                        else "",
+                    localize_presentation_field_value(
+                        requested_fields[index] if index < len(requested_fields) else "",
+                        _clean_presentation_cell(
+                            value,
+                            aggregate=mapping_modes.get(index) == "aggregate",
+                            field=requested_fields[index]
+                            if index < len(requested_fields)
+                            else "",
+                        ),
+                        output_language,
                     )
                     for index, value in enumerate(visible_cells)
                 ]
@@ -474,9 +504,6 @@ def _normalize_presentation_arguments(
                 # like independent source records and corrupts later
                 # aggregate-field merging.
                 normalized_rows.append(normalized_row)
-            chinese = isinstance(task_contract, Mapping) and str(
-                task_contract.get("output_language") or ""
-            ).casefold().startswith("zh")
             table_copy["columns"] = [label if chinese else field for field, label in requested]
             if chinese:
                 presentation_title = str(normalized.get("title") or "").strip()

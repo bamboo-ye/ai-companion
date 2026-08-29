@@ -638,7 +638,7 @@ class AgentRuntimeTest(unittest.TestCase):
                     "columns": ["Course Code", "Course Name", "Schedule"],
                     "rows": [
                         {
-                            "cells": ["PED 1204", "Hip Hop", "周一 15:00-16:50"],
+                            "cells": ["PED 1204", "嘻哈舞", "Monday 3:00 PM-4:50 PM"],
                             "source_locator": "Page 1",
                         }
                     ],
@@ -648,6 +648,41 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(normalized["table"]["title"], "体育课程一览")
         self.assertEqual(normalized["table"]["rows"][0]["cells"][0], "PED1204")
+        self.assertEqual(
+            normalized["table"]["rows"][0]["cells"][2],
+            "周一 3:00 下午-4:50 下午",
+        )
+
+    def test_exhaustive_presentation_normalization_removes_partial_scope_labels(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+                "exhaustive": True,
+            },
+            "plan": {"objective": "整理所有课程"},
+            "observations": [],
+        }
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "体育课程时间表（节选）",
+                "filename": "体育课程时间表_摘要.pptx",
+                "table": {
+                    "title": "课程安排示例",
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
+                            "source_locator": "page:1",
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        self.assertEqual(normalized["title"], "体育课程时间表")
+        self.assertEqual(normalized["filename"], "体育课程时间表.pptx")
+        self.assertEqual(normalized["table"]["title"], "体育课程时间表")
 
     def test_presentation_normalization_removes_off_field_metadata_generically(self) -> None:
         state: dict[str, Any] = {
@@ -990,7 +1025,7 @@ class AgentRuntimeTest(unittest.TestCase):
                 if "PED1102" in text:
                     code, name, schedule, locator, entity_id = (
                         "PED1102",
-                        "Swimming",
+                        "游泳",
                         "周四 14:00-14:50",
                         "Page 2",
                         "a1:r2",
@@ -998,7 +1033,7 @@ class AgentRuntimeTest(unittest.TestCase):
                 else:
                     code, name, schedule, locator, entity_id = (
                         "PED1101",
-                        "Canoeing",
+                        "独木舟",
                         "周三 10:00-11:50",
                         "Page 1",
                         "a1:r1",
@@ -1578,7 +1613,7 @@ class AgentRuntimeTest(unittest.TestCase):
                         "columns": ["课程代码", "课程名称", "上课时间"],
                         "rows": [
                             {
-                                "cells": ["PED1101", "Canoeing", "周三 10:00-11:50"],
+                                "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
                                 "source_locator": "page:1",
                             }
                         ],
