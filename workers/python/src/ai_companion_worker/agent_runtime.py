@@ -29,6 +29,7 @@ from ai_companion_worker.task_quality import (
     compile_task_contract,
     localize_presentation_field_value,
     normalize_presentation_scope_label,
+    normalize_presentation_title,
     presentation_field_fragment_has_evidence,
     presentation_source_record_keys,
     task_contract_artifact_satisfied,
@@ -399,9 +400,11 @@ def _normalize_presentation_arguments(
         isinstance(task_contract, Mapping)
         and task_contract.get("exhaustive") is True
     )
-    normalized["title"] = normalize_presentation_scope_label(
-        normalized.get("title"),
-        exhaustive,
+    normalized["title"] = normalize_presentation_title(
+        normalize_presentation_scope_label(
+            normalized.get("title"),
+            exhaustive,
+        )
     )
     if isinstance(normalized.get("filename"), str):
         normalized["filename"] = normalize_presentation_scope_label(
@@ -1909,7 +1912,7 @@ def _merge_presentation_aggregate_values(first: Any, second: Any) -> str:
 def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict[str, Any]:
     base = dict(arguments)
     table = base.get("table")
-    if not isinstance(table, Mapping) or not isinstance(report, Mapping):
+    if not isinstance(report, Mapping):
         return base
     affected: set[int] = set()
     mapping_failure = False
@@ -1920,6 +1923,17 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
             if not isinstance(violation, Mapping):
                 continue
             code = str(violation.get("code") or "")
+            if code.startswith(
+                (
+                    "presentation_audience_",
+                    "presentation_brief_",
+                    "presentation_heading_",
+                    "presentation_section_",
+                    "presentation_bullet_",
+                    "presentation_source_subject_",
+                )
+            ):
+                base.pop("brief", None)
             if code == "presentation_visible_language_mismatch":
                 full_table_rewrite = True
             if code.startswith(
@@ -1938,6 +1952,8 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
                     for value in rows
                     if isinstance(value, int) and not isinstance(value, bool) and value > 0
                 )
+    if not isinstance(table, Mapping):
+        return base
     table_copy = dict(table)
     rows = table_copy.get("rows")
     if mapping_failure:
@@ -4072,8 +4088,12 @@ def build_graph(
             return "wait_task"
         if state.get("outcome") == "tool_failed":
             return "classify_tool_failure"
-        if _latest_document_continuation(state):
+        if _latest_document_continuation(state) or _next_pending_document_extraction(
+            state
+        ):
             return "continue_document_extraction"
+        if _completed_presentation_continuation(state):
+            return "continue_action"
         # A generated file is evidence, not proof that the user objective was
         # satisfied. Artifact-producing skills pass through a deterministic
         # contract gate before the Harness may finalize the run.
@@ -4087,7 +4107,9 @@ def build_graph(
         return "assess_progress"
 
     def continue_document_extraction(state: AgentState) -> dict[str, Any]:
-        arguments = _latest_document_continuation(state)
+        arguments = _latest_document_continuation(state) or _next_pending_document_extraction(
+            state
+        )
         if not arguments:
             raise ValueError("document continuation requires a pending extraction round")
         if state.get("action_index", 0) >= state.get("action_budget", policy.max_actions):
@@ -5048,6 +5070,7 @@ def build_graph(
         {
             "wait_task": "wait_task",
             "continue_document_extraction": "continue_document_extraction",
+            "continue_action": "continue_action",
             "assess_progress": "assess_progress",
             "classify_tool_failure": "classify_tool_failure",
             "artifact_quality_gate": "artifact_quality_gate",
@@ -5257,6 +5280,54 @@ def _latest_document_continuation(state: AgentState) -> dict[str, int]:
         int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
     )
     return {"attachment_index": attachment_index, "round_start": next_round}
+
+
+def _next_pending_document_extraction(state: AgentState) -> dict[str, int]:
+    """Advance a multi-document task to the first unread attachment deterministically."""
+
+    task_contract = state.get("task_contract")
+    if not isinstance(task_contract, Mapping) or task_contract.get("source_required") is not True:
+        return {}
+    source_document_ids = task_contract.get("source_document_ids")
+    if not isinstance(source_document_ids, list) or len(source_document_ids) < 2:
+        return {}
+
+    completed_attachments: set[int] = set()
+    pending_round_attachments: set[int] = set()
+    observations = state.get("observations")
+    if not isinstance(observations, list):
+        observations = []
+    for observation in observations:
+        if (
+            not isinstance(observation, Mapping)
+            or observation.get("tool_name") != "work_extract_attached_document"
+            or observation.get("status") not in ("completed", "succeeded")
+        ):
+            continue
+        arguments = observation.get("arguments")
+        attachment_index = (
+            int(arguments.get("attachment_index") or 1)
+            if isinstance(arguments, Mapping)
+            else 1
+        )
+        if attachment_index < 1 or attachment_index > len(source_document_ids):
+            continue
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        if not isinstance(output, Mapping):
+            continue
+        if output.get("has_more") is True:
+            pending_round_attachments.add(attachment_index)
+            continue
+        completed_attachments.add(attachment_index)
+
+    if pending_round_attachments - completed_attachments:
+        return {}
+
+    for attachment_index in range(1, len(source_document_ids) + 1):
+        if attachment_index not in completed_attachments:
+            return {"attachment_index": attachment_index, "round_start": 1}
+    return {}
 
 
 def _completed_presentation_continuation(state: AgentState) -> str:

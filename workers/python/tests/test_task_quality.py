@@ -179,6 +179,83 @@ class TaskQualityTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_non_table_presentation_rejects_production_plan_as_audience_content(self) -> None:
+        contract = compile_task_contract(
+            "对比 CS5187.pdf、CS5297.pdf 和 CS5491.pdf，并用中文 PPT 展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "title": "三门课程对比",
+                "audience": "选课学生",
+                "style": "简洁",
+                "brief": (
+                    "本演示文稿基于三份课程文件。\n"
+                    "页面结构（共7页）\n"
+                    "1. 封面：三门课程对比\n"
+                    "2. CS5187 示例摘录，用于对比页"
+                ),
+                "slide_count": 7,
+            },
+            contract,
+        )
+
+        codes = {item["code"] for item in violations}
+        self.assertIn("presentation_audience_meta_content", codes)
+        self.assertIn("presentation_brief_structure_invalid", codes)
+        self.assertIn("presentation_source_subject_missing", codes)
+
+    def test_non_table_presentation_accepts_canonical_audience_sections(self) -> None:
+        contract = compile_task_contract(
+            "对比 CS5187.pdf、CS5297.pdf 和 CS5491.pdf，并用中文 PPT 展示",
+            "work",
+        )
+        brief = "\n".join(
+            (
+                "## CS5187：视觉计算",
+                "- 聚焦图像处理、几何分析与视觉应用。",
+                "- 适合希望建立计算机视觉基础的学生。",
+                "## CS5297：人工智能",
+                "- 覆盖人工智能方法、推理与应用。",
+                "- 适合希望系统理解智能算法的学生。",
+                "## CS5491：人工智能安全",
+                "- 关注模型风险、防护与可信部署。",
+                "- 适合重视安全治理和可靠性的学生。",
+                "## 横向比较",
+                "- 三门课分别侧重视觉、通用智能与安全。",
+                "- 选择时应结合知识基础和项目方向。",
+                "## 选择建议",
+                "- 视觉方向优先考虑 CS5187。",
+                "- 通用智能或安全方向可分别考虑 CS5297、CS5491。",
+            )
+        )
+        violations = validate_presentation_arguments(
+            {
+                "title": "三门课程对比",
+                "audience": "选课学生",
+                "style": "简洁",
+                "brief": brief,
+                "slide_count": 7,
+            },
+            contract,
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_non_table_presentation_rejects_oversized_headings_and_bullets(self) -> None:
+        contract = compile_task_contract("用中文 PPT 展示课程差异", "work")
+        violations = validate_presentation_arguments(
+            {
+                "brief": "## " + "过长标题" * 8 + "\n- " + "很长的要点" * 30 + "\n- 第二条要点",
+                "slide_count": 3,
+            },
+            contract,
+        )
+
+        codes = {item["code"] for item in violations}
+        self.assertIn("presentation_heading_too_long", codes)
+        self.assertIn("presentation_bullet_too_long", codes)
+
     def test_exhaustive_presentation_rejects_partial_scope_labels(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

@@ -78,6 +78,19 @@ _PRESENTATION_PARTIAL_SCOPE_SUFFIX = re.compile(
     rf"(?:[\s_\-—–·：:]*){_PRESENTATION_PARTIAL_SCOPE_MARKER}(?:版)?\s*$",
     re.IGNORECASE,
 )
+_PRESENTATION_BRIEF_HEADING = re.compile(r"^##\s+(.+?)\s*$")
+_PRESENTATION_BRIEF_BULLET = re.compile(r"^-\s+(.+?)\s*$")
+_PRESENTATION_AUDIENCE_META = re.compile(
+    r"(?:本演示文稿|页面结构|共\s*\d+\s*页|封面\s*[：:]|用于各页|用于(?:对比|展示)页|"
+    r"示例摘录|关键事实摘录与翻译|来源覆盖(?:率|与声明)?|结构化抽取|未被截断|"
+    r"引用\s*[（(].*?PPT|备注\s*[：:]|如需调整页数|请说明偏好|请告知|"
+    r"source\s*ir|source_locator|harness|attachment\s*index|document\s*round)",
+    re.IGNORECASE,
+)
+_PRESENTATION_SOURCE_SUBJECT = re.compile(
+    r"\b([A-Za-z]{2,8})[\s_-]?(\d{2,8}[A-Za-z]?)\.pdf\b",
+    re.IGNORECASE,
+)
 
 
 def presentation_field_fragment_has_evidence(field: str, value: Any) -> bool:
@@ -134,6 +147,14 @@ def normalize_presentation_scope_label(value: Any, exhaustive: bool) -> str:
     if not stem:
         stem = "完整演示文稿"
     return f"{stem}{extension}"
+
+
+def normalize_presentation_title(value: Any) -> str:
+    """Keep a visible deck title separate from its output filename."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"\.pptx\s*$", "", text, flags=re.IGNORECASE).strip(" .-_—–")
+    return text or "演示文稿"
 
 
 def presentation_exhaustive_scope_violations(
@@ -364,6 +385,11 @@ def presentation_visible_language_violations(
         for field, value in headings.items()
         if str(value or "").strip() and untranslated(value, heading=True)
     ]
+    if not isinstance(table, Mapping):
+        for index, line in enumerate(str(arguments.get("brief") or "").splitlines(), start=1):
+            visible_line = re.sub(r"^(?:##|-)[ \t]+", "", line).strip()
+            if visible_line and untranslated(visible_line):
+                affected_fields.append(f"brief.lines[{index}]")
     affected_cells: list[dict[str, int]] = []
     if isinstance(table, Mapping) and isinstance(table.get("rows"), list):
         for row_index, row in enumerate(table["rows"], start=1):
@@ -388,6 +414,134 @@ def presentation_visible_language_violations(
             "affected_count": len(affected_fields) + len(affected_cells),
         }
     ]
+
+
+def presentation_audience_content_violations(
+    arguments: Any,
+    task_contract: Any,
+) -> list[dict[str, Any]]:
+    """Validate the final audience-facing contract for non-table decks.
+
+    A free-form production plan is too ambiguous for deterministic rendering:
+    sentence splitting can turn page numbers, source notes, or continuations into
+    slide titles.  Non-table decks therefore use a small Markdown interchange
+    format that keeps authoring intent separate from rendering mechanics.
+    """
+
+    if (
+        not isinstance(arguments, Mapping)
+        or not isinstance(task_contract, Mapping)
+        or not task_contract
+        or "pptx" not in task_contract.get("artifact_types", [])
+        or isinstance(arguments.get("table"), Mapping)
+    ):
+        return []
+    brief = str(arguments.get("brief") or "").strip()
+    violations: list[dict[str, Any]] = []
+    if _PRESENTATION_AUDIENCE_META.search(brief):
+        violations.append(
+            {
+                "code": "presentation_audience_meta_content",
+                "message": "演示正文只能包含面向受众的事实和结论，不得包含制作计划、覆盖率或内部流程说明",
+            }
+        )
+
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    invalid_lines: list[int] = []
+    for index, raw_line in enumerate(brief.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading = _PRESENTATION_BRIEF_HEADING.fullmatch(line)
+        if heading:
+            current = {"heading": heading.group(1).strip(), "bullets": [], "line": index}
+            sections.append(current)
+            continue
+        bullet = _PRESENTATION_BRIEF_BULLET.fullmatch(line)
+        if bullet and current is not None:
+            current["bullets"].append((index, bullet.group(1).strip()))
+            continue
+        invalid_lines.append(index)
+
+    requested_slide_count = arguments.get("slide_count")
+    expected_sections = (
+        requested_slide_count - 2
+        if isinstance(requested_slide_count, int)
+        and not isinstance(requested_slide_count, bool)
+        and requested_slide_count >= 3
+        else None
+    )
+    if (
+        not sections
+        or invalid_lines
+        or (expected_sections is not None and len(sections) != expected_sections)
+    ):
+        violations.append(
+            {
+                "code": "presentation_brief_structure_invalid",
+                "message": "非表格演示的 brief 必须只由“## 页面标题”和其后的“- 要点”组成，且章节数等于 slide_count 减 2",
+                "invalid_lines": invalid_lines[:20],
+                "section_count": len(sections),
+                "expected_section_count": expected_sections,
+            }
+        )
+
+    long_headings = [
+        section["line"] for section in sections if len(str(section["heading"])) > 28
+    ]
+    if long_headings:
+        violations.append(
+            {
+                "code": "presentation_heading_too_long",
+                "message": "内容页标题不得超过 28 个字符",
+                "affected_lines": long_headings[:20],
+            }
+        )
+    missing_bullets = [
+        section["line"] for section in sections if len(section["bullets"]) < 2
+    ]
+    if missing_bullets:
+        violations.append(
+            {
+                "code": "presentation_section_bullets_missing",
+                "message": "每个内容章节至少需要 2 条面向受众的事实或结论",
+                "affected_lines": missing_bullets[:20],
+            }
+        )
+    long_bullets = [
+        line
+        for section in sections
+        for line, value in section["bullets"]
+        if len(value) > 100
+    ]
+    if long_bullets:
+        violations.append(
+            {
+                "code": "presentation_bullet_too_long",
+                "message": "单条要点不得超过 100 个字符",
+                "affected_lines": long_bullets[:20],
+            }
+        )
+
+    objective = str(task_contract.get("objective") or "") if isinstance(task_contract, Mapping) else ""
+    expected_subjects = list(
+        dict.fromkeys(
+            f"{letters.upper()}{digits.upper()}"
+            for letters, digits in _PRESENTATION_SOURCE_SUBJECT.findall(objective)
+        )
+    )
+    canonical_brief = re.sub(r"[\s_-]+", "", brief).upper()
+    missing_subjects = [subject for subject in expected_subjects if subject not in canonical_brief]
+    if missing_subjects:
+        violations.append(
+            {
+                "code": "presentation_source_subject_missing",
+                "message": "多来源对比演示必须在读者可见正文中覆盖每个可识别的来源主题",
+                "missing_subjects": missing_subjects,
+            }
+        )
+    return violations
 
 
 def compile_task_contract(
@@ -472,8 +626,9 @@ def validate_presentation_arguments(
     requested_fields = _requested_fields(task_contract)
     scope_violations = presentation_exhaustive_scope_violations(arguments, task_contract)
     language_violations = presentation_visible_language_violations(arguments, task_contract)
+    audience_violations = presentation_audience_content_violations(arguments, task_contract)
     if not requested_fields:
-        return [*scope_violations, *language_violations]
+        return [*scope_violations, *language_violations, *audience_violations]
     table = arguments.get("table")
     if not isinstance(table, Mapping):
         return [

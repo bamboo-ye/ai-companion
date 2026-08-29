@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.31.0"
+GRAPH_VERSION = "3.35.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -259,8 +259,9 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     ),
     "continue_document_extraction": NodeContract(
         responsibility=(
-            "Continue an oversized attachment at the exact trusted next_round "
-            "without spending router or assessor calls between extraction windows."
+            "Continue an oversized attachment at the exact trusted next_round or "
+            "advance to the next unread attachment without spending router or assessor "
+            "calls between extraction windows."
         ),
         kind="deterministic",
         recovery="checkpoint_replay",
