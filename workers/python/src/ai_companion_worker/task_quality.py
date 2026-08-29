@@ -32,6 +32,93 @@ _REQUESTED_FIELD_ALIASES = {
     "venue": ("地点", "教室", "场地", "venue", "location"),
 }
 
+_PRESENTATION_FIELD_FRAGMENT_SPLIT = re.compile(r"[；;]+")
+_PRESENTATION_TEMPORAL_EVIDENCE = re.compile(
+    r"(?:"
+    r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|"
+    r"(?:星期|周)[一二三四五六日天]|(?:上午|下午|中午|晚上|晚间)|"
+    r"\b(?:am|pm)\b|\b(?:t|ta)\s*\d{1,3}\b|"
+    r"\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}\s*/\s*\d{1,2}\b|"
+    r"\b(?:[01]?\d|2[0-3])[:：][0-5]\d\b|"
+    r"\b(?:[01]\d|2[0-3])[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3])[0-5]\d\b|"
+    r"(?:待定|待公布|另行通知|视分节而定|\btbc\b|\btbd\b)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def presentation_field_fragment_has_evidence(field: str, value: Any) -> bool:
+    """Return whether a visible fragment matches its requested field semantics.
+
+    Evidence rules are keyed by the task-contract field rather than by a
+    particular document. New structured fields can extend the validator here
+    without changing the Composer prompt or renderer.
+    """
+
+    normalized_field = str(field or "").strip().casefold()
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return False
+    if normalized_field == "time":
+        return _PRESENTATION_TEMPORAL_EVIDENCE.search(text) is not None
+    return True
+
+
+def presentation_field_semantic_mismatches(field: str, value: Any) -> list[str]:
+    """Return list fragments that do not carry evidence for the target field."""
+
+    fragments = [
+        fragment.strip(" \t\r\n；;,，、")
+        for fragment in _PRESENTATION_FIELD_FRAGMENT_SPLIT.split(str(value or ""))
+    ]
+    return [
+        fragment
+        for fragment in fragments
+        if fragment and not presentation_field_fragment_has_evidence(field, fragment)
+    ]
+
+
+def presentation_table_field_semantic_violations(
+    columns: Any,
+    rows: Any,
+    requested_fields: Any,
+) -> list[dict[str, Any]]:
+    """Validate visible table values against task-contract field semantics."""
+
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return []
+    fields = requested_fields if isinstance(requested_fields, list) else []
+    violations: list[dict[str, Any]] = []
+    for raw_field in fields:
+        field = str(raw_field or "").strip().casefold()
+        column = _requested_field_column(columns, field)
+        if column < 0:
+            continue
+        affected_rows: list[int] = []
+        examples: list[str] = []
+        for index, row in enumerate(rows, start=1):
+            cells = row.get("cells") if isinstance(row, Mapping) else None
+            if not isinstance(cells, list) or column >= len(cells):
+                continue
+            mismatches = presentation_field_semantic_mismatches(field, cells[column])
+            if not mismatches:
+                continue
+            affected_rows.append(index)
+            examples.extend(mismatches)
+        if affected_rows:
+            violations.append(
+                {
+                    "code": "presentation_field_semantic_mismatch",
+                    "field": field,
+                    "message": "结构化字段包含不属于该字段语义的说明或元数据",
+                    "affected_rows": affected_rows[:20],
+                    "affected_count": len(affected_rows),
+                    "examples": list(dict.fromkeys(examples))[:10],
+                }
+            )
+    return violations
+
 
 def compile_task_contract(
     message: str,
@@ -215,6 +302,13 @@ def validate_presentation_arguments(
                     "affected_count": len(empty_cell_rows),
                 }
             )
+        violations.extend(
+            presentation_table_field_semantic_violations(
+                columns,
+                rows,
+                requested_fields,
+            )
+        )
     if isinstance(rows, list) and rows and task_contract.get("exhaustive") is True:
         missing_locators = sum(
             1

@@ -545,6 +545,42 @@ class OfficeToolsTest(unittest.TestCase):
             {item["code"] for item in report["violations"]},
         )
 
+    def test_pptx_quality_rejects_off_field_metadata_in_time_column(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "体育课程表",
+                "audience": "学生",
+                "style": "表格",
+                "brief": "所有课程",
+                "slide_count": 4,
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "PED1402",
+                                "Golf",
+                                "周三 09:30-11:20；(部分节次标注有容量/场地信息)",
+                            ],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                },
+                "task_contract": {
+                    "exhaustive": True,
+                    "requested_fields": ["code", "name", "time"],
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "presentation_field_semantic_mismatch",
+            {item["code"] for item in report["violations"]},
+        )
+
     def test_pptx_explicit_filename_still_rejects_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid_output_filename"):
             execute(

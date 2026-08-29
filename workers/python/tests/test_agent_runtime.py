@@ -649,6 +649,48 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(normalized["table"]["title"], "体育课程一览")
         self.assertEqual(normalized["table"]["rows"][0]["cells"][0], "PED1204")
 
+    def test_presentation_normalization_removes_off_field_metadata_generically(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "plan": {"objective": "整理课程"},
+            "observations": [],
+        }
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "体育课程一览",
+                "mapping_contract": {
+                    "field_mappings": [
+                        {"target_index": 0, "mode": "direct"},
+                        {"target_index": 1, "mode": "direct"},
+                        {"target_index": 2, "mode": "aggregate"},
+                    ]
+                },
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "PED 1402",
+                                "Golf",
+                                "周三 09:30-11:20；(部分节次标注有容量/场地信息)；"
+                                "周四 14:30-16:20（视分节而定）",
+                            ],
+                            "source_locator": "Page 2",
+                        }
+                    ],
+                },
+            },
+            state,  # type: ignore[arg-type]
+        )
+        time_value = normalized["table"]["rows"][0]["cells"][2]
+        self.assertEqual(normalized["table"]["rows"][0]["cells"][0], "PED1402")
+        self.assertNotIn("容量/场地信息", time_value)
+        self.assertIn("周三 09:30-11:20", time_value)
+        self.assertIn("周四 14:30-16:20（视分节而定）", time_value)
+
     def test_structured_batches_hard_bound_serialized_source_ir(self) -> None:
         columns = [
             {"id": "c1", "label": "Course Code"},
