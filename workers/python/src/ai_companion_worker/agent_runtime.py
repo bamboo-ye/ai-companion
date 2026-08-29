@@ -1125,7 +1125,6 @@ def _deterministic_presentation_mapping(
             "source_table_ids": table_ids,
             "entity_level": entity_level,
             "field_mappings": field_mappings,
-            "compiled_by": "artifact-harness",
         },
         violations,
     )
