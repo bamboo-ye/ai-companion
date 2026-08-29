@@ -44,6 +44,41 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(rows[0]["cells"], ["PED1305", "体能训练", schedule])
         self.assertFalse(rows[0]["continuation"])
 
+    def test_pptx_quality_rejects_english_visible_content_for_chinese_deck(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "Important Dates",
+                "audience": "新生",
+                "style": "简洁表格",
+                "brief": "展示重要日期",
+                "slide_count": 3,
+                "table": {
+                    "title": "Semester A 2026/27",
+                    "columns": ["Month", "Event"],
+                    "rows": [
+                        {
+                            "cells": ["July", "Release of Class Schedule"],
+                            "source_locator": "Page 4",
+                        }
+                    ],
+                },
+                "task_contract": {
+                    "requested_fields": [],
+                    "output_language": "zh-CN",
+                },
+                "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+            },
+        )
+
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertEqual(result["files"], [])
+        self.assertIn(
+            "presentation_visible_language_mismatch",
+            {item["code"] for item in report["violations"]},
+        )
+
     def test_translation_response_rejects_null_content(self) -> None:
         with self.assertRaisesRegex(ValueError, "translation_model_returned_empty_text"):
             _translated_content({"choices": [{"message": {"content": None}}]})
@@ -417,6 +452,10 @@ class OfficeToolsTest(unittest.TestCase):
         output = result["output"]
         self.assertTrue(output["quality_report"]["passed"], output["quality_report"])
         self.assertEqual(output["quality_report"]["table_row_count"], 12)
+        self.assertEqual(
+            output["outline"][-1]["bullets"][-1],
+            "详细信息见前页表格，来源说明见各页页脚",
+        )
         self.assertEqual(
             list(
                 dict.fromkeys(

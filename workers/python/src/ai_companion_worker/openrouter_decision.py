@@ -812,8 +812,10 @@ class OpenRouterDecisionPort:
                 "‘详见原文’、‘多个时段’或示例记录代替真实数据。不得把 Harness 的轮次、"
                 "附件索引、Source IR、来源定位器或质量门术语写入标题、表头或可见单元格。"
                 "输出语言由 task_contract.output_language 锁定。若为 zh-CN，所有面向读者的"
-                "标题、表头、课程名称和时间说明必须使用简体中文；课程名称必须翻译，不能"
-                "只照抄英文名称，也不得保留夹杂在中文名称中的拉丁字母单词。课程代码等"
+                "标题、表头、正文、事件说明、名称和时间说明必须使用简体中文；英文来源"
+                "中的普通词句必须翻译，不能只照抄英文，也不得以英文摘要代替中文内容。"
+                "课程名称必须翻译，不能只照抄英文名称，也不得保留夹杂在中文名称中的"
+                "拉丁字母单词。课程代码等"
                 "标识符必须原样保留，翻译不得改变代码与日期时间。"
                 "当 task_contract.exhaustive 为 true 或用户要求‘所有/全部/完整’时，标题、"
                 "表格标题和文件名不得使用‘节选’、‘摘要’、‘示例’、‘部分’等缩减范围标记。"
@@ -824,20 +826,44 @@ class OpenRouterDecisionPort:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
-                system_prompt += (
-                    "当前来源过大，Harness 正按逻辑行组分轮处理。若观察中包含 STRUCTURED "
-                    "SOURCE IR，必须按 table/row_group/row/cell 关系读取，不得把子行标识重新"
-                    "解释成父实体字段。第一轮必须生成 mapping_contract：version 固定为"
-                    " target-mapping-v1，source_table_ids 必须覆盖 source_structure_summary"
-                    "列出的全部相关逻辑表，entity_level"
-                    "根据用户要求的目标记录粒度选择 row_group 或 row，field_mappings 为每个"
-                    "目标列声明 target_index、source_column_ids 和 direct/aggregate 模式。"
-                    "每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须是锁定粒度"
-                    "下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行实际使用的"
-                    "来源 row ID。你只处理 completed_observations 中当前这一轮的全部逻辑实体，"
-                    "不要总结整份文件，也不要声称未看到的轮次已完成。"
-                    f"分轮信息：{encoded_round}。"
+                focused_round = document_round.get("focused") is True
+                structured_round = (
+                    document_round.get("structured") is not False and not focused_round
                 )
+                if focused_round:
+                    system_prompt += (
+                        "Harness 已根据用户明确指定的主题，从大文件中选择了相关证据页或上下文"
+                        "窗口。只读取 completed_observations 中的这些可信片段，完整提取与"
+                        "focus_phrases 有关的全部事实、日期、事件和必要说明；不得把多条事实"
+                        "概括成摘要，也不得补写片段中不存在的内容。每条事实必须保留当前观察"
+                        "提供的来源页或 source_locator。若输出语言为中文，事件、说明、标题和"
+                        "表头必须翻译为简体中文，日期、数字和专有缩写保持准确。"
+                        "不得在中文事件后附带英文原句或英文括注；source_locator 只能写入"
+                        "row.source_locator，不得新增可见的来源列。标题不得包含源文件名或"
+                        "‘摘自文件名’字样，来源只通过隐藏定位字段与页脚呈现。"
+                        f"聚焦分轮信息：{encoded_round}。"
+                    )
+                elif structured_round:
+                    system_prompt += (
+                        "当前来源过大，Harness 正按逻辑行组分轮处理。若观察中包含 STRUCTURED "
+                        "SOURCE IR，必须按 table/row_group/row/cell 关系读取，不得把子行标识重新"
+                        "解释成父实体字段。第一轮必须生成 mapping_contract：version 固定为"
+                        " target-mapping-v1，source_table_ids 必须覆盖 source_structure_summary"
+                        "列出的全部相关逻辑表，entity_level"
+                        "根据用户要求的目标记录粒度选择 row_group 或 row，field_mappings 为每个"
+                        "目标列声明 target_index、source_column_ids 和 direct/aggregate 模式。"
+                        "每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须是锁定粒度"
+                        "下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行实际使用的"
+                        "来源 row ID。你只处理 completed_observations 中当前这一轮的全部逻辑实体，"
+                        "不要总结整份文件，也不要声称未看到的轮次已完成。"
+                        f"分轮信息：{encoded_round}。"
+                    )
+                else:
+                    system_prompt += (
+                        "当前来源按文本分轮处理。完整提取当前 completed_observations 中的全部"
+                        "相关记录，不要总结整份文件，也不要声称未看到的轮次已完成。"
+                        f"分轮信息：{encoded_round}。"
+                    )
                 system_prompt += (
                     "本轮工具 schema 是 Harness 提供的紧凑中间格式：只返回 title、audience、"
                     "style、可选 filename 与当前轮次 table；不要返回 brief、slide_count、"
@@ -845,7 +871,7 @@ class OpenRouterDecisionPort:
                     "完成后确定性合并记录、注入锁定映射并补齐最终 PPT 参数。"
                 )
                 locked_mapping = context.get("locked_mapping_contract")
-                if isinstance(locked_mapping, Mapping) and locked_mapping:
+                if structured_round and isinstance(locked_mapping, Mapping) and locked_mapping:
                     encoded_mapping = json.dumps(
                         dict(locked_mapping),
                         ensure_ascii=False,

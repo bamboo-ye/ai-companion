@@ -24,6 +24,9 @@ from ai_companion_worker.agent_runtime import (
     _merge_presentation_arguments,
     _normalize_presentation_arguments,
     _presentation_document_batches,
+    _presentation_focus_phrases,
+    _presentation_focused_document_batches,
+    _presentation_repair_base,
     _presentation_structured_batches,
     _validate_checkpoint_identity,
     _validate_tool_arguments,
@@ -866,6 +869,126 @@ class AgentRuntimeTest(unittest.TestCase):
             code = f"PED{1100 + index}"
             self.assertEqual(sum(code in item["text"] for item in batches), 1)
         self.assertIn("[[PREVIOUS ROUND OVERLAP", batches[1]["processing_text"])
+
+    def test_focused_presentation_selects_only_explicit_topic_evidence(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {
+                "objective": (
+                    "帮我提取文件中的Important Dates信息，并为我做一个中文ppt展示"
+                    "\n<!--ai-document:doc-1|information.pdf-->"
+                ),
+                "exhaustive": False,
+                "requested_fields": [],
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {
+                        "output": {
+                            "source_filename": "information.pdf",
+                            "round_start": 1,
+                            "text": (
+                                "[[PAGE 1]]\nOnline Pre-enrolment instructions and visa notes.\n"
+                                "[[PAGE 3]]\n25. Important Dates are listed on the next page.\n"
+                                "[[PAGE 4]]\nImportant Dates for Semester A 2026/27\n"
+                                "July 28 Release of Class Schedule\n"
+                                "August 31 Semester begins and first tuition due\n"
+                                "December 7-19 Examination period\n"
+                                "[[PAGE 5]]\nCampus facilities and student services."
+                            ),
+                        }
+                    },
+                }
+            ],
+        }
+
+        self.assertEqual(_presentation_focus_phrases(state["task_contract"]), ["Important Dates"])
+        batches = _presentation_focused_document_batches(state)  # type: ignore[arg-type]
+        combined = "\n".join(str(batch["text"]) for batch in batches)
+
+        self.assertTrue(batches)
+        self.assertTrue(all(batch["focused"] is True for batch in batches))
+        self.assertTrue(all(len(str(batch["text"])) <= 9_000 for batch in batches))
+        self.assertIn("[[PAGE 4]]", combined)
+        self.assertIn("Examination period", combined)
+        self.assertNotIn("listed on the next page", combined)
+        self.assertNotIn("Online Pre-enrolment", combined)
+        self.assertNotIn("Campus facilities", combined)
+
+    def test_focused_heading_page_is_compacted_without_losing_its_tail(self) -> None:
+        events = "\n".join(
+            f"2026-08-{1 + index % 28:02d} Event number {index}"
+            for index in range(180)
+        )
+        state: dict[str, Any] = {
+            "task_contract": {"objective": "提取文件中的Important Dates信息"},
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "data": {
+                        "output": {
+                            "text": (
+                                "[[PAGE 3]]\nImportant Dates are on the following page.\n"
+                                "[[PAGE 4]]\nImportant Dates for Semester A\n"
+                                f"{events}"
+                            )
+                        }
+                    },
+                }
+            ],
+        }
+
+        batches = _presentation_focused_document_batches(state)  # type: ignore[arg-type]
+        combined = "\n".join(str(batch["text"]) for batch in batches)
+
+        self.assertIn("Event number 179", combined)
+        self.assertNotIn("following page", combined)
+        self.assertLess(len(combined), len(events) + 200)
+
+    def test_generic_presentation_normalization_hides_source_locator_column(self) -> None:
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "重要日期",
+                "table": {
+                    "title": "学期A重要日期（摘自 InformationSheet）",
+                    "columns": ["日期", "事项", "来源定位器"],
+                    "rows": [
+                        {
+                            "cells": ["2026-08-31", "学期开始", "page:4"],
+                            "entity_id": "event-1",
+                        }
+                    ],
+                },
+            },
+            {"task_contract": {"requested_fields": [], "output_language": "zh-CN"}},  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(normalized["table"]["columns"], ["日期", "事项"])
+        self.assertEqual(normalized["table"]["title"], "学期A重要日期")
+        self.assertEqual(normalized["table"]["rows"][0]["cells"], ["2026-08-31", "学期开始"])
+        self.assertEqual(normalized["table"]["rows"][0]["source_locator"], "page:4")
+
+    def test_visible_language_rewrite_discards_stale_rows_before_reprocessing(self) -> None:
+        repaired = _presentation_repair_base(
+            {
+                "title": "重要日期",
+                "table": {
+                    "columns": ["日期", "事项"],
+                    "rows": [{"cells": ["July", "Release of Class Schedule"]}],
+                },
+            },
+            {
+                "violations": [
+                    {
+                        "code": "presentation_visible_language_mismatch",
+                        "affected_rows": [1],
+                    }
+                ]
+            },
+        )
+
+        self.assertEqual(repaired["table"]["rows"], [])
 
     def test_presentation_normalization_recovers_locator_without_early_splitting(self) -> None:
         schedule = "; ".join(

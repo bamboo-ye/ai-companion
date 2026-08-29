@@ -884,6 +884,85 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertIn("紧凑中间格式", system_prompt)
 
+    def test_focused_presentation_round_uses_relevance_prompt_not_mapping_contract(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "function": {
+                                            "name": "work_generate_pptx",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "title": "重要日期",
+                                                    "audience": "新生",
+                                                    "style": "简洁表格",
+                                                    "table": {
+                                                        "title": "A学期重要日期",
+                                                        "columns": ["日期", "事项"],
+                                                        "rows": [],
+                                                    },
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "table": {"type": "object"},
+                        },
+                    },
+                }
+            ],
+            "task_contract": {"output_language": "zh-CN", "requested_fields": []},
+            "document_processing_round": {
+                "batch_id": "a1:focus1",
+                "round_number": 1,
+                "round_count": 1,
+                "focused": True,
+                "structured": False,
+                "focus_phrases": ["Important Dates"],
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "data": {"output": {"text": "[[PAGE 4]] Important Dates"}},
+                }
+            ],
+        }
+
+        port.compose_arguments(
+            module="work",
+            message="提取 Important Dates 并生成中文 PPT",
+            tool_name="work_generate_pptx",
+            context=context,
+        )
+        system_prompt = port.requests[0]["messages"][0]["content"]
+
+        self.assertIn("相关证据页或上下文窗口", system_prompt)
+        self.assertIn("不得把多条事实概括成摘要", system_prompt)
+        self.assertNotIn("第一轮必须生成 mapping_contract", system_prompt)
+
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
             [

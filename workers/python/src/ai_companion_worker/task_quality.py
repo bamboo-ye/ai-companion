@@ -312,6 +312,84 @@ def presentation_table_language_violations(
     return violations
 
 
+def presentation_visible_language_violations(
+    arguments: Any,
+    task_contract: Any,
+) -> list[dict[str, Any]]:
+    """Validate all audience-visible presentation text, independent of schema fields."""
+
+    if (
+        not isinstance(arguments, Mapping)
+        or not isinstance(task_contract, Mapping)
+        or not str(task_contract.get("output_language") or "").casefold().startswith("zh")
+    ):
+        return []
+
+    def untranslated(value: Any, *, heading: bool = False) -> bool:
+        text = re.sub(
+            r"https?://\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
+            "",
+            str(value or ""),
+        ).strip()
+        if not text:
+            return False
+        if re.fullmatch(r"[A-Z]{2,8}(?:[- ]?\d{2,8}[A-Z]?)?", text):
+            return False
+        latin = len(_PRESENTATION_LATIN_LETTER.findall(text))
+        cjk = len(_PRESENTATION_CJK.findall(text))
+        threshold = 2 if heading else 3
+        english_phrase = re.search(
+            r"\b[A-Za-z][A-Za-z-]{1,}\s+[A-Za-z][A-Za-z-]{1,}\b",
+            text,
+        )
+        long_latin_word = re.search(r"\b[A-Za-z]{7,}\b", text)
+        return bool(english_phrase or long_latin_word) or (
+            latin >= threshold and (cjk == 0 or latin > cjk * 2 + 12)
+        )
+
+    table = arguments.get("table")
+    headings = {
+        "title": arguments.get("title"),
+        "table.title": table.get("title") if isinstance(table, Mapping) else None,
+    }
+    if isinstance(table, Mapping) and isinstance(table.get("columns"), list):
+        headings.update(
+            {
+                f"table.columns[{index}]": value
+                for index, value in enumerate(table["columns"])
+            }
+        )
+    affected_fields = [
+        field
+        for field, value in headings.items()
+        if str(value or "").strip() and untranslated(value, heading=True)
+    ]
+    affected_cells: list[dict[str, int]] = []
+    if isinstance(table, Mapping) and isinstance(table.get("rows"), list):
+        for row_index, row in enumerate(table["rows"], start=1):
+            cells = row.get("cells") if isinstance(row, Mapping) else None
+            if not isinstance(cells, list):
+                continue
+            for column_index, value in enumerate(cells):
+                if untranslated(value):
+                    affected_cells.append(
+                        {"row": row_index, "column": column_index + 1}
+                    )
+    if not affected_fields and not affected_cells:
+        return []
+    affected_rows = list(dict.fromkeys(item["row"] for item in affected_cells))
+    return [
+        {
+            "code": "presentation_visible_language_mismatch",
+            "message": "中文演示文稿的标题、表头和读者可见内容必须翻译为简体中文",
+            "affected_fields": affected_fields[:20],
+            "affected_cells": affected_cells[:40],
+            "affected_rows": affected_rows[:40],
+            "affected_count": len(affected_fields) + len(affected_cells),
+        }
+    ]
+
+
 def compile_task_contract(
     message: str,
     module: str,
@@ -392,12 +470,10 @@ def validate_presentation_arguments(
     """Reject structurally valid PPT arguments that cannot satisfy the task."""
 
     requested_fields = _requested_fields(task_contract)
+    scope_violations = presentation_exhaustive_scope_violations(arguments, task_contract)
+    language_violations = presentation_visible_language_violations(arguments, task_contract)
     if not requested_fields:
-        return []
-    scope_violations = presentation_exhaustive_scope_violations(
-        arguments,
-        task_contract,
-    )
+        return [*scope_violations, *language_violations]
     table = arguments.get("table")
     if not isinstance(table, Mapping):
         return [
@@ -410,6 +486,7 @@ def validate_presentation_arguments(
     rows = table.get("rows")
     violations = [
         *scope_violations,
+        *language_violations,
         *_requested_field_violations(columns, requested_fields),
     ]
     if (
