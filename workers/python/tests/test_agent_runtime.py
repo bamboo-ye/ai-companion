@@ -22,6 +22,7 @@ from ai_companion_worker.agent_runtime import (
     _deterministic_presentation_mapping,
     _latest_document_continuation,
     _merge_presentation_arguments,
+    _next_pending_document_extraction,
     _normalize_presentation_arguments,
     _presentation_document_batches,
     _presentation_focus_phrases,
@@ -990,6 +991,36 @@ class AgentRuntimeTest(unittest.TestCase):
 
         self.assertEqual(repaired["table"]["rows"], [])
 
+    def test_presentation_audience_rewrite_discards_polluted_brief(self) -> None:
+        repaired = _presentation_repair_base(
+            {
+                "title": "三门课程对比",
+                "brief": "页面结构（共7页）：封面、课程介绍与总结",
+                "slide_count": 7,
+            },
+            {
+                "violations": [
+                    {"code": "presentation_audience_meta_content"},
+                    {"code": "presentation_brief_structure_invalid"},
+                ]
+            },
+        )
+
+        self.assertNotIn("brief", repaired)
+        self.assertEqual(repaired["title"], "三门课程对比")
+
+    def test_presentation_normalization_separates_title_from_filename(self) -> None:
+        normalized = _normalize_presentation_arguments(
+            {
+                "title": "课程教学内容比较.pptx",
+                "filename": "课程教学内容比较.pptx",
+            },
+            {"task_contract": {}},  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(normalized["title"], "课程教学内容比较")
+        self.assertEqual(normalized["filename"], "课程教学内容比较.pptx")
+
     def test_presentation_normalization_recovers_locator_without_early_splitting(self) -> None:
         schedule = "; ".join(
             f"T{index:02d} 8/9, 15/9, 22/9, 29/9 (Tue) {900 + index:04d}-0950"
@@ -1054,6 +1085,77 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(
             _latest_document_continuation(state),  # type: ignore[arg-type]
             {"attachment_index": 2, "round_start": 9},
+        )
+
+    def test_multi_document_extraction_advances_to_first_unread_attachment(self) -> None:
+        state = {
+            "task_contract": {
+                "source_required": True,
+                "source_document_ids": ["document-1", "document-2", "document-3"],
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "completed",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {"output": {"has_more": False}},
+                },
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "completed",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {"output": {"has_more": False}},
+                },
+            ],
+        }
+        self.assertEqual(
+            _next_pending_document_extraction(state),  # type: ignore[arg-type]
+            {"attachment_index": 2, "round_start": 1},
+        )
+
+    def test_multi_document_extraction_waits_for_current_attachment_rounds(self) -> None:
+        state = {
+            "task_contract": {
+                "source_required": True,
+                "source_document_ids": ["document-1", "document-2"],
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "completed",
+                    "arguments": {"attachment_index": 1, "round_start": 1},
+                    "data": {"output": {"has_more": True, "next_round": 2}},
+                }
+            ],
+        }
+        self.assertEqual(
+            _next_pending_document_extraction(state),  # type: ignore[arg-type]
+            {},
+        )
+        self.assertEqual(
+            _latest_document_continuation(state),  # type: ignore[arg-type]
+            {"attachment_index": 1, "round_start": 2},
+        )
+
+    def test_multi_document_extraction_returns_empty_after_full_coverage(self) -> None:
+        state = {
+            "task_contract": {
+                "source_required": True,
+                "source_document_ids": ["document-1", "document-2"],
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "completed",
+                    "arguments": {"attachment_index": index},
+                    "data": {"output": {"has_more": False}},
+                }
+                for index in (1, 2)
+            ],
+        }
+        self.assertEqual(
+            _next_pending_document_extraction(state),  # type: ignore[arg-type]
+            {},
         )
 
     def test_completed_extraction_deterministically_selects_ppt_generator(self) -> None:

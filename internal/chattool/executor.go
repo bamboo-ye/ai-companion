@@ -192,10 +192,10 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 	}
 	presentationFields := func() map[string]any {
 		return map[string]any{
-			"title":       stringField("演示文稿标题"),
+			"title":       stringField("封面可见标题，不得包含 .pptx 文件扩展名"),
 			"audience":    stringField("目标受众"),
 			"style":       stringField("视觉与表达风格"),
-			"brief":       map[string]any{"type": "string", "description": "供 PPT 独立生成使用的完整内容简报；若来自前序观察，应先整理主题和要点，不得超过 10000 字符", "maxLength": 10000},
+			"brief":       map[string]any{"type": "string", "description": "最终面向受众的正文。非表格演示只能按内容页依次写为：## 简短标题，随后至少两行 - 事实或结论；不得写页数规划、制作说明、文件名、覆盖率、抽取过程、引用说明、备注或后续询问。标题不超过28字符、要点不超过100字符、章节数必须等于 slide_count 减2。表格演示可填写一句内容目的", "maxLength": 10000},
 			"slide_count": map[string]any{"type": "integer", "description": "页数，3 到 60；完整性任务按数据量自动扩页", "minimum": 3, "maximum": 60},
 			"filename":    filenameField(".pptx"),
 			"table": map[string]any{

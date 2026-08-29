@@ -27,7 +27,9 @@ from xml.sax.saxutils import escape
 
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
 from ai_companion_worker.task_quality import (
+    presentation_audience_content_violations,
     presentation_exhaustive_scope_violations,
+    normalize_presentation_title,
     presentation_table_field_semantic_violations,
     presentation_table_language_violations,
     presentation_visible_language_violations,
@@ -110,7 +112,7 @@ def _edit_docx(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, Any]:
-    title = _required_text(payload, "title", 200)
+    title = normalize_presentation_title(_required_text(payload, "title", 200))
     audience = _required_text(payload, "audience", 200)
     style = _required_text(payload, "style", 100)
     brief = _required_text(payload, "brief", 10_000)
@@ -132,6 +134,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     else:
         table_pages = []
         slide_count = requested_slide_count
+    section_specs = _presentation_section_specs(brief) if not table else []
     sections = _presentation_units(brief)
 
     presentation = Presentation()
@@ -179,25 +182,35 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             )
     else:
         content_pages = slide_count - 2
-        sections = _ensure_presentation_units(sections, content_pages)
-        groups = _balanced_groups(sections, content_pages)
+        if section_specs:
+            groups = [spec["bullets"] for spec in section_specs]
+            headings = [spec["heading"] for spec in section_specs]
+        else:
+            sections = _ensure_presentation_units(sections, content_pages)
+            groups = _balanced_groups(sections, content_pages)
+            headings = [
+                _presentation_heading(group[0], index)
+                for index, group in enumerate(groups, start=1)
+            ]
         for index, group in enumerate(groups, start=1):
-            heading = _presentation_heading(group[0], index)
+            heading = headings[index - 1]
             bullets = [value[:100] for value in group[:5]]
             slide = presentation.slides.add_slide(presentation.slide_layouts[1])
             slide.shapes.title.text = heading
             frame = slide.placeholders[1].text_frame
             frame.clear()
+            bullet_font_size = _presentation_bullet_font_size(bullets)
             for bullet_index, bullet in enumerate(bullets):
                 paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
-                paragraph.text = bullet
+                paragraph.text = _presentation_render_text(bullet)
                 paragraph.level = 0
-                paragraph.font.size = Pt(20)
+                paragraph.font.size = Pt(bullet_font_size)
             _style_slide(slide, title_color=RGBColor(72, 104, 183))
             outline.append({"page": len(outline) + 1, "title": heading, "bullets": bullets})
 
     summary_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
-    summary_slide.shapes.title.text = "内容概览"
+    summary_title = "内容概览" if table else "要点回顾"
+    summary_slide.shapes.title.text = summary_title
     summary_bullets = (
         [
             f"共整理 {len(table['rows'])} 条记录",
@@ -205,7 +218,11 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             "详细信息见前页表格，来源说明见各页页脚",
         ]
         if table
-        else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
+        else (
+            [spec["heading"] for spec in section_specs[:5]]
+            if section_specs
+            else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
+        )
     )
     summary_frame = summary_slide.placeholders[1].text_frame
     summary_frame.clear()
@@ -214,7 +231,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         paragraph.text = bullet
         paragraph.font.size = Pt(22)
     _style_slide(summary_slide, title_color=RGBColor(43, 63, 117))
-    outline.append({"page": len(outline) + 1, "title": "内容概览", "bullets": summary_bullets})
+    outline.append({"page": len(outline) + 1, "title": summary_title, "bullets": summary_bullets})
 
     quality_report = _presentation_quality_report(
         outline=outline,
@@ -225,6 +242,8 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         display_rows=display_rows,
         layout_violations=_presentation_layout_violations(presentation),
         filename=payload.get("filename"),
+        brief=brief,
+        requested_slide_count=requested_slide_count,
     )
 
     files: list[dict[str, Any]] = []
@@ -1030,6 +1049,30 @@ def _presentation_units(brief: str) -> list[str]:
     return units or [brief.strip()]
 
 
+def _presentation_section_specs(brief: str) -> list[dict[str, Any]]:
+    """Parse the canonical, audience-facing non-table presentation format."""
+
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in brief.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading = re.fullmatch(r"##\s+(.+?)\s*", line)
+        if heading:
+            current = {"heading": heading.group(1).strip()[:28], "bullets": []}
+            sections.append(current)
+            continue
+        bullet = re.fullmatch(r"-\s+(.+?)\s*", line)
+        if bullet and current is not None:
+            current["bullets"].append(bullet.group(1).strip()[:100])
+            continue
+        return []
+    if not sections or any(len(section["bullets"]) < 2 for section in sections):
+        return []
+    return sections
+
+
 def _ensure_presentation_units(units: list[str], count: int) -> list[str]:
     result = list(units)
     if count > len(result):
@@ -1063,6 +1106,32 @@ def _presentation_heading(value: str, index: int) -> str:
     if not cleaned:
         return f"主题 {index}"
     return cleaned[:28]
+
+
+def _presentation_bullet_font_size(bullets: list[str]) -> int:
+    """Choose a readable size while avoiding punctuation-only orphan lines."""
+
+    longest = max((len(value) for value in bullets), default=0)
+    if longest > 82 or len(bullets) >= 4:
+        return 17
+    if longest > 62:
+        return 18
+    if longest > 34 and len(bullets) >= 3:
+        return 17
+    if len(bullets) >= 3:
+        return 18
+    return 20
+
+
+def _presentation_render_text(value: str) -> str:
+    """Prevent semantic identifiers from being split across rendered lines."""
+
+    def protect(match: re.Match[str]) -> str:
+        return "\u2060".join(match.group(0))
+
+    text = re.sub(r"\b[A-Za-z]{2,8}\d{2,8}[A-Za-z]?\b", protect, value)
+    text = re.sub(r"(?<![\d.])\d+(?:\.\d+)?%", protect, text)
+    return re.sub(r"《[^》\r\n]{1,30}》", protect, text)
 
 
 def _presentation_table(value: Any) -> dict[str, Any] | None:
@@ -1378,6 +1447,8 @@ def _presentation_quality_report(
     display_rows: list[dict[str, Any]],
     layout_violations: list[dict[str, Any]],
     filename: Any,
+    brief: str,
+    requested_slide_count: int,
 ) -> dict[str, Any]:
     violations: list[dict[str, Any]] = list(layout_violations)
     violations.extend(
@@ -1394,6 +1465,18 @@ def _presentation_quality_report(
         presentation_visible_language_violations(
             {
                 "title": outline[0].get("title") if outline else "",
+                "table": table,
+                "brief": brief,
+            },
+            task_contract,
+        )
+    )
+    violations.extend(
+        presentation_audience_content_violations(
+            {
+                "title": outline[0].get("title") if outline else "",
+                "brief": brief,
+                "slide_count": requested_slide_count,
                 "table": table,
             },
             task_contract,

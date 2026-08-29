@@ -18,6 +18,7 @@ from ai_companion_worker.office_tools import (
     ModelBackedOperationError,
     _openrouter_translate,
     _presentation_display_rows,
+    _presentation_render_text,
     _translated_content,
     execute,
     main,
@@ -43,6 +44,17 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["cells"], ["PED1305", "体能训练", schedule])
         self.assertFalse(rows[0]["continuation"])
+
+    def test_presentation_render_text_protects_codes_and_percentages(self) -> None:
+        rendered = _presentation_render_text("CS5491《AI 安全专题》平时70%、考试30%")
+
+        self.assertEqual(
+            rendered.replace("\u2060", ""),
+            "CS5491《AI 安全专题》平时70%、考试30%",
+        )
+        self.assertIn("C\u2060S\u20605\u20604\u20609\u20601", rendered)
+        self.assertIn("《\u2060A\u2060I\u2060 \u2060安\u2060全\u2060专\u2060题\u2060》", rendered)
+        self.assertIn("7\u20600\u2060%", rendered)
 
     def test_pptx_quality_rejects_english_visible_content_for_chinese_deck(self) -> None:
         result = execute(
@@ -415,6 +427,77 @@ class OfficeToolsTest(unittest.TestCase):
             presentation["files"][0]["name"],
             "Important-Dates-Semester-A-2026-27.pptx",
         )
+
+    def test_pptx_canonical_brief_renders_one_audience_section_per_slide(self) -> None:
+        brief = "\n".join(
+            (
+                "## CS5187：视觉计算",
+                "- 聚焦图像处理与视觉应用。",
+                "- 强调视觉问题的建模和实践。",
+                "## CS5297：人工智能",
+                "- 覆盖人工智能方法与应用。",
+                "- 强调智能算法的系统理解。",
+                "## CS5491：人工智能安全",
+                "- 关注模型风险与可信部署。",
+                "- 强调安全评估和防护能力。",
+                "## 横向比较",
+                "- 三门课分别侧重视觉、通用智能与安全。",
+                "- 课程选择应结合基础和项目方向。",
+                "## 选择建议",
+                "- 视觉方向优先考虑 CS5187。",
+                "- 智能或安全方向可考虑 CS5297、CS5491。",
+            )
+        )
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "三门课程对比",
+                "audience": "选课学生",
+                "style": "简洁清晰",
+                "brief": brief,
+                "slide_count": 7,
+                "task_contract": {
+                    "objective": "对比 CS5187.pdf、CS5297.pdf 和 CS5491.pdf，并用中文 PPT 展示",
+                    "output_language": "zh-CN",
+                    "artifact_types": ["pptx"],
+                },
+            },
+        )
+
+        output = result["output"]
+        self.assertTrue(output["quality_report"]["passed"], output["quality_report"])
+        self.assertEqual(
+            [slide["title"] for slide in output["outline"]],
+            [
+                "三门课程对比",
+                "CS5187：视觉计算",
+                "CS5297：人工智能",
+                "CS5491：人工智能安全",
+                "横向比较",
+                "选择建议",
+                "要点回顾",
+            ],
+        )
+        visible = json.dumps(output["outline"], ensure_ascii=False)
+        self.assertNotIn("页面结构", visible)
+        self.assertNotIn("来源覆盖率", visible)
+        self.assertEqual(len(result["files"]), 1)
+
+    def test_pptx_visible_title_never_includes_file_extension(self) -> None:
+        result = execute(
+            "pptx_outline",
+            {
+                "title": "课程教学内容比较.pptx",
+                "audience": "选课学生",
+                "style": "简洁",
+                "brief": "内容重点",
+                "slide_count": 3,
+                "filename": "课程教学内容比较.pptx",
+            },
+        )
+
+        self.assertEqual(result["output"]["title"], "课程教学内容比较")
+        self.assertEqual(result["output"]["outline"][0]["title"], "课程教学内容比较")
 
     def test_pptx_table_preserves_rows_fields_coverage_and_unique_pages(self) -> None:
         rows = [
