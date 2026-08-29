@@ -30,6 +30,7 @@ from ai_companion_worker.task_quality import (
     presentation_exhaustive_scope_violations,
     presentation_table_field_semantic_violations,
     presentation_table_language_violations,
+    presentation_visible_language_violations,
 )
 
 MAX_SOURCE_BYTES = 700 * 1024
@@ -201,7 +202,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         [
             f"共整理 {len(table['rows'])} 条记录",
             "完整内容已按可读容量自动分页",
-            "详细信息与来源页码见前页表格",
+            "详细信息见前页表格，来源说明见各页页脚",
         ]
         if table
         else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
@@ -1384,6 +1385,15 @@ def _presentation_quality_report(
             {
                 "title": outline[0].get("title") if outline else "",
                 "filename": filename,
+                "table": table,
+            },
+            task_contract,
+        )
+    )
+    violations.extend(
+        presentation_visible_language_violations(
+            {
+                "title": outline[0].get("title") if outline else "",
                 "table": table,
             },
             task_contract,

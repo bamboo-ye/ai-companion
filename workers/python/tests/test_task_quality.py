@@ -98,6 +98,87 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertEqual(name_violation["affected_count"], 2)
 
+    def test_chinese_presentation_rejects_english_visible_content_without_fields(self) -> None:
+        contract = compile_task_contract(
+            "提取 Important Dates 信息，并用中文 PPT 展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "title": "Important Dates",
+                "table": {
+                    "title": "Semester A 2026/27",
+                    "columns": ["Month", "Date and Event"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "July",
+                                "Release of Class Schedule and online add/drop period",
+                            ]
+                        }
+                    ],
+                },
+            },
+            contract,
+        )
+
+        self.assertEqual(contract["requested_fields"], [])
+        language = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_visible_language_mismatch"
+        )
+        self.assertGreaterEqual(language["affected_count"], 4)
+        self.assertEqual(language["affected_rows"], [1])
+
+    def test_chinese_visible_content_rejects_english_parenthetical_sentences(self) -> None:
+        contract = compile_task_contract("用中文 PPT 展示重要日期", "work")
+        violations = validate_presentation_arguments(
+            {
+                "title": "重要日期",
+                "table": {
+                    "columns": ["日期", "事项"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "2026-08-31",
+                                "学期开始（Semester begins and tuition is due）",
+                            ]
+                        }
+                    ],
+                },
+            },
+            contract,
+        )
+
+        self.assertIn(
+            "presentation_visible_language_mismatch",
+            {item["code"] for item in violations},
+        )
+
+    def test_chinese_visible_content_allows_codes_and_acronyms_in_chinese(self) -> None:
+        contract = compile_task_contract("用中文 PPT 展示重要日期", "work")
+        violations = validate_presentation_arguments(
+            {
+                "title": "A学期重要日期",
+                "table": {
+                    "title": "新生日程",
+                    "columns": ["日期", "事项"],
+                    "rows": [
+                        {
+                            "cells": [
+                                "2026-08-31",
+                                "学生通过AIMS系统办理选课，课程代码PED1101保持不变",
+                            ]
+                        }
+                    ],
+                },
+            },
+            contract,
+        )
+
+        self.assertEqual(violations, [])
+
     def test_exhaustive_presentation_rejects_partial_scope_labels(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

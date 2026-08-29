@@ -424,13 +424,13 @@ def _normalize_presentation_arguments(
         requested = _presentation_requested_columns(task_contract)
         columns = table_copy.get("columns")
         rows = table_copy.get("rows")
+        output_language = (
+            str(task_contract.get("output_language") or "")
+            if isinstance(task_contract, Mapping)
+            else ""
+        )
+        chinese = output_language.casefold().startswith("zh")
         if requested and isinstance(columns, list) and isinstance(rows, list):
-            output_language = (
-                str(task_contract.get("output_language") or "")
-                if isinstance(task_contract, Mapping)
-                else ""
-            )
-            chinese = output_language.casefold().startswith("zh")
             mapping_modes = _presentation_mapping_modes(normalized.get("mapping_contract"))
             column_fields = [_presentation_column_field(value) for value in columns]
             requested_fields = [field for field, _ in requested]
@@ -514,6 +514,35 @@ def _normalize_presentation_arguments(
                 )[:60]
             table_copy["rows"] = normalized_rows
         elif isinstance(columns, list):
+            metadata_indices = [
+                index
+                for index, column in enumerate(columns)
+                if _presentation_column_field(column) == "source_locator"
+            ]
+            if metadata_indices and isinstance(rows, list):
+                metadata_set = set(metadata_indices)
+                cleaned_rows: list[dict[str, Any]] = []
+                for raw_row in rows:
+                    if not isinstance(raw_row, Mapping):
+                        continue
+                    row = dict(raw_row)
+                    cells = row.get("cells")
+                    if isinstance(cells, list):
+                        if not str(row.get("source_locator") or "").strip():
+                            row["source_locator"] = "; ".join(
+                                str(cells[index] or "").strip()
+                                for index in metadata_indices
+                                if index < len(cells) and str(cells[index] or "").strip()
+                            )[:160]
+                        row["cells"] = [
+                            value for index, value in enumerate(cells) if index not in metadata_set
+                        ]
+                    cleaned_rows.append(row)
+                rows = cleaned_rows
+                columns = [
+                    value for index, value in enumerate(columns) if index not in metadata_set
+                ]
+                table_copy["rows"] = rows
             aliases = {
                 "code": "课程代码",
                 "name": "课程名称",
@@ -527,6 +556,16 @@ def _normalize_presentation_arguments(
             table_copy["columns"] = [
                 aliases.get(str(column).strip().casefold(), column) for column in columns
             ]
+            if chinese:
+                table_title = re.sub(
+                    r"[（(][^（）()]{0,80}(?:摘自|来源|source|from)[^（）()]*[）)]",
+                    "",
+                    str(table_copy.get("title") or ""),
+                    flags=re.I,
+                ).strip()
+                if not table_title or re.search(r"\b[A-Za-z]{7,}\b", table_title):
+                    table_title = str(normalized.get("title") or "结构化数据一览").strip()
+                table_copy["title"] = table_title[:60]
         normalized["table"] = table_copy
     return normalized
 
@@ -582,6 +621,7 @@ def _presentation_column_field(value: Any) -> str:
         "地点": "venue",
         "sourcelocator": "source_locator",
         "source": "source_locator",
+        "来源定位器": "source_locator",
         "来源位置": "source_locator",
         "来源": "source_locator",
     }
@@ -640,6 +680,212 @@ _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
 _STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 6_000
 _STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 8
+_FOCUSED_PAGE_MAX_CHARS = 5_000
+_FOCUSED_MATCH_CONTEXT_CHARS = 2_200
+
+
+def _presentation_focus_phrases(task_contract: Any) -> list[str]:
+    """Extract explicit source-section/topic anchors from the user objective."""
+
+    if not isinstance(task_contract, Mapping):
+        return []
+    objective = re.sub(
+        r"<!--ai-document:[^>]+-->",
+        " ",
+        str(task_contract.get("objective") or ""),
+    )
+    candidates: list[str] = []
+    for pattern in (
+        r"[\"'“‘《【]([^\"'”’》】\n]{2,80})[\"'”’》】]",
+        (
+            r"(?:文件|文档|附件|pdf)?(?:中|中的|里的|内的)\s*"
+            r"([A-Za-z][A-Za-z0-9 '&/\-]{1,79}?|"
+            r"[\u3400-\u9fff][^，。；;!?！？\n]{1,39}?)"
+            r"(?:信息|内容|部分|章节|数据)(?=[，。；;!?！？\s]|并|$)"
+        ),
+    ):
+        candidates.extend(match.group(1) for match in re.finditer(pattern, objective, re.I))
+    generic = {
+        "相关",
+        "有关",
+        "所有",
+        "全部",
+        "信息",
+        "内容",
+        "数据",
+        "文件",
+        "文档",
+        "附件",
+    }
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = re.sub(r"\s+", " ", str(candidate)).strip(" ：:，,。.;；的")
+        key = normalized.casefold()
+        if len(normalized) < 2 or key in generic or key in seen:
+            continue
+        result.append(normalized)
+        seen.add(key)
+    return result[:6]
+
+
+def _focus_match(text: str, phrases: list[str]) -> re.Match[str] | None:
+    for phrase in phrases:
+        pattern = r"\s+".join(re.escape(part) for part in phrase.split())
+        match = re.search(pattern, text, re.I)
+        if match is not None:
+            return match
+    return None
+
+
+def _focused_page_excerpt(
+    label: str,
+    body: str,
+    match: re.Match[str] | None,
+) -> str:
+    def compact(value: str) -> str:
+        lines: list[str] = []
+        blank = False
+        for raw_line in value.splitlines():
+            line = re.sub(r"[ \t]+", " ", raw_line).strip()
+            if re.fullmatch(r"```(?:text)?", line, re.I):
+                continue
+            if not line:
+                if lines and not blank:
+                    lines.append("")
+                blank = True
+                continue
+            lines.append(line)
+            blank = False
+        return "\n".join(lines).strip()
+
+    marker = f"[[{label.upper()}]]"
+    # A topic heading near the beginning identifies the whole page as relevant.
+    # Keep it losslessly and let the Composer batcher split only after layout
+    # whitespace and parser fences have been removed.
+    if match is not None and match.start() <= max(500, math.floor(len(body) * 0.2)):
+        return f"{marker}\n{compact(body)}".strip()
+    if len(body) <= _FOCUSED_PAGE_MAX_CHARS:
+        return f"{marker}\n{compact(body)}".strip()
+    if match is None:
+        return f"{marker}\n{compact(body[:_FOCUSED_PAGE_MAX_CHARS])}".strip()
+    start = max(0, match.start() - _FOCUSED_MATCH_CONTEXT_CHARS)
+    end = min(len(body), match.end() + _FOCUSED_MATCH_CONTEXT_CHARS)
+    if start:
+        line_start = body.rfind("\n", 0, start)
+        start = line_start + 1 if line_start >= 0 else start
+    if end < len(body):
+        line_end = body.find("\n", end)
+        end = line_end if line_end >= 0 else end
+    return f"{marker}\n{compact(body[start:end])}".strip()
+
+
+def _presentation_focused_document_batches(state: AgentState) -> list[dict[str, Any]]:
+    """Select bounded source evidence around an explicitly requested topic."""
+
+    phrases = _presentation_focus_phrases(state.get("task_contract", {}))
+    if not phrases:
+        return []
+    focused_sources: list[dict[str, Any]] = []
+    for observation in state.get("observations", []):
+        if not isinstance(observation, Mapping):
+            continue
+        if observation.get("tool_name") != "work_extract_attached_document":
+            continue
+        arguments = observation.get("arguments")
+        attachment_index = (
+            int(arguments.get("attachment_index") or 1)
+            if isinstance(arguments, Mapping)
+            else 1
+        )
+        data = observation.get("data")
+        output = data.get("output") if isinstance(data, Mapping) else None
+        text = output.get("text") if isinstance(output, Mapping) else None
+        if not isinstance(text, str) or not text.strip():
+            continue
+        markers = list(_PRESENTATION_PAGE_MARKER.finditer(text))
+        excerpts: list[str] = []
+        source_pages: list[int] = []
+        if markers:
+            pages: list[tuple[str, str]] = []
+            for index, marker in enumerate(markers):
+                end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+                pages.append((marker.group("page"), text[marker.end() : end].strip()))
+            matches = [_focus_match(body, phrases) for _, body in pages]
+            exact = {index for index, match in enumerate(matches) if match is not None}
+            continuation_pattern = re.compile(
+                r"(?:next|following)\s+page|下(?:一)?页|见后页|续下页",
+                re.I,
+            )
+            heading_pages: set[int] = set()
+            for index in exact:
+                match = matches[index]
+                if match is None:
+                    continue
+                tail = pages[index][1][match.end() :]
+                if (
+                    match.start()
+                    <= max(500, math.floor(len(pages[index][1]) * 0.2))
+                    and continuation_pattern.search(tail) is None
+                ):
+                    heading_pages.add(index)
+            selected = set(heading_pages or exact)
+            if not heading_pages:
+                for index, match in enumerate(matches):
+                    if match is None or index + 1 >= len(pages):
+                        continue
+                    tail = pages[index][1][match.end() :]
+                    if (
+                        match.start() >= math.floor(len(pages[index][1]) * 0.6)
+                        or continuation_pattern.search(tail)
+                    ):
+                        selected.add(index + 1)
+            for index in sorted(selected):
+                label, body = pages[index]
+                excerpts.append(_focused_page_excerpt(label, body, matches[index]))
+                page_values = [int(value) for value in re.findall(r"\d+", label)]
+                source_pages.extend(page_values)
+        else:
+            match = _focus_match(text, phrases)
+            if match is not None:
+                start = max(0, match.start() - _FOCUSED_MATCH_CONTEXT_CHARS)
+                end = min(len(text), match.end() + _FOCUSED_MATCH_CONTEXT_CHARS)
+                excerpts.append(text[start:end].strip())
+        focused_text = "\n\n".join(value for value in excerpts if value).strip()
+        if not focused_text:
+            continue
+        focused_sources.append(
+            {
+                "attachment_index": attachment_index,
+                "round_no": int(output.get("round_start") or 1),
+                "text": focused_text,
+                "source_filename": str(output.get("source_filename") or ""),
+                "source_pages": list(dict.fromkeys(source_pages)),
+            }
+        )
+    batches: list[dict[str, Any]] = []
+    for source in focused_sources:
+        text = str(source["text"])
+        segments = _split_document_round_for_composer(text, math.ceil(len(text) / 3))
+        for segment_no, segment in enumerate(segments, start=1):
+            batch_id = f"a{source['attachment_index']}:focus{len(batches) + 1}"
+            if len(segments) > 1:
+                batch_id += f":s{segment_no}"
+            batches.append(
+                {
+                    **source,
+                    "batch_id": batch_id,
+                    "text": segment,
+                    "processing_text": segment,
+                    "token_count": max(1, math.ceil(len(segment) / 3)),
+                    "segment_no": segment_no,
+                    "segment_count": len(segments),
+                    "structured": False,
+                    "focused": True,
+                    "focus_phrases": phrases,
+                }
+            )
+    return batches
 
 
 def _split_document_round_for_composer(text: str, token_count: int) -> list[str]:
@@ -1368,6 +1614,9 @@ def _structured_batch(
 
 
 def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
+    focused = _presentation_focused_document_batches(state)
+    if focused:
+        return focused
     structured = _presentation_structured_batches(state)
     return structured or _presentation_text_document_batches(state)
 
@@ -1436,6 +1685,9 @@ def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     if structured:
         output["source_ir"] = dict(batch.get("source_ir") or {})
         output["source_pages"] = list(batch.get("source_pages") or [])
+    elif batch.get("focused") is True:
+        output["source_pages"] = list(batch.get("source_pages") or [])
+        output["focus_phrases"] = list(batch.get("focus_phrases") or [])
     return {
         "tool_name": "work_extract_attached_document",
         "arguments": {
@@ -1661,12 +1913,15 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
         return base
     affected: set[int] = set()
     mapping_failure = False
+    full_table_rewrite = False
     violations = report.get("violations")
     if isinstance(violations, list):
         for violation in violations:
             if not isinstance(violation, Mapping):
                 continue
             code = str(violation.get("code") or "")
+            if code == "presentation_visible_language_mismatch":
+                full_table_rewrite = True
             if code.startswith(
                 (
                     "source_mapping_",
@@ -1687,6 +1942,8 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
     rows = table_copy.get("rows")
     if mapping_failure:
         base.pop("mapping_contract", None)
+        table_copy["rows"] = []
+    elif full_table_rewrite:
         table_copy["rows"] = []
     elif affected and isinstance(rows, list):
         table_copy["rows"] = [
@@ -2738,17 +2995,22 @@ def build_graph(
                     ],
                     "steps": state.get("steps", 0) + 1,
                 }
+        candidate_document_batches = (
+            _presentation_document_batches(state) if presentation_tool else []
+        )
         all_document_batches = (
-            _presentation_document_batches(state)
-            if presentation_tool
-            and isinstance(task_contract, Mapping)
-            and task_contract.get("exhaustive") is True
-            and bool(_presentation_requested_columns(task_contract))
+            candidate_document_batches
+            if isinstance(task_contract, Mapping)
+            and (
+                (
+                    task_contract.get("exhaustive") is True
+                    and bool(_presentation_requested_columns(task_contract))
+                )
+                or any(batch.get("focused") is True for batch in candidate_document_batches)
+            )
             else []
         )
-        round_processing = len(all_document_batches) > 1 or any(
-            batch.get("structured") is True for batch in all_document_batches
-        )
+        round_processing = bool(all_document_batches)
         rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
         raw_processing = state.get("document_processing", {})
         processing = dict(raw_processing) if isinstance(raw_processing, Mapping) else {}
@@ -2893,6 +3155,9 @@ def build_graph(
                 "rewrite_attempt": rewrite_attempt,
                 "timeout_retry_attempt": int(processing.get("active_batch_timeout_retries") or 0),
                 "missing_record_keys": missing_keys,
+                "structured": batch.get("structured") is True,
+                "focused": batch.get("focused") is True,
+                "focus_phrases": list(batch.get("focus_phrases") or []),
             }
         try:
             arguments = composer(
