@@ -26,7 +26,11 @@ from pptx.util import Inches, Pt
 from xml.sax.saxutils import escape
 
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
-from ai_companion_worker.task_quality import presentation_table_field_semantic_violations
+from ai_companion_worker.task_quality import (
+    presentation_exhaustive_scope_violations,
+    presentation_table_field_semantic_violations,
+    presentation_table_language_violations,
+)
 
 MAX_SOURCE_BYTES = 700 * 1024
 MAX_PDF_SOURCE_BYTES = 8 * 1024 * 1024
@@ -42,6 +46,9 @@ MAX_COLUMNS = 100
 MAX_PRESENTATION_SLIDES = 60
 PRESENTATION_DISPLAY_CELL_CHARS = 42
 PRESENTATION_ROWS_PER_SLIDE = 6
+PRESENTATION_TABLE_PAGE_CAPACITY = 12
+PRESENTATION_DETAIL_CELL_THRESHOLD = 320
+PRESENTATION_DETAIL_MAX_CHARS = 2_200
 
 
 class ModelBackedOperationError(ValueError):
@@ -119,12 +126,10 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     source_coverage = _presentation_source_coverage(payload.get("source_coverage"))
     display_rows = _presentation_display_rows(table["rows"]) if table else []
     if table:
-        required_table_slides = math.ceil(len(display_rows) / PRESENTATION_ROWS_PER_SLIDE)
-        slide_count = min(
-            MAX_PRESENTATION_SLIDES,
-            max(requested_slide_count, required_table_slides + 2),
-        )
+        table_pages = _presentation_table_pages(display_rows)
+        slide_count = min(MAX_PRESENTATION_SLIDES, len(table_pages) + 2)
     else:
+        table_pages = []
         slide_count = requested_slide_count
     sections = _presentation_units(brief)
 
@@ -143,14 +148,19 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     outline.append({"page": 1, "title": title, "bullets": [f"面向：{audience}"]})
 
     if table:
-        row_groups = _balanced_groups(display_rows, slide_count - 2)
-        for index, rows in enumerate(row_groups, start=1):
-            heading = table["title"] or f"结构化数据（{index}/{len(row_groups)}）"
-            if len(row_groups) > 1 and table["title"]:
-                heading = f"{table['title']}（{index}/{len(row_groups)}）"
+        for index, page in enumerate(table_pages, start=1):
+            rows = page["rows"]
+            heading = table["title"] or f"结构化数据（{index}/{len(table_pages)}）"
+            if len(table_pages) > 1 and table["title"]:
+                heading = f"{table['title']}（{index}/{len(table_pages)}）"
+            if page.get("detail") is True:
+                heading = f"{rows[0]['cells'][0]} · {rows[0]['cells'][1]}"
             slide = presentation.slides.add_slide(presentation.slide_layouts[5])
             slide.shapes.title.text = heading[:32]
-            _add_table_slide(slide, table["columns"], rows)
+            if page.get("detail") is True:
+                _add_course_detail_slide(slide, table["columns"], rows[0])
+            else:
+                _add_table_slide(slide, table["columns"], rows)
             _style_slide(slide, title_color=RGBColor(72, 104, 183))
             source_locators = list(dict.fromkeys(row["source_locator"] for row in rows))
             outline.append(
@@ -161,6 +171,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
                         "columns": table["columns"],
                         "row_count": sum(not row.get("continuation") for row in rows),
                         "display_row_count": len(rows),
+                        "detail": page.get("detail") is True,
                         "source_locators": source_locators,
                     },
                 }
@@ -212,6 +223,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         source_coverage=source_coverage,
         display_rows=display_rows,
         layout_violations=_presentation_layout_violations(presentation),
+        filename=payload.get("filename"),
     )
 
     files: list[dict[str, Any]] = []
@@ -1130,30 +1142,68 @@ def _presentation_source_coverage(value: Any) -> dict[str, Any]:
 
 
 def _presentation_display_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep exactly one visual record for every logical source entity."""
+
     display: list[dict[str, Any]] = []
     for source_index, row in enumerate(rows):
-        split_cells = [_split_visible_cell(value) for value in row["cells"]]
-        fragment_count = max((len(values) for values in split_cells), default=1)
         entity_id = str(row.get("entity_id") or f"record:{source_index + 1}")
-        for fragment_index in range(fragment_count):
-            cells: list[str] = []
-            for column_index, values in enumerate(split_cells):
-                if fragment_index < len(values):
-                    cells.append(values[fragment_index])
-                else:
-                    # Repeat the shorter identifying fields on every visual
-                    # continuation row.  A continuation can land on the next
-                    # slide, where arrows or blank cells lose all context.
-                    cells.append(values[0])
-            display.append(
-                {
-                    "cells": cells,
-                    "source_locator": row["source_locator"],
-                    "entity_id": entity_id,
-                    "continuation": fragment_index > 0,
-                }
-            )
+        display.append(
+            {
+                "cells": list(row["cells"]),
+                "source_locator": row["source_locator"],
+                "entity_id": entity_id,
+                "continuation": False,
+            }
+        )
     return display
+
+
+def _presentation_row_units(row: dict[str, Any]) -> int:
+    """Estimate the vertical space a logical table row needs."""
+
+    cells = [str(value or "") for value in row.get("cells", [])]
+    if not cells:
+        return 1
+    line_estimates = [
+        math.ceil(len(value) / (20 if index == 0 else 32 if index == 1 else 68))
+        for index, value in enumerate(cells)
+    ]
+    return max(1, min(PRESENTATION_TABLE_PAGE_CAPACITY, max(line_estimates)))
+
+
+def _presentation_table_pages(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Paginate whole entities; never turn one logical record into table rows."""
+
+    pages: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    current_units = 0
+
+    def flush() -> None:
+        nonlocal current, current_units
+        if current:
+            pages.append({"detail": False, "rows": current})
+        current = []
+        current_units = 0
+
+    for row in rows:
+        maximum_cell = max((len(str(value or "")) for value in row.get("cells", [])), default=0)
+        units = _presentation_row_units(row)
+        if maximum_cell >= PRESENTATION_DETAIL_CELL_THRESHOLD or units > 6:
+            flush()
+            pages.append({"detail": True, "rows": [row]})
+            continue
+        if (
+            current
+            and (
+                current_units + units > PRESENTATION_TABLE_PAGE_CAPACITY
+                or len(current) >= PRESENTATION_ROWS_PER_SLIDE
+            )
+        ):
+            flush()
+        current.append(row)
+        current_units += units
+    flush()
+    return pages
 
 
 def _split_visible_cell(value: Any) -> list[str]:
@@ -1207,9 +1257,10 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
     for column_index, weight in enumerate(weights):
         table.columns[column_index].width = Inches(12.43 * weight / total_weight)
     table.rows[0].height = Inches(0.52)
-    body_height = 4.63 / max(1, len(rows))
-    for row_index in range(1, len(table.rows)):
-        table.rows[row_index].height = Inches(body_height)
+    row_units = [_presentation_row_units(row) for row in rows]
+    total_units = max(1, sum(row_units))
+    for row_index, units in enumerate(row_units, start=1):
+        table.rows[row_index].height = Inches(4.63 * units / total_units)
     for column_index, column in enumerate(columns):
         cell = table.cell(0, column_index)
         cell.text = column
@@ -1223,17 +1274,92 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
         for column_index, value in enumerate(row["cells"]):
             cell = table.cell(row_index, column_index)
             cell.text = value
+            cell.margin_left = Inches(0.06)
+            cell.margin_right = Inches(0.06)
+            cell.margin_top = Inches(0.04)
+            cell.margin_bottom = Inches(0.04)
             cell.fill.solid()
             cell.fill.fore_color.rgb = (
                 RGBColor(238, 243, 255) if row_index % 2 == 0 else RGBColor(255, 255, 255)
             )
             for paragraph in cell.text_frame.paragraphs:
-                paragraph.font.size = Pt(11 if len(rows) > 4 else 13)
+                paragraph.font.size = Pt(16 if row_units[row_index - 1] <= 3 else 14)
                 paragraph.font.color.rgb = RGBColor(31, 41, 55)
     source_locators = _audience_source_locators(
         list(dict.fromkeys(row["source_locator"] for row in rows))
     )
-    footer = slide.shapes.add_textbox(Inches(0.48), Inches(6.72), Inches(12.35), Inches(0.32))
+    footer = slide.shapes.add_textbox(Inches(0.48), Inches(7.02), Inches(12.35), Inches(0.25))
+    footer_frame = footer.text_frame
+    footer_frame.clear()
+    footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:160]
+    footer_frame.paragraphs[0].font.size = Pt(9)
+    footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+
+
+def _add_course_detail_slide(
+    slide: Any,
+    columns: list[str],
+    row: dict[str, Any],
+) -> None:
+    """Render an oversized logical entity with one unsplit value cell."""
+
+    cells = [str(value or "") for value in row["cells"]]
+    detail_index = max(range(len(cells)), key=lambda index: len(cells[index]))
+    metadata = "    ".join(
+        f"{columns[index]}：{value}"
+        for index, value in enumerate(cells)
+        if index != detail_index
+    )
+    metadata_box = slide.shapes.add_textbox(
+        Inches(0.55), Inches(1.34), Inches(12.2), Inches(0.48)
+    )
+    metadata_frame = metadata_box.text_frame
+    metadata_frame.clear()
+    metadata_frame.paragraphs[0].text = metadata
+    metadata_frame.paragraphs[0].font.size = Pt(17)
+    metadata_frame.paragraphs[0].font.bold = True
+    metadata_frame.paragraphs[0].font.color.rgb = RGBColor(43, 63, 117)
+
+    shape = slide.shapes.add_table(
+        1,
+        1,
+        Inches(0.55),
+        Inches(1.94),
+        Inches(12.2),
+        Inches(4.62),
+    )
+    cell = shape.table.cell(0, 0)
+    cell.text = f"{columns[detail_index]}：\n{cells[detail_index]}"
+    cell.margin_left = Inches(0.16)
+    cell.margin_right = Inches(0.16)
+    cell.margin_top = Inches(0.12)
+    cell.margin_bottom = Inches(0.12)
+    cell.fill.solid()
+    cell.fill.fore_color.rgb = RGBColor(247, 249, 255)
+    detail_length = len(cells[detail_index])
+    if detail_length <= 900:
+        font_size = 16
+    elif detail_length <= 1_300:
+        font_size = 14
+    elif detail_length <= 1_800:
+        font_size = 12
+    else:
+        font_size = 10
+    detail_frame = cell.text_frame
+    detail_frame.clear()
+    label_paragraph = detail_frame.paragraphs[0]
+    label_paragraph.text = columns[detail_index]
+    label_paragraph.font.size = Pt(17)
+    label_paragraph.font.bold = True
+    label_paragraph.font.color.rgb = RGBColor(43, 63, 117)
+    value_paragraph = detail_frame.add_paragraph()
+    value_paragraph.text = cells[detail_index]
+    value_paragraph.font.size = Pt(font_size)
+    value_paragraph.font.color.rgb = RGBColor(31, 41, 55)
+    value_paragraph.line_spacing = 1.0
+
+    source_locators = _audience_source_locators([row["source_locator"]])
+    footer = slide.shapes.add_textbox(Inches(0.58), Inches(6.89), Inches(12.1), Inches(0.26))
     footer_frame = footer.text_frame
     footer_frame.clear()
     footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:160]
@@ -1250,8 +1376,19 @@ def _presentation_quality_report(
     source_coverage: dict[str, Any],
     display_rows: list[dict[str, Any]],
     layout_violations: list[dict[str, Any]],
+    filename: Any,
 ) -> dict[str, Any]:
     violations: list[dict[str, Any]] = list(layout_violations)
+    violations.extend(
+        presentation_exhaustive_scope_violations(
+            {
+                "title": outline[0].get("title") if outline else "",
+                "filename": filename,
+                "table": table,
+            },
+            task_contract,
+        )
+    )
     if "表格" in style and not table:
         violations.append(
             {"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"}
@@ -1344,6 +1481,19 @@ def _presentation_quality_report(
                     "affected_rows": contextless_rows[:20],
                 }
             )
+        split_rows = [
+            index
+            for index, row in enumerate(display_rows, start=1)
+            if row.get("continuation") is True
+        ]
+        if split_rows:
+            violations.append(
+                {
+                    "code": "presentation_logical_record_split",
+                    "message": "同一逻辑记录不得被渲染为多个表格行",
+                    "affected_rows": split_rows[:20],
+                }
+            )
         violations.extend(
             presentation_table_field_semantic_violations(
                 table.get("columns", []),
@@ -1351,6 +1501,27 @@ def _presentation_quality_report(
                 requested_fields,
             )
         )
+        violations.extend(
+            presentation_table_language_violations(
+                table.get("columns", []),
+                table.get("rows", []),
+                task_contract,
+            )
+        )
+        oversized_detail_rows = [
+            index
+            for index, row in enumerate(table.get("rows", []), start=1)
+            if max((len(str(value or "")) for value in row.get("cells", [])), default=0)
+            > PRESENTATION_DETAIL_MAX_CHARS
+        ]
+        if oversized_detail_rows:
+            violations.append(
+                {
+                    "code": "presentation_detail_cell_capacity_exceeded",
+                    "message": "单个逻辑记录超过一页单元格的可读容量",
+                    "affected_rows": oversized_detail_rows[:20],
+                }
+            )
     visible_text = " ".join(
         [
             str(outline[0].get("title") or "") if outline else "",
