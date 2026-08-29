@@ -1556,17 +1556,32 @@ def _presentation_mapping_modes(mapping_contract: Any) -> dict[int, str]:
 
 
 _PRESENTATION_EMPTY_FRAGMENT = re.compile(r"^[\s；;,，、|/\\:：.。·•↳\-–—]+$")
+_PRESENTATION_REFERENCE_GUIDANCE = re.compile(
+    r"[（(]\s*(?:多(?:节|个|组)\s*[,，;；]?\s*)?"
+    r"(?:详?见(?:下列(?:来源|内容)?|下方|后文|原文|来源|课程表)|"
+    r"see\s+(?:below|source|original))[^）)]*[）)]",
+    re.I,
+)
+_PRESENTATION_REFERENCE_ONLY = re.compile(
+    r"^(?:多(?:节|个|组)\s*[,，;；]?\s*)?"
+    r"(?:详?见(?:下列(?:来源|内容)?|下方|后文|原文|来源|课程表)|"
+    r"see\s+(?:below|source|original))$",
+    re.I,
+)
 
 
 def _presentation_aggregate_fragments(value: Any) -> list[str]:
     """Return stable, meaningful aggregate fragments without separator noise."""
 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = _PRESENTATION_REFERENCE_GUIDANCE.sub("", text)
     fragments: list[str] = []
     seen: set[str] = set()
     for raw in re.split(r"[；;]+", text):
         fragment = raw.strip(" \t\r\n；;,，、")
         if not fragment or fragment in {"同上", "↳"}:
+            continue
+        if _PRESENTATION_REFERENCE_ONLY.fullmatch(fragment):
             continue
         if _PRESENTATION_EMPTY_FRAGMENT.fullmatch(fragment):
             continue

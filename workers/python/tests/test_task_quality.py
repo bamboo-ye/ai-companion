@@ -146,6 +146,25 @@ class TaskQualityTests(unittest.TestCase):
             {item["code"] for item in violations},
         )
 
+        below_violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1305", "Physical Fitness", "（多节，见下列来源）"],
+                            "source_locator": "page:2",
+                        }
+                    ],
+                }
+            },
+            contract,
+        )
+        self.assertIn(
+            "requested_time_values_incomplete",
+            {item["code"] for item in below_violations},
+        )
+
     def test_structured_presentation_rejects_column_cell_mismatch_before_worker(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
