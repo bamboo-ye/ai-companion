@@ -18,7 +18,7 @@ from pypdf import PdfReader
 
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
 
-PARSER_VERSION = "pypdf-6.14.2-markdown-v3"
+PARSER_VERSION = "pypdf-6.14.2-markdown-v4"
 TEXT_PARSER_VERSION = "text-markdown-v3"
 SOURCE_IR_VERSION = "document-source-ir-v1"
 MAX_CHUNK_TOKENS = 800
@@ -108,7 +108,16 @@ def _parse_pdf(data: bytes, *, max_pages: int) -> tuple[str, list[Page]]:
 def _parse_pdf_pypdf(data: bytes, *, max_pages: int) -> list[Page]:
     reader = PdfReader(io.BytesIO(data), strict=False)
     if reader.is_encrypted:
-        raise ValueError("encrypted_pdf")
+        # Some publishers apply AES encryption while leaving the user password
+        # empty.  Those files are readable in ordinary PDF viewers and should
+        # remain processable here.  Files that require an actual password are
+        # still rejected because the worker has no trusted password input.
+        try:
+            decrypted = reader.decrypt("")
+        except Exception as exc:
+            raise ValueError("encrypted_pdf") from exc
+        if not decrypted:
+            raise ValueError("encrypted_pdf")
     if len(reader.pages) > max_pages:
         raise ValueError("too_many_pages")
     raw_pages: list[str] = []

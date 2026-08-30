@@ -49,6 +49,9 @@ _PRESENTATION_TEMPORAL_EVIDENCE = re.compile(
 )
 _PRESENTATION_CJK = re.compile(r"[\u3400-\u9fff]")
 _PRESENTATION_LATIN_LETTER = re.compile(r"[A-Za-z]")
+_PRESENTATION_TRADITIONAL_CHINESE = re.compile(
+    r"[與萬專業東絲兩嚴個豐臨為麗舉義樂習鄉書買亂爭於雲亞產親億僅從倉們價眾優會偉傳傷倫體餘傾償兒兌黨蘭關興養獸內冊寫軍農凍淨凱劑劍劇劉則剛創刪務勳勢區醫華協單賣盧衛卻廠歷壓厭縣參雙發變敘臺葉號嘗嘆嚇國圖圓聖場壞塊堅壇壩墜壯聲處備復夠頭夾奪奮獎婦媽嬰孫學寧寶實審將屆屬歲島嶺巖幣帶幫幹庫應廟廢廣開異棄張強彈彙徹憶懷態戀戶撲擔擬拋挾掃掄掙掛採換揀損搶攝攜敵數斂斃斷無時曆機殺雜權條來楊極構標樓樹橋檔檢歐殘殼氣漢湯溝滅滿漁濟灣濕準溫滾滲潛潤澤燈靈災愛爺牆獨獲環現電畫當療瘋盡監盤礦碼磚禮禍種穩窩筆籌糧織練繳羅罷職聯聰肅腦臉舊艙艱藝節範藥蘇虛蟲術衛裝裏製複見觀規覺覽觸譽誌認訓記訴診詞該詳語誤說課請諸讀調談論謝識譯議護貓貝負財貢責費賀賓賞賠賢賬貨質贈趙趕跡踐車軌軟輪辦邊達遷過運還這進遠違連適選遞鄭釋鑒針鐘鋼錢錄鎮長門間隊陽險隱隻難雖雞離靜頂項順須領頻題額風飛飯館馬驗驚魚鳥麥黃點齊齒龍]"
+)
 _PRESENTATION_ENGLISH_WEEKDAY = re.compile(
     r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
     r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
@@ -346,6 +349,12 @@ def presentation_visible_language_violations(
     ):
         return []
 
+    simplified_chinese = str(task_contract.get("output_language") or "").casefold() in {
+        "zh-cn",
+        "zh_hans",
+        "zh-hans",
+    }
+
     def untranslated(value: Any, *, heading: bool = False) -> bool:
         text = re.sub(
             r"https?://\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b",
@@ -354,6 +363,8 @@ def presentation_visible_language_violations(
         ).strip()
         if not text:
             return False
+        if simplified_chinese and _PRESENTATION_TRADITIONAL_CHINESE.search(text):
+            return True
         if re.fullmatch(r"[A-Z]{2,8}(?:[- ]?\d{2,8}[A-Z]?)?", text):
             return False
         latin = len(_PRESENTATION_LATIN_LETTER.findall(text))
@@ -371,6 +382,7 @@ def presentation_visible_language_violations(
     table = arguments.get("table")
     headings = {
         "title": arguments.get("title"),
+        "filename": arguments.get("filename"),
         "table.title": table.get("title") if isinstance(table, Mapping) else None,
     }
     if isinstance(table, Mapping) and isinstance(table.get("columns"), list):

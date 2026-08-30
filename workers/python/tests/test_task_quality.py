@@ -179,6 +179,29 @@ class TaskQualityTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_simplified_chinese_presentation_rejects_traditional_title_and_filename(self) -> None:
+        contract = compile_task_contract("整理注意事项，并生成中文PPT", "work")
+        violations = validate_presentation_arguments(
+            {
+                "title": "錄取須知與重要注意事項",
+                "filename": "錄取須知與重要注意事項.pptx",
+                "brief": (
+                    "## 接受录取与缴费须知\n"
+                    "- 请在截止日期前确认录取并缴费。\n"
+                    "- 保留付款确认记录。"
+                ),
+                "slide_count": 3,
+            },
+            contract,
+        )
+
+        language = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_visible_language_mismatch"
+        )
+        self.assertEqual(language["affected_fields"], ["title", "filename"])
+
     def test_non_table_presentation_rejects_production_plan_as_audience_content(self) -> None:
         contract = compile_task_contract(
             "对比 CS5187.pdf、CS5297.pdf 和 CS5491.pdf，并用中文 PPT 展示",

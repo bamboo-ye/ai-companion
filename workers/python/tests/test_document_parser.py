@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import unittest
+
+from pypdf import PdfReader, PdfWriter
 
 from ai_companion_worker.document_parser import (
     MAX_CHUNK_TOKENS,
@@ -30,6 +33,15 @@ class DocumentParserTest(unittest.TestCase):
         result = parse_document(b"\n\n\n\n\n" + _sample_pdf(), "application/pdf")
         self.assertEqual(len(result.pages), 1)
         self.assertIn("Evidence lives on page one", result.pages[0].text)
+
+    def test_pdf_with_empty_password_aes_encryption_is_extracted(self) -> None:
+        result = parse_document(_encrypted_sample_pdf(""), "application/pdf")
+        self.assertEqual(len(result.pages), 1)
+        self.assertIn("Evidence lives on page one", result.pages[0].text)
+
+    def test_pdf_with_nonempty_password_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "encrypted_pdf"):
+            parse_document(_encrypted_sample_pdf("secret"), "application/pdf")
 
     def test_fixed_width_table_is_preserved_as_markdown_code(self) -> None:
         markdown = _layout_to_markdown("Name      Score\nAlice     98\nBob       87")
@@ -98,6 +110,17 @@ def _sample_pdf() -> bytes:
         f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     )
     return bytes(output)
+
+
+def _encrypted_sample_pdf(password: str) -> bytes:
+    source = PdfReader(io.BytesIO(_sample_pdf()))
+    writer = PdfWriter()
+    for page in source.pages:
+        writer.add_page(page)
+    writer.encrypt(user_password=password, algorithm="AES-256")
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 if __name__ == "__main__":
