@@ -36,7 +36,7 @@ from ai_companion_worker.task_quality import (
 )
 
 MAX_SOURCE_BYTES = 700 * 1024
-MAX_PDF_SOURCE_BYTES = 8 * 1024 * 1024
+MAX_PDF_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_DOCUMENT_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_DOCUMENT_CONTEXT_TOKENS = 4_000
 MAX_DOCUMENT_CONTEXT_ROUNDS = 4
@@ -52,6 +52,13 @@ PRESENTATION_ROWS_PER_SLIDE = 6
 PRESENTATION_TABLE_PAGE_CAPACITY = 12
 PRESENTATION_DETAIL_CELL_THRESHOLD = 320
 PRESENTATION_DETAIL_MAX_CHARS = 2_200
+CJK_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+)
 
 
 class ModelBackedOperationError(ValueError):
@@ -817,7 +824,7 @@ def _render_translated_pdf(text: str, target_language: str) -> bytes:
         getSampleStyleSheet,
     )
     from reportlab.pdfbase import pdfmetrics  # type: ignore[import-untyped]
-    from reportlab.pdfbase.cidfonts import UnicodeCIDFont  # type: ignore[import-untyped]
+    from reportlab.pdfbase.ttfonts import TTFont  # type: ignore[import-untyped]
     from reportlab.platypus import (  # type: ignore[import-untyped]
         PageBreak,
         Paragraph,
@@ -826,12 +833,13 @@ def _render_translated_pdf(text: str, target_language: str) -> bytes:
     )
 
     output = io.BytesIO()
-    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    font_name = "EmbeddedCJK"
+    pdfmetrics.registerFont(TTFont(font_name, _embedded_cjk_font_path(), subfontIndex=0))
     styles = getSampleStyleSheet()
     body_style = ParagraphStyle(
         "TranslatedBody",
         parent=styles["BodyText"],
-        fontName="STSong-Light",
+        fontName=font_name,
         fontSize=10.5,
         leading=16,
         alignment=TA_LEFT,
@@ -871,6 +879,18 @@ def _render_translated_pdf(text: str, target_language: str) -> bytes:
     )
     document.build(story)
     return output.getvalue()
+
+
+def _embedded_cjk_font_path() -> str:
+    configured = os.environ.get("PDF_CJK_FONT_PATH", "").strip()
+    if configured:
+        if os.path.isfile(configured):
+            return configured
+        raise ValueError("pdf_cjk_font_unavailable")
+    for candidate in CJK_FONT_CANDIDATES:
+        if os.path.isfile(candidate):
+            return candidate
+    raise ValueError("pdf_cjk_font_unavailable")
 
 
 def _read_csv(data: bytes) -> list[list[Any]]:

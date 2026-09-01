@@ -726,7 +726,7 @@ class OpenRouterDecisionPort:
             allow_direct=(
                 False
                 if structured_life_routing or artifact_pending
-                else _direct_response_allowed(module, routing_message, context)
+                else _direct_response_allowed(module, message, context)
             ),
         )
         if not name:
@@ -1337,6 +1337,10 @@ class OpenRouterDecisionPort:
                     return name, arguments, ""
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():
+                    if _looks_like_embedded_tool_call(content, tool_names):
+                        raise OpenRouterError(
+                            "OpenRouter embedded a tool call in response content"
+                        )
                     if not allow_direct:
                         raise OpenRouterError(
                             "direct response is forbidden for a project-data request"
@@ -2644,6 +2648,28 @@ def _direct_response_allowed(
     if _latest_observation_response(context):
         return True
     lowered = message.casefold()
+    attached_document_request = "<!--ai-document:" in lowered and any(
+        token in lowered
+        for token in (
+            "翻译",
+            "处理",
+            "提取",
+            "读取",
+            "整理",
+            "总结",
+            "分析",
+            "比较",
+            "生成",
+            "转换",
+            "translate",
+            "extract",
+            "summarize",
+            "analyse",
+            "analyze",
+            "compare",
+            "convert",
+        )
+    )
     life_data_request = (
         "今天" in lowered and any(token in lowered for token in ("计划", "安排", "待办"))
     ) or any(
@@ -2677,8 +2703,23 @@ def _direct_response_allowed(
     if module == "life":
         return not life_data_request
     if module == "work":
-        return not work_capability_request
+        return not (work_capability_request or attached_document_request)
     return not (life_data_request or work_capability_request)
+
+
+def _looks_like_embedded_tool_call(content: str, tool_names: set[str]) -> bool:
+    normalized = content.casefold()
+    tool_markers = (
+        "<｜dsml｜toolcalls>",
+        "<｜dsml｜invoke",
+        "<tool_call",
+        "<function_call",
+        '"tool_calls"',
+        '"function_call"',
+    )
+    if not any(marker in normalized for marker in tool_markers):
+        return False
+    return any(name.casefold() in normalized for name in tool_names)
 
 
 def _is_no_tool(name: str) -> bool:

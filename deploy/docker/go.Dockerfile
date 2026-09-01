@@ -26,7 +26,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY workers/python/pyproject.toml ./workers/python/pyproject.toml
 COPY workers/python/src ./workers/python/src
-RUN pip install --no-cache-dir ./workers/python \
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y fonts-wqy-zenhei \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir ./workers/python \
     && useradd --create-home --uid 10001 app \
     && mkdir -p /app/.data/files /app/.data/skill-files /app/.data/ledger-exports \
     && chown -R app:app /app/.data

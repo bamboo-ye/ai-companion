@@ -28,7 +28,7 @@ func (w *pdfWorker) Execute(_ context.Context, operation string, _ map[string]an
 	return skill.ToolResult{
 		Output: map[string]any{
 			"source_filename": "source.pdf", "output_filename": "source-Chinese.pdf",
-			"target_language": "Chinese", "page_count": float64(1), "source_overwritten": false,
+			"target_language": "Chinese", "page_count": float64(1), "parser_version": "pypdf-v1", "source_overwritten": false,
 			"model_usage": map[string]any{"cost_micros": float64(4)},
 		},
 		Files: []skill.FileOutput{{Name: "source-Chinese.pdf", MediaType: "application/pdf", Data: []byte("%PDF-translated")}},
@@ -905,7 +905,12 @@ func TestLedgerExportMonth(t *testing.T) {
 func TestWorkCharacterTranslatesAttachedPDF(t *testing.T) {
 	documentStore := document.NewMemoryStore()
 	documentService := document.NewService(documentStore, document.NewMemoryBlobStore(), 20<<20)
-	item, _, err := documentService.Upload(context.Background(), "user-1", "source.pdf", []byte("%PDF-1.4\nsource"))
+	item, _, err := documentService.Upload(
+		context.Background(),
+		"user-1",
+		"source.pdf",
+		[]byte("%PDF-1.4\n"+strings.Repeat("source", 1536<<10)),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,6 +956,11 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 	var extractor conversation.ModelToolDefinition
 	for _, tool := range tools {
 		names[tool.Name] = true
+		if required, exists := tool.Parameters["required"]; exists {
+			if _, ok := required.([]string); !ok {
+				t.Fatalf("work model tool %q has non-string required schema: %#v", tool.Name, required)
+			}
+		}
 		if tool.ComposeArguments {
 			composed[tool.Name] = true
 		}
