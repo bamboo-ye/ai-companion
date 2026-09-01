@@ -15,10 +15,12 @@ from pptx.util import Inches
 from reportlab.pdfgen import canvas
 
 from ai_companion_worker.office_tools import (
+    CJK_FONT_CANDIDATES,
     ModelBackedOperationError,
     _openrouter_translate,
     _presentation_display_rows,
     _presentation_render_text,
+    _render_translated_pdf,
     _translated_content,
     execute,
     main,
@@ -26,6 +28,20 @@ from ai_companion_worker.office_tools import (
 
 
 class OfficeToolsTest(unittest.TestCase):
+    @unittest.skipUnless(
+        any(os.path.isfile(path) for path in CJK_FONT_CANDIDATES),
+        "no local CJK font available",
+    )
+    def test_translated_pdf_embeds_cjk_font(self) -> None:
+        rendered = _render_translated_pdf(
+            "[[PAGE 1]]\n中文字体渲染测试\n生成式人工智能",
+            "中文",
+        )
+
+        self.assertTrue(rendered.startswith(b"%PDF"))
+        self.assertIn(b"/FontFile2", rendered)
+        self.assertNotIn(b"STSong-Light", rendered)
+
     def test_presentation_display_rows_keep_one_logical_record(self) -> None:
         schedule = "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(12))
         rows = _presentation_display_rows(

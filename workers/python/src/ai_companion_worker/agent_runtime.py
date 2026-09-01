@@ -2589,6 +2589,12 @@ def build_graph(
         started_ns: int,
         error: Exception,
     ) -> dict[str, Any]:
+        # A malformed trusted catalog is a local runtime contract failure, not
+        # a model-provider outage. Let the worker envelope classify it as
+        # runtime_contract even when an earlier provider attempt timed out and
+        # a later fallback returned successfully.
+        if isinstance(error, ValueError) and str(error).strip().startswith("trusted "):
+            raise error
         consumer = getattr(decisions, "consume_observability", None)
         raw_events = consumer() if callable(consumer) else []
         events = [dict(item) for item in raw_events if isinstance(item, dict)]

@@ -173,7 +173,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pdf_translate", Version: "1.0.0", DisplayName: "PDF 翻译", Category: "office",
+				Name: "office.pdf_translate", Version: "1.1.0", DisplayName: "PDF 翻译", Category: "office",
 				Description: "读取文本型 PDF，使用受预算约束的 OpenRouter 模型翻译正文并生成新的 PDF 文件，不覆盖源文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "document.translate_pdf", TimeoutMS: 300_000, MaxSteps: 8, MaxInputBytes: 30 << 20, ExecutionMode: "worker",
 				MaxCostMicros: 60_000,
@@ -181,9 +181,10 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 					"source_filename": map[string]any{"type": "string"}, "source_base64": map[string]any{"type": "string"}, "target_language": map[string]any{"type": "string"},
 					"output_filename": map[string]any{"type": "string"},
 				}),
-				OutputSchema: objectSchema([]string{"source_filename", "output_filename", "target_language", "page_count", "source_overwritten", "model_usage"}, map[string]any{
+				OutputSchema: objectSchema([]string{"source_filename", "output_filename", "target_language", "page_count", "parser_version", "source_overwritten", "model_usage"}, map[string]any{
 					"source_filename": map[string]any{"type": "string"}, "output_filename": map[string]any{"type": "string"}, "target_language": map[string]any{"type": "string"},
-					"page_count": map[string]any{"type": "integer"}, "source_overwritten": map[string]any{"type": "boolean"}, "model_usage": map[string]any{"type": "object"},
+					"page_count": map[string]any{"type": "integer"}, "parser_version": map[string]any{"type": "string"},
+					"source_overwritten": map[string]any{"type": "boolean"}, "model_usage": map[string]any{"type": "object"},
 				}),
 			},
 			Handler: officeWorkerHandler(worker, "pdf_translate"),

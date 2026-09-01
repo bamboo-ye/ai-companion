@@ -54,6 +54,12 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 			"coverage_ratio": float64(1), "rounds": []any{}, "source_ir": map[string]any{"version": "document-source-ir-v1"},
 			"cleaning_report": map[string]any{}, "low_quality_pages": []any{}, "source_overwritten": false,
 		}}, nil
+	case "pdf_translate":
+		return ToolResult{Output: map[string]any{
+			"source_filename": "source.pdf", "output_filename": "source-Chinese.pdf", "target_language": "中文",
+			"page_count": float64(2), "parser_version": "pypdf-v1", "source_overwritten": false,
+			"model_usage": map[string]any{"provider": "openrouter", "cost_micros": float64(4)},
+		}, Files: []FileOutput{{Name: "source-Chinese.pdf", MediaType: "application/pdf", Data: []byte("translated-pdf")}}}, nil
 	default:
 		return ToolResult{}, ErrNotFound
 	}
@@ -70,6 +76,21 @@ func TestDocumentExtractOutputContractMatchesWorker(t *testing.T) {
 		"source_filename": "source.pdf", "source_base64": base64.StdEncoding.EncodeToString([]byte("source")), "media_type": "application/pdf",
 	})
 	if err != nil || run.Status != "succeeded" || len(worker.calls) != 1 {
+		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
+	}
+}
+
+func TestPDFTranslateOutputContractMatchesWorkerParserMetadata(t *testing.T) {
+	worker := &fakeOfficeWorker{}
+	registry := NewRegistry()
+	if err := RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	run, _, err := service.Start(context.Background(), "u1", "office.pdf_translate", "translate-create", map[string]any{
+		"source_filename": "source.pdf", "source_base64": base64.StdEncoding.EncodeToString([]byte("source")), "target_language": "中文",
+	})
+	if err != nil || run.Status != "succeeded" || run.SkillVersion != "1.1.0" || len(worker.calls) != 1 {
 		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
 	}
 }

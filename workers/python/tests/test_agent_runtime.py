@@ -2610,6 +2610,70 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(replay["outcome"], "model_unavailable")
         self.assertEqual(decisions.decision_attempts, 1)
 
+    def test_trusted_tool_schema_failure_is_not_masked_by_provider_timeout(self) -> None:
+        class RoutingDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(
+                    ModelDecision(
+                        intent="work_translate_attached_pdf",
+                        tool_name="work_translate_attached_pdf",
+                        tool_arguments={},
+                    )
+                )
+                self.events = [
+                    {
+                        "kind": "model_call",
+                        "role": "router",
+                        "status": "error",
+                        "error_status": 408,
+                        "retryable": True,
+                    },
+                    {
+                        "kind": "model_call",
+                        "role": "router",
+                        "status": "succeeded",
+                        "error_status": 0,
+                        "retryable": False,
+                    },
+                ]
+
+            def consume_observability(self) -> list[dict[str, Any]]:
+                events, self.events = self.events, []
+                return events
+
+        decisions = RoutingDecisions()
+        graph = build_graph(
+            checkpointer=InMemorySaver(),
+            decisions=decisions,
+            tools=FakeTools(
+                ToolPreparation(
+                    status="completed",
+                    tool_name="work_translate_attached_pdf",
+                    response="unused",
+                )
+            ),
+        )
+        payload = agent_input("run-invalid-trusted-schema", "work")
+        payload["user_message"] = "帮我翻译附件"
+        payload["context"]["tools"] = [
+            {
+                "name": "work_translate_attached_pdf",
+                "description": "翻译附件",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": None,
+                    "additionalProperties": False,
+                },
+            }
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "trusted object required fields must be strings",
+        ):
+            AgentRuntime(graph).start(payload)
+
     def test_semantically_invalid_model_result_is_settled_before_checkpoint(self) -> None:
         class InvalidPlanDecisions(FakeDecisions):
             def __init__(self) -> None:

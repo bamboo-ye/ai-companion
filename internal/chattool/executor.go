@@ -172,6 +172,9 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 		return map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}
 	}
 	object := func(required []string, properties map[string]any) map[string]any {
+		if required == nil {
+			required = []string{}
+		}
 		return map[string]any{"type": "object", "required": required, "properties": properties, "additionalProperties": false}
 	}
 	stringField := func(description string) map[string]any {
@@ -572,8 +575,8 @@ func (e *Executor) translatePDF(ctx context.Context, request conversation.ToolRe
 	if item.MediaType != "application/pdf" {
 		return handled("work.pdf.translate", "当前文件不是 PDF。请上传文本型 PDF 后再让我翻译。", item), nil
 	}
-	if len(data) > 8<<20 {
-		return handled("work.pdf.translate", "这个 PDF 超过 8MB，暂时无法在聊天中直接翻译。", item), nil
+	if len(data) > 20<<20 {
+		return handled("work.pdf.translate", "这个 PDF 超过 20MB，暂时无法在聊天中直接翻译。", item), nil
 	}
 	targetLanguage := "Chinese"
 	if len(selectedLanguage) > 0 && strings.TrimSpace(selectedLanguage[0]) != "" {

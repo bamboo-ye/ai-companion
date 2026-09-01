@@ -1761,6 +1761,87 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             ["openrouter/free", "free/fallback"],
         )
 
+    def test_falls_back_when_model_embeds_known_tool_call_in_content(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": (
+                                    "我来处理。\n<｜DSML｜toolcalls>\n"
+                                    '<｜DSML｜invoke name="work_translate_attached_pdf">'
+                                    "</｜DSML｜invoke>"
+                                )
+                            }
+                        }
+                    ]
+                },
+                tool_response(
+                    "work_translate_attached_pdf",
+                    '{"target_language":"中文"}',
+                ),
+            ]
+        )
+        decision = port.decide(
+            module="work",
+            message="请处理",
+            context={
+                "tools": [
+                    {
+                        "name": "work_translate_attached_pdf",
+                        "description": "翻译附件 PDF",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "target_language": {"type": "string"},
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+        self.assertEqual(decision.tool_name, "work_translate_attached_pdf")
+        self.assertEqual(decision.tool_arguments, {"target_language": "中文"})
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback"],
+        )
+
+    def test_attached_document_action_cannot_finish_as_direct_text(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": "我来帮你翻译这份文件。"}}]},
+                tool_response(
+                    "work_translate_attached_pdf",
+                    '{"target_language":"中文"}',
+                ),
+            ]
+        )
+        decision = port.decide(
+            module="work",
+            message=(
+                "帮我翻译\n"
+                "<!--ai-document:doc-1|CS5494-week1.pdf-->"
+            ),
+            context={
+                "tools": [
+                    {
+                        "name": "work_translate_attached_pdf",
+                        "description": "翻译附件 PDF",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "target_language": {"type": "string"},
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+        self.assertEqual(decision.tool_name, "work_translate_attached_pdf")
+        self.assertEqual(len(port.requests), 2)
+
     def test_falls_back_when_first_model_rejects_tool_call_options(self) -> None:
         port = StubOpenRouter(
             [
