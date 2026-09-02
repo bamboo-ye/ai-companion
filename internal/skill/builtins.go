@@ -79,6 +79,12 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 			"rows":    map[string]any{"type": "array"},
 		},
 	}
+	presentationSourceDocumentSchema := map[string]any{
+		"type": "object", "required": []string{"filename", "media_type", "data_base64"}, "additionalProperties": false,
+		"properties": map[string]any{
+			"filename": map[string]any{"type": "string"}, "media_type": map[string]any{"type": "string"}, "data_base64": map[string]any{"type": "string"},
+		},
+	}
 	presentationInput := map[string]any{
 		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
 		"style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"},
@@ -86,22 +92,25 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		"table": presentationTableSchema, "task_contract": map[string]any{"type": "object"},
 		"mapping_contract": map[string]any{"type": "object"},
 		"source_coverage":  map[string]any{"type": "object"},
+		"source_documents": map[string]any{"type": "array", "maxItems": 3, "items": presentationSourceDocumentSchema},
+		"visual_mode":      map[string]any{"type": "string", "enum": []string{"auto", "source_only", "none"}},
 	}
 	presentationOutput := map[string]any{
 		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
 		"style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"},
 		"requested_slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"},
 		"source_coverage": map[string]any{"type": "object"}, "quality_report": map[string]any{"type": "object"},
+		"visual_report": map[string]any{"type": "object"}, "model_usage": map[string]any{"type": "object"},
 		"source_overwritten": map[string]any{"type": "boolean"},
 	}
 	definitions := []Definition{
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_outline", Version: "1.2.0", DisplayName: "PPTX 大纲", Category: "office",
+				Name: "office.pptx_outline", Version: "1.3.0", DisplayName: "PPTX 大纲", Category: "office",
 				Description: "根据受众、页数、风格和简报预览逐页大纲，不创建文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, MaxInputBytes: 2 << 20, ExecutionMode: "worker",
 				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
-				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
+				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "visual_report", "model_usage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_outline"),
@@ -122,11 +131,11 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.4.0", DisplayName: "PPTX 生成", Category: "office",
-				Description: "根据受众、页数、风格和简报直接生成新的演示文稿，不覆盖已有文件。", RiskLevel: "none", Enabled: true,
-				ToolName: "file.generate_pptx", TimeoutMS: 30_000, MaxSteps: 12, MaxInputBytes: 2 << 20, ExecutionMode: "worker",
+				Name: "office.pptx_generate", Version: "1.5.0", DisplayName: "PPTX 多模态生成", Category: "office",
+				Description: "根据受众、页数、风格和简报生成演示文稿；优先复用原文件图片，必要时生成配图并在失败时安全降级。", RiskLevel: "none", Enabled: true,
+				ToolName: "file.generate_pptx", TimeoutMS: 300_000, MaxSteps: 12, MaxInputBytes: 30 << 20, MaxOutputFileBytes: 32 << 20, MaxCostMicros: 250_000, ExecutionMode: "worker",
 				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
-				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "quality_report", "source_overwritten"}, presentationOutput),
+				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "visual_report", "model_usage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
 			Handler: officeWorkerHandler(worker, "pptx_generate"),

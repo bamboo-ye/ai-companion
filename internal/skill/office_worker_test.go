@@ -43,6 +43,8 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 		return ToolResult{Output: map[string]any{
 			"title": "课程介绍", "audience": "学生", "style": "简洁", "slide_count": float64(4),
 			"outline": []any{}, "source_coverage": map[string]any{"coverage_ratio": float64(1), "truncated": false},
+			"visual_report":  map[string]any{"policy_version": "presentation-visuals-v1", "placed_visual_count": float64(0)},
+			"model_usage":    map[string]any{"provider": "none", "cost_micros": float64(0)},
 			"quality_report": map[string]any{"passed": true, "violations": []any{}}, "source_overwritten": false,
 		}, Files: []FileOutput{{Name: "课程介绍.pptx", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")}}}, nil
 	case "document_extract":
@@ -114,8 +116,8 @@ func TestPPTXGenerationRunsWithoutConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, manifest := range manifests {
-		if manifest.Name == "office.pptx_generate" && manifest.MaxInputBytes != 2<<20 {
-			t.Fatalf("pptx max input bytes = %d", manifest.MaxInputBytes)
+		if manifest.Name == "office.pptx_generate" && (manifest.MaxInputBytes != 30<<20 || manifest.MaxOutputFileBytes != 32<<20 || manifest.MaxCostMicros != 250_000 || manifest.Version != "1.5.0") {
+			t.Fatalf("pptx manifest = %#v", manifest)
 		}
 	}
 	run, _, err := service.Start(context.Background(), "u1", "office.pptx_generate", "pptx-create", map[string]any{
