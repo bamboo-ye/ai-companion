@@ -564,6 +564,10 @@ def compile_task_contract(
     current = message.strip()
     normalized = _inherited_artifact_request(current, history)
     source_document_ids = _document_ids(current) or _document_ids(normalized)
+    visible_document_reference = bool(
+        re.search(r"(?m)^[\t ]*📎[\t ]+[^\r\n]+[\t ]*$", current)
+        or re.search(r"(?m)^[\t ]*📎[\t ]+[^\r\n]+[\t ]*$", normalized)
+    )
     visible = re.sub(r"<!--ai-document:[^>]+-->", "", normalized)
     lowered = visible.casefold()
     artifact_types = _artifact_types(normalized)
@@ -598,7 +602,11 @@ def compile_task_contract(
         "objective": normalized,
         "artifact_types": artifact_types,
         "source_document_ids": list(dict.fromkeys(source_document_ids)),
-        "source_required": "<!--ai-document:" in current or "<!--ai-document:" in normalized,
+        "source_required": (
+            "<!--ai-document:" in current
+            or "<!--ai-document:" in normalized
+            or visible_document_reference
+        ),
         "exhaustive": exhaustive,
         "requested_fields": requested_fields,
         "output_language": "zh-CN" if re.search(r"(?:中文|汉语|chinese)", lowered) else "",

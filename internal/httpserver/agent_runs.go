@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/chatattachment"
 )
 
 func (s *Server) getAgentRun(w http.ResponseWriter, r *http.Request) {
@@ -83,9 +84,53 @@ func (s *Server) retryAgentRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "agent_unavailable", Message: "Agent 运行时暂不可用"})
 		return
 	}
-	item, created, err := s.agentRuns.RetryChat(
-		r.Context(), currentAuth(r).User.ID, r.PathValue("run_id"),
-		r.Header.Get("Idempotency-Key"),
+	userID := currentAuth(r).User.ID
+	runID := r.PathValue("run_id")
+	idempotencyKey := r.Header.Get("Idempotency-Key")
+	if key := strings.TrimSpace(idempotencyKey); key == "" || len(key) > 128 {
+		writeAgentRunError(w, agent.ErrValidation)
+		return
+	}
+	prior, err := s.agentRuns.GetForUser(r.Context(), userID, runID)
+	if err != nil {
+		writeAgentRunError(w, err)
+		return
+	}
+	var payload map[string]any
+	if err = json.Unmarshal(prior.Input, &payload); err != nil || payload == nil {
+		writeAgentRunError(w, agent.ErrValidation)
+		return
+	}
+	repaired := false
+	if text, ok := payload["text"].(string); ok && len(chatattachment.DocumentIDs(text)) == 0 {
+		visible, documentIDs, resolveErr := s.resolveVisibleDocumentReferences(
+			r.Context(), userID, text,
+		)
+		if resolveErr != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, apiError{
+				Code:    "attachment_reference_invalid",
+				Message: "原消息中的附件无法关联到文档库，请重新选择文件后发送",
+			})
+			return
+		}
+		if len(documentIDs) > 0 {
+			for _, documentID := range documentIDs {
+				documentItem, documentErr := s.documents.Get(r.Context(), userID, documentID)
+				if documentErr != nil {
+					writeDocumentError(w, documentErr)
+					return
+				}
+				visible = chatattachment.AppendDocument(visible, documentItem.ID, documentItem.Name)
+			}
+			payload["text"] = visible
+			repaired = true
+		}
+	}
+	if repaired {
+		idempotencyKey = "attachment-repair-v1:" + runID
+	}
+	item, created, err := s.agentRuns.RetryChatWithPayload(
+		r.Context(), userID, runID, idempotencyKey, payload,
 	)
 	if err != nil {
 		writeAgentRunError(w, err)

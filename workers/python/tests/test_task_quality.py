@@ -24,6 +24,14 @@ class TaskQualityTests(unittest.TestCase):
         self.assertEqual(contract["requested_fields"], ["code", "name", "time"])
         self.assertEqual(contract["output_language"], "zh-CN")
 
+    def test_compile_contract_fails_closed_for_legacy_visible_attachment(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课并生成中文 PPT\n📎 courses.pdf",
+            "work",
+        )
+        self.assertTrue(contract["source_required"])
+        self.assertEqual(contract["source_document_ids"], [])
+
     def test_structured_presentation_arguments_cannot_fall_back_to_brief_only(self) -> None:
         contract = compile_task_contract(
             "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",

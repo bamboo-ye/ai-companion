@@ -17,3 +17,13 @@ func TestVisibleTextPreservesOrdinaryHTMLComments(t *testing.T) {
 		t.Fatalf("VisibleText() = %q", visible)
 	}
 }
+
+func TestVisibleDocumentNamesOnlyAcceptsStandaloneAttachmentLabels(t *testing.T) {
+	content := "请整理课表\n📎 courses.pdf\n正文中提到 📎 ignored.pdf"
+	if names := VisibleDocumentNames(content); len(names) != 1 || names[0] != "courses.pdf" {
+		t.Fatalf("VisibleDocumentNames() = %#v", names)
+	}
+	if visible := RemoveVisibleDocumentNames(content); visible != "请整理课表\n\n正文中提到 📎 ignored.pdf" {
+		t.Fatalf("RemoveVisibleDocumentNames() = %q", visible)
+	}
+}

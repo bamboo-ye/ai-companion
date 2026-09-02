@@ -19,7 +19,7 @@ var (
 
 const (
 	GraphName         = "ai-companion-supervisor"
-	GraphVersion      = "3.38.0"
+	GraphVersion      = "3.39.0"
 	DefaultRunTimeout = 15 * time.Minute
 )
 
@@ -176,6 +176,17 @@ func (s *Service) GetForUser(ctx context.Context, userID, runID string) (Run, er
 // original failed/cancelled exchange remains immutable, while the idempotency
 // key prevents a network replay from starting duplicate work.
 func (s *Service) RetryChat(ctx context.Context, userID, runID, idempotencyKey string) (Run, bool, error) {
+	return s.RetryChatWithPayload(ctx, userID, runID, idempotencyKey, nil)
+}
+
+// RetryChatWithPayload retries a terminal chat run while allowing the HTTP
+// boundary to repair trusted attachment metadata that was absent from legacy
+// input. A nil payload preserves the original retry behavior.
+func (s *Service) RetryChatWithPayload(
+	ctx context.Context,
+	userID, runID, idempotencyKey string,
+	payload map[string]any,
+) (Run, bool, error) {
 	userID = strings.TrimSpace(userID)
 	runID = strings.TrimSpace(runID)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -189,8 +200,14 @@ func (s *Service) RetryChat(ctx context.Context, userID, runID, idempotencyKey s
 	if prior.Status != "failed" && prior.Status != "timed_out" && prior.Status != "cancelled" {
 		return Run{}, false, ErrConflict
 	}
-	var payload map[string]any
-	if err = json.Unmarshal(prior.Input, &payload); err != nil || payload == nil {
+	var original map[string]any
+	if err = json.Unmarshal(prior.Input, &original); err != nil || original == nil {
+		return Run{}, false, ErrValidation
+	}
+	if payload == nil {
+		payload = original
+	} else if strings.TrimSpace(fmt.Sprint(payload["message_id"])) == "" ||
+		fmt.Sprint(payload["message_id"]) != fmt.Sprint(original["message_id"]) {
 		return Run{}, false, ErrValidation
 	}
 	return s.Create(ctx, CreateInput{
