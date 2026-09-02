@@ -18,7 +18,7 @@ func newTestService(t *testing.T) *Service {
 
 func TestNoSideEffectSkillRunsWithoutChangingRuntime(t *testing.T) {
 	service := newTestService(t)
-	if manifests, err := service.Skills(context.Background(), "u1"); err != nil || len(manifests) != 3 || manifests[0].Name != "office.email_draft" || manifests[0].Version != "2.1.0" || len(manifests[0].AllowedTools) != 1 || len(manifests[0].StateGraph) != 6 || manifests[0].MaxInputBytes != 64<<10 {
+	if manifests, err := service.Skills(context.Background(), "u1"); err != nil || len(manifests) != 3 || manifests[0].Name != "office.email_draft" || manifests[0].Version != "2.1.0" || len(manifests[0].AllowedTools) != 1 || len(manifests[0].StateGraph) != 6 || manifests[0].MaxInputBytes != 64<<10 || manifests[0].MaxOutputFileBytes != 10<<20 {
 		t.Fatalf("manifests = %#v", manifests)
 	}
 	run, created, err := service.Start(context.Background(), "u1", "office.translate", "translate-1", map[string]any{"text": "项目已经完成", "target_language": "English", "tone": "formal"})
@@ -31,6 +31,38 @@ func TestNoSideEffectSkillRunsWithoutChangingRuntime(t *testing.T) {
 	replayed, created, err := service.Start(context.Background(), "u1", "office.translate", "translate-1", map[string]any{"text": "ignored", "target_language": "English"})
 	if err != nil || created || replayed.ID != run.ID || len(replayed.Steps) != len(run.Steps) {
 		t.Fatalf("replay = %#v created=%v err=%v", replayed, created, err)
+	}
+}
+
+func TestGeneratedFileUsesPerSkillOutputBudget(t *testing.T) {
+	registry := NewRegistry()
+	err := registry.Register(Definition{Manifest: Manifest{
+		Name: "test.output_budget", Version: "1.0.0", DisplayName: "Output budget", Category: "test",
+		RiskLevel: "none", Enabled: true, ToolName: "file.output_budget", TimeoutMS: 1000, MaxSteps: 8,
+		MaxOutputFileBytes: 4,
+		InputSchema:        objectSchema(nil, map[string]any{"oversized": map[string]any{"type": "boolean"}}),
+		OutputSchema:       objectSchema([]string{"ok"}, map[string]any{"ok": map[string]any{"type": "boolean"}}),
+	}, Handler: HandlerFunc(func(_ context.Context, input map[string]any) (ToolResult, error) {
+		data := []byte("1234")
+		if input["oversized"] == true {
+			data = []byte("12345")
+		}
+		return ToolResult{Output: map[string]any{"ok": true}, Files: []FileOutput{{Name: "result.bin", MediaType: "application/octet-stream", Data: data}}}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	succeeded, _, err := service.Start(context.Background(), "u1", "test.output_budget", "output-budget-ok", map[string]any{})
+	if err != nil || succeeded.Status != "succeeded" || len(succeeded.Files) != 1 || succeeded.Files[0].SizeBytes != 4 {
+		t.Fatalf("succeeded = %#v err=%v", succeeded, err)
+	}
+	failed, _, err := service.Start(context.Background(), "u1", "test.output_budget", "output-budget-large", map[string]any{"oversized": true})
+	if err != nil || failed.Status != "failed" || failed.ErrorCode != "output_file_too_large" {
+		t.Fatalf("failed = %#v err=%v", failed, err)
+	}
+	if !strings.Contains(string(failed.Output), `"actual_bytes":5`) || !strings.Contains(string(failed.Output), `"limit_bytes":4`) {
+		t.Fatalf("failure details = %s", failed.Output)
 	}
 }
 
