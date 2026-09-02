@@ -28,7 +28,10 @@ func (w *pdfWorker) Execute(_ context.Context, operation string, _ map[string]an
 	return skill.ToolResult{
 		Output: map[string]any{
 			"source_filename": "source.pdf", "output_filename": "source-Chinese.pdf",
-			"target_language": "Chinese", "page_count": float64(1), "parser_version": "pypdf-v1", "source_overwritten": false,
+			"target_language": "Chinese", "page_count": float64(1), "parser_version": "pymupdf-v1-layout-v1", "source_overwritten": false,
+			"translation_round_count": float64(1), "visual_context_page_count": float64(1),
+			"layout_preserved": true, "text_block_count": float64(1), "image_count": float64(1),
+			"untranslated_block_count": float64(0), "overflow_block_count": float64(0),
 			"model_usage": map[string]any{"cost_micros": float64(4)},
 		},
 		Files: []skill.FileOutput{{Name: "source-Chinese.pdf", MediaType: "application/pdf", Data: []byte("%PDF-translated")}},

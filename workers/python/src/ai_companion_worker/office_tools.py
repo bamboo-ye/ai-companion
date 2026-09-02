@@ -23,9 +23,13 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
-from xml.sax.saxutils import escape
-
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
+from ai_companion_worker.pdf_translation_layout import (
+    PdfLayout,
+    PdfTextBlock,
+    extract_pdf_layout,
+    render_layout_translation,
+)
 from ai_companion_worker.task_quality import (
     presentation_audience_content_violations,
     presentation_exhaustive_scope_violations,
@@ -40,7 +44,9 @@ MAX_PDF_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_DOCUMENT_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_DOCUMENT_CONTEXT_TOKENS = 4_000
 MAX_DOCUMENT_CONTEXT_ROUNDS = 4
-MAX_PDF_TRANSLATION_CHARS = 40_000
+MAX_PDF_TRANSLATION_CHARS = 400_000
+MAX_TRANSLATION_BATCH_CHARS = 7_000
+MAX_TRANSLATION_BATCH_PAGES = 4
 MAX_TRANSLATION_COST_MICROS = 60_000
 MAX_MODEL_RESPONSE_BYTES = 4 << 20
 MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
@@ -598,7 +604,7 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
     source_name, source = _source_file(payload, {".pdf"}, MAX_PDF_SOURCE_BYTES)
     target_language = _required_text(payload, "target_language", 80)
     try:
-        parsed = parse_document(source, "application/pdf", max_pages=100)
+        layout = extract_pdf_layout(source, max_pages=100)
     except ValueError as exc:
         code = str(exc)
         if code == "too_many_pages":
@@ -606,15 +612,20 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
         if code == "no_extractable_text":
             raise ValueError("pdf_has_no_extractable_text") from exc
         raise
-    source_text = "\n\n".join(
-        f"[[PAGE {page.page_no}]]\n{page.text}" for page in parsed.pages if page.text.strip()
-    )
-    if len(source_text) > MAX_PDF_TRANSLATION_CHARS:
+    source_character_count = sum(len(block.text) for block in layout.blocks)
+    if source_character_count > MAX_PDF_TRANSLATION_CHARS:
         raise ValueError("pdf_text_is_too_long_for_translation")
     output_name = _pdf_output_name(payload.get("output_filename"), source_name, target_language)
-    translated, model_usage = _openrouter_translate(source_text, target_language)
+    translations, model_usage, translation_round_count = _translate_layout_blocks(
+        layout,
+        target_language,
+    )
     try:
-        output = _render_translated_pdf(translated, target_language)
+        output, layout_report = render_layout_translation(
+            layout,
+            translations,
+            font_path=_embedded_cjk_font_path(),
+        )
     except Exception as exc:
         raise ModelBackedOperationError("translation_render_failed", model_usage) from exc
     return {
@@ -622,16 +633,194 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
             "source_filename": source_name,
             "output_filename": output_name,
             "target_language": target_language,
-            "page_count": len(parsed.pages),
-            "parser_version": parsed.parser_version,
+            "page_count": layout.page_count,
+            "parser_version": layout.parser_version,
             "source_overwritten": False,
             "model_usage": model_usage,
+            "translation_round_count": translation_round_count,
+            "visual_context_page_count": len(layout.page_previews),
+            **layout_report,
         },
         "files": [_file(output_name, "application/pdf", output)],
     }
 
 
-def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[str, Any]]:
+def _translate_layout_blocks(
+    layout: PdfLayout,
+    target_language: str,
+) -> tuple[dict[str, str], dict[str, Any], int]:
+    batches = _translation_batches(layout.blocks)
+    translations: dict[str, str] = {}
+    usages: list[dict[str, Any]] = []
+    cost_limit = _translation_cost_limit()
+    used_cost = 0
+    for batch in batches:
+        remaining_cost = cost_limit - used_cost
+        if remaining_cost <= 0:
+            raise ModelBackedOperationError(
+                "translation_model_budget_exhausted",
+                _aggregate_translation_usage(usages, cost_limit),
+            )
+        text = "\n\n".join(f"{block.marker}\n{block.text}" for block in batch)
+        page_numbers = sorted({block.page_no for block in batch})
+        previews = [
+            (page_no, layout.page_previews[page_no])
+            for page_no in page_numbers
+            if page_no in layout.page_previews
+        ]
+        try:
+            translated, usage = _openrouter_translate(
+                text,
+                target_language,
+                page_previews=previews,
+                remaining_cost_micros=remaining_cost,
+            )
+        except ModelBackedOperationError as exc:
+            raise ModelBackedOperationError(
+                exc.code,
+                _aggregate_translation_usage([*usages, exc.model_usage], cost_limit),
+            ) from exc
+        except ValueError as exc:
+            if usages:
+                raise ModelBackedOperationError(
+                    str(exc),
+                    _aggregate_translation_usage(usages, cost_limit),
+                ) from exc
+            raise
+        used_cost += _non_negative_int(usage.get("cost_micros"))
+        usages.append(usage)
+        if used_cost > cost_limit:
+            raise ModelBackedOperationError(
+                "translation_model_budget_exhausted",
+                _aggregate_translation_usage(usages, cost_limit),
+            )
+        try:
+            translations.update(_parse_block_translations(translated, batch))
+        except ValueError as exc:
+            raise ModelBackedOperationError(
+                str(exc),
+                _aggregate_translation_usage(usages, cost_limit),
+            ) from exc
+    return translations, _aggregate_translation_usage(usages, cost_limit), len(batches)
+
+
+def _translation_batches(
+    blocks: tuple[PdfTextBlock, ...],
+) -> list[list[PdfTextBlock]]:
+    batches: list[list[PdfTextBlock]] = []
+    current: list[PdfTextBlock] = []
+    current_chars = 0
+    current_pages: set[int] = set()
+    for block in blocks:
+        block_chars = len(block.marker) + len(block.text) + 2
+        next_pages = current_pages | {block.page_no}
+        if current and (
+            current_chars + block_chars > MAX_TRANSLATION_BATCH_CHARS
+            or len(next_pages) > MAX_TRANSLATION_BATCH_PAGES
+        ):
+            batches.append(current)
+            current = []
+            current_chars = 0
+            current_pages = set()
+        current.append(block)
+        current_chars += block_chars
+        current_pages.add(block.page_no)
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _parse_block_translations(
+    translated: str,
+    blocks: list[PdfTextBlock],
+) -> dict[str, str]:
+    marker_pattern = re.compile(
+        r"^[ \t]*\[\[PAGE\s+(\d+)\s+BLOCK\s+(\d+)\]\][ \t]*\r?$",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    matches = list(marker_pattern.finditer(translated))
+    expected = [block.marker for block in blocks]
+    actual = [
+        f"[[PAGE {int(match.group(1))} BLOCK {int(match.group(2))}]]" for match in matches
+    ]
+    if actual != expected:
+        raise ValueError("translation_block_markers_invalid")
+    output: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(translated)
+        value = translated[start:end].strip()
+        if not value:
+            raise ValueError("translation_model_returned_empty_block")
+        output[actual[index]] = value
+    return output
+
+
+def _aggregate_translation_usage(
+    usages: list[dict[str, Any]],
+    max_cost_micros: int,
+) -> dict[str, Any]:
+    first = usages[0] if usages else {}
+    returned_models = {
+        str(usage.get("returned_model", "")) for usage in usages if usage.get("returned_model")
+    }
+    providers = {
+        str(usage.get("upstream_provider", ""))
+        for usage in usages
+        if usage.get("upstream_provider")
+    }
+    return {
+        "provider": first.get("provider", "openrouter"),
+        "config_version": first.get(
+            "config_version",
+            os.environ.get("MODEL_CONFIG_VERSION", "2026-08-structured-composer-v4"),
+        ),
+        "requested_model": first.get("requested_model", ""),
+        "returned_model": (
+            returned_models.pop()
+            if len(returned_models) == 1
+            else ("mixed" if returned_models else "")
+        ),
+        "upstream_provider": (
+            providers.pop() if len(providers) == 1 else ("mixed" if providers else "")
+        ),
+        "prompt_tokens": sum(_non_negative_int(usage.get("prompt_tokens")) for usage in usages),
+        "completion_tokens": sum(
+            _non_negative_int(usage.get("completion_tokens")) for usage in usages
+        ),
+        "cost_micros": sum(_non_negative_int(usage.get("cost_micros")) for usage in usages),
+        "cost_accounting": (
+            "reported"
+            if usages and all(usage.get("cost_accounting") == "reported" for usage in usages)
+            else "reserved_upper_bound"
+        ),
+        "latency_ms": sum(_non_negative_int(usage.get("latency_ms")) for usage in usages),
+        "max_cost_micros": max_cost_micros,
+        "round_count": len(usages),
+        "vision_page_count": sum(
+            _non_negative_int(usage.get("vision_page_count")) for usage in usages
+        ),
+    }
+
+
+def _translation_cost_limit() -> int:
+    return min(
+        _bounded_positive_int(
+            "MODEL_TRANSLATION_MAX_COST_MICROS",
+            MAX_TRANSLATION_COST_MICROS,
+            MAX_TRANSLATION_COST_MICROS,
+        ),
+        MAX_TRANSLATION_COST_MICROS,
+    )
+
+
+def _openrouter_translate(
+    text: str,
+    target_language: str,
+    *,
+    page_previews: list[tuple[int, bytes]] | None = None,
+    remaining_cost_micros: int | None = None,
+) -> tuple[str, dict[str, Any]]:
     provider = os.environ.get("MODEL_PROVIDER", "development").strip().lower()
     if provider != "openrouter":
         raise ValueError("translation_model_provider_must_be_openrouter")
@@ -645,31 +834,55 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
     if _dynamic_model(model):
         raise ValueError("translation_model_must_use_a_concrete_slug")
     configured_max_tokens = _bounded_positive_int("MODEL_TRANSLATION_MAX_TOKENS", 8_000, 32_768)
-    max_cost_micros = min(
-        _bounded_positive_int(
-            "MODEL_TRANSLATION_MAX_COST_MICROS",
-            MAX_TRANSLATION_COST_MICROS,
-            MAX_TRANSLATION_COST_MICROS,
-        ),
-        MAX_TRANSLATION_COST_MICROS,
-    )
+    max_cost_micros = _translation_cost_limit()
+    if remaining_cost_micros is not None:
+        max_cost_micros = min(max_cost_micros, max(0, remaining_cost_micros))
     prompt_price = _positive_decimal("MODEL_TRANSLATION_MAX_PROMPT_PRICE", "0.3")
     completion_price = _positive_decimal("MODEL_TRANSLATION_MAX_COMPLETION_PRICE", "2.5")
     if prompt_price > Decimal("0.3") or completion_price > Decimal("2.5"):
         raise ValueError("translation_model_price_ceiling_is_too_high")
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                f"Translate the supplied PDF text into {target_language}. "
-                "Preserve headings, paragraphs, lists and [[PAGE n]] markers. "
-                "Return only the translated text, without commentary."
-            ),
-        },
-        {"role": "user", "content": text},
-    ]
+    system_message = {
+        "role": "system",
+        "content": (
+            f"Translate the supplied PDF text into {target_language}. "
+            "The page images are visual context for charts, labels and layout only. "
+            "Preserve every [[PAGE n]] or [[PAGE n BLOCK m]] marker exactly, on its own line, "
+            "and in the original order. Translate every block completely without merging, "
+            "omitting or summarizing it. Keep the translation concise enough to fit the same "
+            "text box. Return only markers and translated text, without commentary."
+        ),
+    }
+    previews = page_previews or []
+    if previews:
+        user_content: str | list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for page_no, preview in previews:
+            user_content.extend(
+                [
+                    {"type": "text", "text": f"Visual reference for PDF page {page_no}:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/jpeg;base64,"
+                            + base64.b64encode(preview).decode("ascii"),
+                            "detail": "low",
+                        },
+                    },
+                ]
+            )
+    else:
+        user_content = text
+    messages = [system_message, {"role": "user", "content": user_content}]
+    text_only_messages = [system_message, {"role": "user", "content": text}]
     prompt_bound = (
-        len(json.dumps(messages, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 128
+        len(
+            json.dumps(
+                text_only_messages,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        + len(previews) * 1_024
+        + 128
     )
     reserved_prompt_cost = _decimal_ceil(Decimal(prompt_bound) * prompt_price)
     affordable_output_tokens = int(
@@ -730,6 +943,7 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
         "cost_accounting": "reserved_upper_bound",
         "latency_ms": latency_ms,
         "max_cost_micros": max_cost_micros,
+        "vision_page_count": len(previews),
     }
     if len(raw) > MAX_MODEL_RESPONSE_BYTES:
         raise ModelBackedOperationError("translation_model_response_too_large", model_usage)
@@ -780,7 +994,7 @@ def _openrouter_translate(text: str, target_language: str) -> tuple[str, dict[st
         if not code.startswith("translation_model_"):
             code = "translation_model_response_invalid"
         raise ModelBackedOperationError(code, model_usage) from exc
-    if _page_markers(translated) != _page_markers(text):
+    if _translation_markers(translated) != _translation_markers(text):
         raise ModelBackedOperationError("translation_page_markers_invalid", model_usage)
     return translated, model_usage
 
@@ -805,80 +1019,15 @@ def _translated_content(payload: dict[str, Any]) -> str:
     return translated
 
 
-def _page_markers(text: str) -> list[int]:
+def _translation_markers(text: str) -> list[tuple[int, int | None]]:
     return [
-        int(value)
-        for value in re.findall(
-            r"^[ \t]*\[\[PAGE\s+(\d+)\]\][ \t]*\r?$",
+        (int(page), int(block) if block else None)
+        for page, block in re.findall(
+            r"^[ \t]*\[\[PAGE\s+(\d+)(?:\s+BLOCK\s+(\d+))?\]\][ \t]*\r?$",
             text,
             re.IGNORECASE | re.MULTILINE,
         )
     ]
-
-
-def _render_translated_pdf(text: str, target_language: str) -> bytes:
-    from reportlab.lib.enums import TA_LEFT  # type: ignore[import-untyped]
-    from reportlab.lib.pagesizes import A4  # type: ignore[import-untyped]
-    from reportlab.lib.styles import (  # type: ignore[import-untyped]
-        ParagraphStyle,
-        getSampleStyleSheet,
-    )
-    from reportlab.pdfbase import pdfmetrics  # type: ignore[import-untyped]
-    from reportlab.pdfbase.ttfonts import TTFont  # type: ignore[import-untyped]
-    from reportlab.platypus import (  # type: ignore[import-untyped]
-        PageBreak,
-        Paragraph,
-        SimpleDocTemplate,
-        Spacer,
-    )
-
-    output = io.BytesIO()
-    font_name = "EmbeddedCJK"
-    pdfmetrics.registerFont(TTFont(font_name, _embedded_cjk_font_path(), subfontIndex=0))
-    styles = getSampleStyleSheet()
-    body_style = ParagraphStyle(
-        "TranslatedBody",
-        parent=styles["BodyText"],
-        fontName=font_name,
-        fontSize=10.5,
-        leading=16,
-        alignment=TA_LEFT,
-        spaceAfter=8,
-    )
-    heading_style = ParagraphStyle(
-        "TranslatedHeading",
-        parent=body_style,
-        fontSize=15,
-        leading=20,
-        spaceAfter=12,
-    )
-    story: list[Any] = [
-        Paragraph(escape(f"PDF Translation · {target_language}"), heading_style),
-        Spacer(1, 8),
-    ]
-    page_marker = re.compile(r"^\[\[PAGE\s+\d+\]\]$", re.IGNORECASE)
-    for block in re.split(r"\n\s*\n", text):
-        value = block.strip()
-        if not value:
-            continue
-        if page_marker.match(value):
-            if len(story) > 2:
-                story.append(PageBreak())
-            continue
-        story.append(
-            Paragraph("<br/>".join(escape(line) for line in value.splitlines()), body_style)
-        )
-    document = SimpleDocTemplate(
-        output,
-        pagesize=A4,
-        rightMargin=42,
-        leftMargin=42,
-        topMargin=42,
-        bottomMargin=42,
-        title=f"PDF Translation - {target_language}",
-    )
-    document.build(story)
-    return output.getvalue()
 
 
 def _embedded_cjk_font_path() -> str:

@@ -57,7 +57,10 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 	case "pdf_translate":
 		return ToolResult{Output: map[string]any{
 			"source_filename": "source.pdf", "output_filename": "source-Chinese.pdf", "target_language": "中文",
-			"page_count": float64(2), "parser_version": "pypdf-v1", "source_overwritten": false,
+			"page_count": float64(2), "parser_version": "pymupdf-v1-layout-v1", "source_overwritten": false,
+			"translation_round_count": float64(1), "visual_context_page_count": float64(2),
+			"layout_preserved": true, "text_block_count": float64(4), "image_count": float64(1),
+			"untranslated_block_count": float64(0), "overflow_block_count": float64(0),
 			"model_usage": map[string]any{"provider": "openrouter", "cost_micros": float64(4)},
 		}, Files: []FileOutput{{Name: "source-Chinese.pdf", MediaType: "application/pdf", Data: []byte("translated-pdf")}}}, nil
 	default:
@@ -90,7 +93,7 @@ func TestPDFTranslateOutputContractMatchesWorkerParserMetadata(t *testing.T) {
 	run, _, err := service.Start(context.Background(), "u1", "office.pdf_translate", "translate-create", map[string]any{
 		"source_filename": "source.pdf", "source_base64": base64.StdEncoding.EncodeToString([]byte("source")), "target_language": "中文",
 	})
-	if err != nil || run.Status != "succeeded" || run.SkillVersion != "1.1.0" || len(worker.calls) != 1 {
+	if err != nil || run.Status != "succeeded" || run.SkillVersion != "1.2.0" || len(worker.calls) != 1 {
 		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
 	}
 }

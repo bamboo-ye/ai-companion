@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const maxOfficeWorkerOutput = 15 << 20
+const maxOfficeWorkerOutput = 40 << 20
 
 type OfficeWorker interface {
 	Execute(context.Context, string, map[string]any) (ToolResult, error)

@@ -8,22 +8,32 @@ import unittest
 from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
+import pymupdf  # type: ignore[import-untyped]
+from PIL import Image
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
 from pptx.util import Inches
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from ai_companion_worker.office_tools import (
     CJK_FONT_CANDIDATES,
     ModelBackedOperationError,
     _openrouter_translate,
+    _translate_layout_blocks,
+    _translation_batches,
     _presentation_display_rows,
     _presentation_render_text,
-    _render_translated_pdf,
     _translated_content,
     execute,
     main,
+)
+from ai_companion_worker.pdf_translation_layout import (
+    PdfLayout,
+    PdfTextBlock,
+    extract_pdf_layout,
+    render_layout_translation,
 )
 
 
@@ -32,15 +42,46 @@ class OfficeToolsTest(unittest.TestCase):
         any(os.path.isfile(path) for path in CJK_FONT_CANDIDATES),
         "no local CJK font available",
     )
-    def test_translated_pdf_embeds_cjk_font(self) -> None:
-        rendered = _render_translated_pdf(
-            "[[PAGE 1]]\n中文字体渲染测试\n生成式人工智能",
-            "中文",
+    def test_translated_pdf_preserves_page_and_image_layout_while_replacing_text(self) -> None:
+        source = io.BytesIO()
+        document = canvas.Canvas(source, pagesize=(420, 300))
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (8, 8), (30, 120, 220)).save(image_bytes, format="PNG")
+        image = ImageReader(io.BytesIO(image_bytes.getvalue()))
+        document.drawImage(image, 230, 90, width=120, height=90)
+        document.setFont("Helvetica", 16)
+        document.drawString(40, 235, "Original heading")
+        document.setFont("Helvetica", 10)
+        document.drawString(40, 205, "Original body text")
+        document.save()
+
+        layout = extract_pdf_layout(source.getvalue())
+        translations = {
+            block.marker: ("中文标题" if block.block_no == 1 else "中文正文")
+            for block in layout.blocks
+        }
+        rendered, report = render_layout_translation(
+            layout,
+            translations,
+            font_path=next(path for path in CJK_FONT_CANDIDATES if os.path.isfile(path)),
         )
 
         self.assertTrue(rendered.startswith(b"%PDF"))
-        self.assertIn(b"/FontFile2", rendered)
-        self.assertNotIn(b"STSong-Light", rendered)
+        self.assertTrue(report["layout_preserved"])
+        self.assertEqual(report["image_count"], 1)
+        self.assertEqual(report["text_block_count"], 2)
+        translated = pymupdf.open(stream=rendered, filetype="pdf")
+        try:
+            self.assertEqual(translated.page_count, 1)
+            self.assertEqual((translated[0].rect.width, translated[0].rect.height), (420, 300))
+            self.assertEqual(len(translated[0].get_image_info(xrefs=True)), 1)
+            text = translated[0].get_text("text")
+            self.assertNotIn("Original heading", text)
+            self.assertNotIn("Original body text", text)
+            self.assertIn("中文标题", text)
+            self.assertIn("中文正文", text)
+        finally:
+            translated.close()
 
     def test_presentation_display_rows_keep_one_logical_record(self) -> None:
         schedule = "；".join(f"T{index:02d} 周一 09:00-09:50" for index in range(12))
@@ -117,6 +158,60 @@ class OfficeToolsTest(unittest.TestCase):
             "翻译结果",
         )
 
+    def test_layout_translation_batches_large_documents_without_merging_blocks(self) -> None:
+        blocks = tuple(
+            PdfTextBlock(
+                page_no=page_no,
+                block_no=1,
+                bbox=(10, 10, 200, 40),
+                text=f"Page {page_no} source text",
+                font_size=10,
+                color=(0, 0, 0),
+                rotation=0,
+            )
+            for page_no in range(1, 6)
+        )
+        layout = PdfLayout(
+            source=b"%PDF-layout-test",
+            parser_version="pymupdf-test-layout-v1",
+            page_count=5,
+            blocks=blocks,
+            page_previews={page_no: b"jpeg" for page_no in range(1, 6)},
+            page_sizes=tuple((300, 200) for _ in range(5)),
+            page_rotations=(0, 0, 0, 0, 0),
+            image_placements=(),
+        )
+        self.assertEqual([len(batch) for batch in _translation_batches(blocks)], [4, 1])
+
+        def translated(text: str, _target: str, **kwargs: object) -> tuple[str, dict[str, object]]:
+            previews = kwargs.get("page_previews")
+            return text.replace("source text", "中文内容"), {
+                "provider": "openrouter",
+                "requested_model": "openai/gpt-5-mini",
+                "returned_model": "openai/gpt-5-mini",
+                "upstream_provider": "OpenAI",
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost_micros": 10,
+                "cost_accounting": "reported",
+                "latency_ms": 5,
+                "vision_page_count": len(previews) if isinstance(previews, list) else 0,
+            }
+
+        with patch(
+            "ai_companion_worker.office_tools._openrouter_translate",
+            side_effect=translated,
+        ) as translate:
+            translations, usage, rounds = _translate_layout_blocks(layout, "Chinese")
+
+        self.assertEqual(translate.call_count, 2)
+        self.assertEqual(rounds, 2)
+        self.assertEqual(len(translations), 5)
+        self.assertTrue(all(value.endswith("中文内容") for value in translations.values()))
+        self.assertEqual(usage["cost_micros"], 20)
+        self.assertEqual(usage["vision_page_count"], 5)
+        self.assertEqual(usage["round_count"], 2)
+
     @patch("urllib.request.urlopen")
     def test_pdf_translation_uses_budgeted_openrouter_policy_and_usage(self, urlopen: Mock) -> None:
         response = urlopen.return_value.__enter__.return_value
@@ -170,6 +265,54 @@ class OfficeToolsTest(unittest.TestCase):
             body["provider"]["max_price"],
             {"prompt": 0.3, "completion": 2.5},
         )
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_sends_page_preview_as_low_detail_visual_context(
+        self,
+        urlopen: Mock,
+    ) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "provider": "OpenAI",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": "[[PAGE 1 BLOCK 1]]\n中文标题",
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 200,
+                    "completion_tokens": 20,
+                    "cost": 0.00001,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+            },
+        ):
+            translated, usage = _openrouter_translate(
+                "[[PAGE 1 BLOCK 1]]\nHeading",
+                "Chinese",
+                page_previews=[(1, b"jpeg-preview")],
+            )
+
+        self.assertEqual(translated, "[[PAGE 1 BLOCK 1]]\n中文标题")
+        self.assertEqual(usage["vision_page_count"], 1)
+        body = json.loads(urlopen.call_args.args[0].data)
+        content = body["messages"][1]["content"]
+        image_parts = [item for item in content if item["type"] == "image_url"]
+        self.assertEqual(len(image_parts), 1)
+        self.assertEqual(image_parts[0]["image_url"]["detail"], "low")
+        self.assertTrue(image_parts[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
 
     @patch("urllib.request.urlopen")
     def test_pdf_translation_rejects_truncated_response_and_retains_usage(
@@ -297,10 +440,10 @@ class OfficeToolsTest(unittest.TestCase):
         with (
             patch(
                 "ai_companion_worker.office_tools._openrouter_translate",
-                return_value=("[[PAGE 1]]\nTranslated page", usage),
+                return_value=("[[PAGE 1 BLOCK 1]]\nTranslated page", usage),
             ),
             patch(
-                "ai_companion_worker.office_tools._render_translated_pdf",
+                "ai_companion_worker.office_tools.render_layout_translation",
                 side_effect=RuntimeError("render exploded"),
             ),
         ):
@@ -314,7 +457,9 @@ class OfficeToolsTest(unittest.TestCase):
                     },
                 )
         self.assertEqual(caught.exception.code, "translation_render_failed")
-        self.assertEqual(caught.exception.model_usage, usage)
+        self.assertEqual(caught.exception.model_usage["provider"], usage["provider"])
+        self.assertEqual(caught.exception.model_usage["cost_micros"], usage["cost_micros"])
+        self.assertEqual(caught.exception.model_usage["round_count"], 1)
 
     def test_main_transports_billed_operation_failure_as_structured_output(
         self,
