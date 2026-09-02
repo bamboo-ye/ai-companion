@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import math
 import re
+import shutil
+import subprocess
+import tempfile
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import median
 from typing import Any
 
 import pymupdf  # type: ignore[import-untyped]
+from PIL import Image
 
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
 from ai_companion_worker.translation_language import normalize_translated_script
@@ -17,10 +22,13 @@ MAX_LAYOUT_PAGES = 100
 MAX_TEXT_BLOCK_CHARS = 20_000
 PREVIEW_MAX_DIMENSION = 420
 PREVIEW_JPEG_QUALITY = 35
+MIN_READABLE_TRANSLATION_FONT_SIZE = 6.0
 _WHITESPACE = re.compile(r"[ \t]+")
 _BULLET_PREFIX = re.compile(
     r"^(?P<indent>[ \t]*)(?:[•◦▪▫●○‣⁃‧∙·◆◇►▸▶▷✓✔☑]|(?:\d+|[A-Za-z])[.)])(?:[ \t]+|$)"
 )
+_TRAILING_BULLET = re.compile(r"\s*[•◦▪▫●○‣⁃‧∙·◆◇►▸▶▷✓✔☑]+\s*$")
+_INLINE_BULLET = re.compile(r"\s+[•◦▪▫●○‣⁃‧∙·◆◇►▸▶▷✓✔☑]+\s+")
 _UNSAFE_OUTPUT_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
 _SAFE_CHARACTER_REPLACEMENTS = str.maketrans(
     {
@@ -77,6 +85,14 @@ class PdfLayout:
         return len(self.image_placements)
 
 
+@dataclass(frozen=True)
+class _TranslationPlan:
+    group: tuple[PdfTextBlock, ...]
+    block: PdfTextBlock
+    text: str
+    font_size: float | None
+
+
 def extract_pdf_layout(source: bytes, *, max_pages: int = MAX_LAYOUT_PAGES) -> PdfLayout:
     normalized = normalize_pdf_bytes(source)
     document = pymupdf.open(stream=normalized, filetype="pdf")
@@ -129,7 +145,7 @@ def render_layout_translation(
         raise ValueError("translation_block_markers_invalid")
 
     document = pymupdf.open(stream=layout.source, filetype="pdf")
-    overflow_markers: list[str] = []
+    preserved_markers: list[str] = []
     try:
         blocks_by_page: dict[int, list[PdfTextBlock]] = {}
         for block in layout.blocks:
@@ -138,36 +154,53 @@ def render_layout_translation(
         embedded_font = pymupdf.Font(fontfile=font_path)
         for page_no, blocks in blocks_by_page.items():
             page = document[page_no - 1]
-            for block in blocks:
-                page.add_redact_annot(
-                    pymupdf.Rect(block.bbox),
-                    fill=False,
-                    cross_out=False,
-                )
+            font_name = f"TranslatedCJK{page_no}"
+            probe = pymupdf.open()
+            try:
+                probe_page = probe.new_page(width=page.rect.width, height=page.rect.height)
+                probe_page.insert_font(fontname=font_name, fontfile=font_path)
+                plans = [
+                    _translation_plan(
+                        probe_page,
+                        group,
+                        translations,
+                        embedded_font,
+                        font_name,
+                        simplified_chinese=simplified_chinese,
+                    )
+                    for group in _overlapping_text_groups(blocks)
+                ]
+            finally:
+                probe.close()
+
+            translated_plans = [plan for plan in plans if plan.font_size is not None]
+            for plan in plans:
+                if plan.font_size is None:
+                    preserved_markers.extend(item.marker for item in plan.group)
+                    continue
+                for block in plan.group:
+                    page.add_redact_annot(
+                        pymupdf.Rect(block.bbox),
+                        fill=False,
+                        cross_out=False,
+                    )
+            if not translated_plans:
+                continue
             page.apply_redactions(
                 images=pymupdf.PDF_REDACT_IMAGE_NONE,
                 graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
                 text=pymupdf.PDF_REDACT_TEXT_REMOVE,
             )
-            font_name = f"TranslatedCJK{page_no}"
             page.insert_font(fontname=font_name, fontfile=font_path)
-            for group in _overlapping_text_groups(blocks):
-                block = _merged_text_block(group)
-                translated = _normalize_translation(
-                    "\n".join(translations[item.marker] for item in group)
-                )
-                translated = normalize_translated_script(
-                    translated,
-                    simplified_chinese=simplified_chinese,
-                )
-                if not translated:
-                    raise ValueError("translation_model_returned_empty_block")
-                _validate_font_support(translated, embedded_font)
-                if not _insert_fitted_text(page, block, translated, font_name):
-                    overflow_markers.extend(item.marker for item in group)
-
-        if overflow_markers:
-            raise ValueError("translated_text_does_not_fit_layout")
+            for plan in translated_plans:
+                if plan.font_size is None or not _insert_text_at_size(
+                    page,
+                    plan.block,
+                    plan.text,
+                    font_name,
+                    plan.font_size,
+                ):
+                    raise ValueError("translated_text_does_not_fit_layout")
         document.subset_fonts()
         rendered = document.tobytes(
             garbage=4,
@@ -182,12 +215,13 @@ def render_layout_translation(
         layout,
         rendered,
         simplified_chinese=simplified_chinese,
+        has_preserved_original_text=bool(preserved_markers),
     )
     return rendered, {
         "layout_preserved": True,
         "text_block_count": len(layout.blocks),
         "image_count": layout.image_count,
-        "untranslated_block_count": 0,
+        "untranslated_block_count": len(preserved_markers),
         "overflow_block_count": 0,
     }
 
@@ -305,12 +339,16 @@ def _normalize_translation(value: str) -> str:
         if bullet:
             indent = " " * min(6, len(bullet.group("indent").expandtabs(2)))
             content = _WHITESPACE.sub(" ", raw_line[bullet.end() :]).strip()
+            content = _TRAILING_BULLET.sub("", content).strip()
+            content = _INLINE_BULLET.sub(" - ", content).strip()
             if content:
                 output.append(f"{indent}- {content}")
             else:
                 pending_bullet_indent = indent
             continue
         content = _WHITESPACE.sub(" ", raw_line).strip()
+        content = _TRAILING_BULLET.sub("", content).strip()
+        content = _INLINE_BULLET.sub(" - ", content).strip()
         if not content:
             continue
         if pending_bullet_indent is not None:
@@ -372,25 +410,49 @@ def _merged_text_block(group: tuple[PdfTextBlock, ...]) -> PdfTextBlock:
     )
 
 
-def _validate_font_support(text: str, font: Any) -> None:
-    unsupported = sorted(
-        {
-            character
-            for character in text
-            if character not in "\n\r\t" and not font.has_glyph(ord(character))
-        }
+def _translation_plan(
+    probe_page: Any,
+    group: tuple[PdfTextBlock, ...],
+    translations: dict[str, str],
+    font: Any,
+    font_name: str,
+    *,
+    simplified_chinese: bool,
+) -> _TranslationPlan:
+    block = _merged_text_block(group)
+    translated = _normalize_translation("\n".join(translations[item.marker] for item in group))
+    translated = normalize_translated_script(
+        translated,
+        simplified_chinese=simplified_chinese,
     )
-    if unsupported:
-        raise ValueError("translated_text_contains_unsupported_glyphs")
+    if not translated:
+        raise ValueError("translation_model_returned_empty_block")
+    if any(
+        character not in "\n\r\t" and not font.has_glyph(ord(character))
+        for character in translated
+    ):
+        return _TranslationPlan(group=group, block=block, text=translated, font_size=None)
+    font_size = _fitted_text_size(probe_page, block, translated, font_name)
+    return _TranslationPlan(group=group, block=block, text=translated, font_size=font_size)
 
 
-def _insert_fitted_text(page: Any, block: PdfTextBlock, text: str, font_name: str) -> bool:
+def _text_rect(block: PdfTextBlock) -> Any:
     rect = pymupdf.Rect(block.bbox)
     if rect.width > 4.0 and rect.height > 2.0:
         rect = pymupdf.Rect(rect.x0 + 0.5, rect.y0 + 0.2, rect.x1 - 0.5, rect.y1 - 0.2)
-    start_size = min(72.0, max(4.0, block.font_size * 0.90))
+    return rect
+
+
+def _fitted_text_size(page: Any, block: PdfTextBlock, text: str, font_name: str) -> float | None:
+    rect = _text_rect(block)
+    start_size = min(72.0, max(MIN_READABLE_TRANSLATION_FONT_SIZE, block.font_size * 0.90))
     size = start_size
-    while size >= 3.0:
+    tried: set[float] = set()
+    while size >= MIN_READABLE_TRANSLATION_FONT_SIZE:
+        size = round(max(MIN_READABLE_TRANSLATION_FONT_SIZE, size), 2)
+        if size in tried:
+            break
+        tried.add(size)
         spare = page.insert_textbox(
             rect,
             text,
@@ -403,9 +465,30 @@ def _insert_fitted_text(page: Any, block: PdfTextBlock, text: str, font_name: st
             overlay=True,
         )
         if spare >= -0.01:
-            return True
+            return size
         size -= 0.5
-    return False
+    return None
+
+
+def _insert_text_at_size(
+    page: Any,
+    block: PdfTextBlock,
+    text: str,
+    font_name: str,
+    font_size: float,
+) -> bool:
+    spare = page.insert_textbox(
+        _text_rect(block),
+        text,
+        fontname=font_name,
+        fontsize=font_size,
+        lineheight=1.12,
+        color=block.color,
+        align=pymupdf.TEXT_ALIGN_LEFT,
+        rotate=block.rotation,
+        overlay=True,
+    )
+    return spare >= -0.01
 
 
 def _validate_layout_output(
@@ -413,6 +496,7 @@ def _validate_layout_output(
     rendered: bytes,
     *,
     simplified_chinese: bool,
+    has_preserved_original_text: bool,
 ) -> None:
     output = pymupdf.open(stream=rendered, filetype="pdf")
     try:
@@ -436,14 +520,16 @@ def _validate_layout_output(
             text = page.get_text("text")
             if _UNSAFE_OUTPUT_CHARACTER.search(text):
                 raise ValueError("translated_pdf_contains_invalid_glyphs")
-            if simplified_chinese and normalize_translated_script(
-                text,
-                simplified_chinese=True,
-            ) != text:
+            if (
+                simplified_chinese
+                and not has_preserved_original_text
+                and normalize_translated_script(text, simplified_chinese=True) != text
+            ):
                 raise ValueError("translated_pdf_contains_traditional_chinese")
             _validate_page_text_collisions(page)
     finally:
         output.close()
+    _validate_cross_renderer_page_coverage(layout.source, rendered)
 
 
 def _validate_page_text_collisions(page: Any) -> None:
@@ -463,3 +549,48 @@ def _validate_page_text_collisions(page: Any) -> None:
                 and intersection.get_area() / minimum_area >= 0.35
             ):
                 raise ValueError("translated_pdf_contains_overlapping_text")
+
+
+def _validate_cross_renderer_page_coverage(source: bytes, rendered: bytes) -> None:
+    executable = shutil.which("pdftoppm")
+    if not executable:
+        raise ValueError("pdf_cross_renderer_is_not_available")
+    with tempfile.TemporaryDirectory(prefix="pdf-translation-qa-") as directory:
+        root = Path(directory)
+        source_path = root / "source.pdf"
+        rendered_path = root / "rendered.pdf"
+        source_path.write_bytes(source)
+        rendered_path.write_bytes(rendered)
+        source_pages = _render_poppler_pages(executable, source_path, root / "source")
+        rendered_pages = _render_poppler_pages(executable, rendered_path, root / "rendered")
+        if len(source_pages) != len(rendered_pages):
+            raise ValueError("translated_pdf_cross_renderer_page_count_changed")
+        for source_page, rendered_page in zip(source_pages, rendered_pages, strict=True):
+            source_ink = _rendered_page_ink_ratio(source_page)
+            rendered_ink = _rendered_page_ink_ratio(rendered_page)
+            if source_ink >= 0.001 and rendered_ink / source_ink < 0.50:
+                raise ValueError("translated_pdf_visual_content_missing")
+
+
+def _render_poppler_pages(executable: str, pdf_path: Path, prefix: Path) -> list[Path]:
+    completed = subprocess.run(
+        [executable, "-gray", "-png", "-r", "18", str(pdf_path), str(prefix)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        check=False,
+        timeout=120,
+    )
+    if completed.returncode != 0:
+        raise ValueError("pdf_cross_renderer_failed")
+    pages = sorted(prefix.parent.glob(f"{prefix.name}-*.png"))
+    if not pages:
+        raise ValueError("pdf_cross_renderer_returned_no_pages")
+    return pages
+
+
+def _rendered_page_ink_ratio(path: Path) -> float:
+    with Image.open(path) as image:
+        grayscale = image.convert("L")
+        pixels = grayscale.tobytes()
+    return sum(value < 245 for value in pixels) / max(1, len(pixels))

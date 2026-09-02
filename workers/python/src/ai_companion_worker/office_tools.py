@@ -60,8 +60,8 @@ PRESENTATION_TABLE_PAGE_CAPACITY = 12
 PRESENTATION_DETAIL_CELL_THRESHOLD = 320
 PRESENTATION_DETAIL_MAX_CHARS = 2_200
 CJK_FONT_CANDIDATES = (
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Supplemental/Songti.ttc",

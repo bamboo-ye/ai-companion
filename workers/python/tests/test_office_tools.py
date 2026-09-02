@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import os
+import shutil
 import unittest
 from dataclasses import replace
 from unittest.mock import Mock, patch
@@ -35,11 +36,34 @@ from ai_companion_worker.pdf_translation_layout import (
     PdfTextBlock,
     extract_pdf_layout,
     render_layout_translation,
+    _normalize_translation,
+    _validate_cross_renderer_page_coverage,
 )
 from ai_companion_worker.translation_language import translation_language_policy
 
 
 class OfficeToolsTest(unittest.TestCase):
+    def test_translation_normalization_removes_unrenderable_inline_bullets(self) -> None:
+        normalized = _normalize_translation("• 第一项 •\n• 第二项")
+
+        self.assertEqual(normalized, "- 第一项\n- 第二项")
+        self.assertNotIn("•", normalized)
+
+    @unittest.skipUnless(shutil.which("pdftoppm"), "Poppler is not available")
+    def test_cross_renderer_validation_rejects_visually_blank_page(self) -> None:
+        visible = io.BytesIO()
+        document = canvas.Canvas(visible, pagesize=(420, 300))
+        document.setFillColorRGB(0, 0, 0)
+        document.rect(40, 40, 340, 220, fill=1, stroke=0)
+        document.save()
+        blank = io.BytesIO()
+        document = canvas.Canvas(blank, pagesize=(420, 300))
+        document.showPage()
+        document.save()
+
+        with self.assertRaisesRegex(ValueError, "visual_content_missing"):
+            _validate_cross_renderer_page_coverage(visible.getvalue(), blank.getvalue())
+
     def test_generic_chinese_target_uses_simplified_chinese_policy(self) -> None:
         for target in ("中文", "Chinese", "zh", "普通話"):
             policy = translation_language_policy(target)
@@ -89,6 +113,37 @@ class OfficeToolsTest(unittest.TestCase):
             self.assertNotIn("Original body text", text)
             self.assertIn("中文标题", text)
             self.assertIn("中文正文", text)
+        finally:
+            translated.close()
+
+    @unittest.skipUnless(
+        any(os.path.isfile(path) for path in CJK_FONT_CANDIDATES),
+        "no local CJK font available",
+    )
+    def test_translated_pdf_preserves_original_when_translation_is_not_legible(self) -> None:
+        source = io.BytesIO()
+        document = canvas.Canvas(source, pagesize=(420, 300))
+        document.setFont("Helvetica", 10)
+        document.drawString(40, 235, "Keep this original content")
+        document.save()
+
+        layout = extract_pdf_layout(source.getvalue())
+        translations = {
+            layout.blocks[0].marker: "\n".join(f"无法容纳的翻译行 {index}" for index in range(20))
+        }
+        rendered, report = render_layout_translation(
+            layout,
+            translations,
+            font_path=next(path for path in CJK_FONT_CANDIDATES if os.path.isfile(path)),
+            simplified_chinese=True,
+        )
+
+        self.assertEqual(report["untranslated_block_count"], 1)
+        translated = pymupdf.open(stream=rendered, filetype="pdf")
+        try:
+            text = translated[0].get_text("text")
+            self.assertIn("Keep this original content", text)
+            self.assertNotIn("无法容纳", text)
         finally:
             translated.close()
 

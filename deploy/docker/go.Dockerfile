@@ -27,7 +27,7 @@ WORKDIR /app
 COPY workers/python/pyproject.toml ./workers/python/pyproject.toml
 COPY workers/python/src ./workers/python/src
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y fonts-noto-cjk fonts-wqy-zenhei \
+    && apt-get install --no-install-recommends -y fonts-wqy-zenhei poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir ./workers/python \
     && useradd --create-home --uid 10001 app \
