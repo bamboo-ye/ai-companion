@@ -38,6 +38,7 @@ from ai_companion_worker.task_quality import (
     presentation_table_language_violations,
     presentation_visible_language_violations,
 )
+from ai_companion_worker.translation_language import translation_language_policy
 
 MAX_SOURCE_BYTES = 700 * 1024
 MAX_PDF_SOURCE_BYTES = 20 * 1024 * 1024
@@ -59,8 +60,8 @@ PRESENTATION_TABLE_PAGE_CAPACITY = 12
 PRESENTATION_DETAIL_CELL_THRESHOLD = 320
 PRESENTATION_DETAIL_MAX_CHARS = 2_200
 CJK_FONT_CANDIDATES = (
-    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Supplemental/Songti.ttc",
@@ -602,7 +603,7 @@ def _profile_tabular(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
     source_name, source = _source_file(payload, {".pdf"}, MAX_PDF_SOURCE_BYTES)
-    target_language = _required_text(payload, "target_language", 80)
+    language = translation_language_policy(_required_text(payload, "target_language", 80))
     try:
         layout = extract_pdf_layout(source, max_pages=100)
     except ValueError as exc:
@@ -615,16 +616,17 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
     source_character_count = sum(len(block.text) for block in layout.blocks)
     if source_character_count > MAX_PDF_TRANSLATION_CHARS:
         raise ValueError("pdf_text_is_too_long_for_translation")
-    output_name = _pdf_output_name(payload.get("output_filename"), source_name, target_language)
+    output_name = _pdf_output_name(payload.get("output_filename"), source_name, language.output_label)
     translations, model_usage, translation_round_count = _translate_layout_blocks(
         layout,
-        target_language,
+        language.model_label,
     )
     try:
         output, layout_report = render_layout_translation(
             layout,
             translations,
             font_path=_embedded_cjk_font_path(),
+            simplified_chinese=language.simplified_chinese,
         )
     except Exception as exc:
         raise ModelBackedOperationError("translation_render_failed", model_usage) from exc
@@ -632,7 +634,7 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
         "output": {
             "source_filename": source_name,
             "output_filename": output_name,
-            "target_language": target_language,
+            "target_language": language.output_label,
             "page_count": layout.page_count,
             "parser_version": layout.parser_version,
             "source_overwritten": False,
@@ -850,6 +852,8 @@ def _openrouter_translate(
             "and in the original order. Translate every block completely without merging, "
             "omitting or summarizing it. Keep the translation concise enough to fit the same "
             "text box. Return only markers and translated text, without commentary."
+            " Use plain ASCII hyphens for list bullets, avoid emoji or decorative symbols, "
+            "and preserve mathematical notation as text."
         ),
     }
     previews = page_previews or []

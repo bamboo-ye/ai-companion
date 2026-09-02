@@ -5,6 +5,7 @@ import io
 import json
 import os
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
@@ -35,9 +36,17 @@ from ai_companion_worker.pdf_translation_layout import (
     extract_pdf_layout,
     render_layout_translation,
 )
+from ai_companion_worker.translation_language import translation_language_policy
 
 
 class OfficeToolsTest(unittest.TestCase):
+    def test_generic_chinese_target_uses_simplified_chinese_policy(self) -> None:
+        for target in ("中文", "Chinese", "zh", "普通話"):
+            policy = translation_language_policy(target)
+            self.assertTrue(policy.simplified_chinese)
+            self.assertEqual(policy.output_label, "简体中文")
+            self.assertIn("仅使用简体字", policy.model_label)
+
     @unittest.skipUnless(
         any(os.path.isfile(path) for path in CJK_FONT_CANDIDATES),
         "no local CJK font available",
@@ -80,6 +89,46 @@ class OfficeToolsTest(unittest.TestCase):
             self.assertNotIn("Original body text", text)
             self.assertIn("中文标题", text)
             self.assertIn("中文正文", text)
+        finally:
+            translated.close()
+
+    @unittest.skipUnless(
+        any(os.path.isfile(path) for path in CJK_FONT_CANDIDATES),
+        "no local CJK font available",
+    )
+    def test_translated_pdf_normalizes_script_symbols_and_duplicate_layout_boxes(self) -> None:
+        source = io.BytesIO()
+        document = canvas.Canvas(source, pagesize=(420, 300))
+        document.setFont("Helvetica", 12)
+        document.drawString(40, 235, "First source label")
+        document.save()
+
+        extracted = extract_pdf_layout(source.getvalue())
+        first = extracted.blocks[0]
+        second = replace(first, block_no=2, text="Second source label")
+        layout = replace(extracted, blocks=(first, second))
+        rendered, report = render_layout_translation(
+            layout,
+            {
+                first.marker: "• 異或問題",
+                second.marker: "🙂 • 表徵學習",
+            },
+            font_path=next(path for path in CJK_FONT_CANDIDATES if os.path.isfile(path)),
+            simplified_chinese=True,
+        )
+
+        self.assertEqual(report["text_block_count"], 2)
+        translated = pymupdf.open(stream=rendered, filetype="pdf")
+        try:
+            text = translated[0].get_text("text")
+            searchable = text.replace("\u2011", "-").replace("\xa0", " ")
+            self.assertIn("- 异或问题", searchable)
+            self.assertIn("- 表征学习", searchable)
+            self.assertNotIn("異", text)
+            self.assertNotIn("徵", text)
+            self.assertNotIn("\x00", text)
+            blocks = [block for block in translated[0].get_text("blocks") if int(block[6]) == 0]
+            self.assertEqual(len(blocks), 1)
         finally:
             translated.close()
 
