@@ -9,6 +9,7 @@ import (
 var (
 	documentPattern         = regexp.MustCompile(`<!--ai-document:([0-9a-fA-F-]{36})(?:\|([^>]*))?-->`)
 	internalMetadataPattern = regexp.MustCompile(`(?s)<!--\s*ai-(?:document|generated-file|ledger-export|skill-run|agent-run|generation-job):.*?-->`)
+	visibleDocumentPattern  = regexp.MustCompile(`(?m)^[\t ]*📎[\t ]+([^\r\n]+?)[\t ]*$`)
 )
 
 func AppendDocument(content, documentID, name string) string {
@@ -31,6 +32,34 @@ func DocumentIDs(content string) []string {
 		}
 	}
 	return result
+}
+
+// VisibleDocumentNames recovers attachment names from legacy messages that
+// persisted the UI label instead of the internal document marker. Only a
+// standalone line beginning with the attachment glyph is accepted so an
+// ordinary filename mentioned in prose cannot silently bind a document.
+func VisibleDocumentNames(content string) []string {
+	matches := visibleDocumentPattern.FindAllStringSubmatch(content, -1)
+	result := make([]string, 0, len(matches))
+	seen := map[string]bool{}
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		result = append(result, name)
+	}
+	return result
+}
+
+// RemoveVisibleDocumentNames removes only legacy standalone attachment-label
+// lines after they have been resolved to trusted user-owned document IDs.
+func RemoveVisibleDocumentNames(content string) string {
+	return strings.TrimSpace(visibleDocumentPattern.ReplaceAllString(content, ""))
 }
 
 func VisibleText(content string) string {

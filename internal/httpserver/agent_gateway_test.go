@@ -193,6 +193,81 @@ func performAgentJSON(t *testing.T, server *Server, method, path, token string, 
 	return response
 }
 
+func TestResolveVisibleDocumentReferencesRestoresTrustedAttachmentID(t *testing.T) {
+	server := New(config.Config{
+		HTTPAddr: ":0", ServiceName: "test", Environment: "test",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	documentItem, _, err := server.documents.Upload(
+		context.Background(), "user-1", "courses.pdf", []byte("%PDF-1.4\n%%EOF"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible, ids, err := server.resolveVisibleDocumentReferences(
+		context.Background(), "user-1", "生成中文 PPT\n📎 courses.pdf",
+	)
+	if err != nil || visible != "生成中文 PPT" || len(ids) != 1 || ids[0] != documentItem.ID {
+		t.Fatalf("resolveVisibleDocumentReferences() = %q, %#v, %v", visible, ids, err)
+	}
+	if _, _, err = server.resolveVisibleDocumentReferences(
+		context.Background(), "user-2", "生成中文 PPT\n📎 courses.pdf",
+	); err == nil {
+		t.Fatal("cross-user visible attachment reference must not resolve")
+	}
+}
+
+func TestRetryAgentRunRepairsLegacyVisibleAttachment(t *testing.T) {
+	server := New(config.Config{
+		HTTPAddr: ":0", ServiceName: "test", Environment: "test",
+		AuthTokenSecret: "agent-retry-http-secret-with-enough-entropy",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
+		"email": "agent-retry@example.com", "password": "correct-horse-battery",
+		"display_name": "Agent Retry", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "agent-retry", "name": "Agent Retry", "platform": "web"},
+	})
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(register.Body.Bytes(), &tokens); err != nil {
+		t.Fatal(err)
+	}
+	documentItem, _, err := server.documents.Upload(
+		context.Background(), tokens.User.ID, "courses.pdf", []byte("%PDF-1.4\n%%EOF"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyInput, _ := json.Marshal(map[string]any{
+		"message_id": "message-legacy", "text": "生成中文 PPT\n📎 courses.pdf",
+	})
+	store := &agentHTTPStore{run: agent.Run{
+		ID: "failed-run", ThreadID: "failed-run", UserID: tokens.User.ID,
+		ConversationID: "conversation-1", CharacterID: "character-1", Module: "work",
+		Status: "failed", Input: legacyInput, Revision: 3,
+	}}
+	server.SetAgentStore(store)
+	request := httptest.NewRequest(http.MethodPost, "/v1/agent-runs/failed-run/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	request.Header.Set("Idempotency-Key", "failed-run:retry")
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var retriedInput map[string]any
+	if err = json.Unmarshal(store.run.Input, &retriedInput); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := retriedInput["text"].(string)
+	if !strings.Contains(text, documentItem.ID) || strings.Contains(text, "📎") {
+		t.Fatalf("repaired retry text = %q", text)
+	}
+}
+
 func TestAgentChatFeatureFlagCreatesOnlyAgentRunAndResolvesApproval(t *testing.T) {
 	server := New(config.Config{
 		HTTPAddr: ":0", ServiceName: "test", Environment: "test",

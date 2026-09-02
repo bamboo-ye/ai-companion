@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,32 @@ func TestRetryChatKeepsOriginalMessageAndCreatesIdempotentRunInput(t *testing.T)
 	var payload map[string]any
 	if err = json.Unmarshal(retried.Input, &payload); err != nil ||
 		payload["message_id"] != "message-1" || payload["text"] != "查看今日计划" {
+		t.Fatalf("retry payload = %#v, %v", payload, err)
+	}
+}
+
+func TestRetryChatWithPayloadRepairsLegacyAttachmentMetadata(t *testing.T) {
+	priorInput, _ := json.Marshal(map[string]any{
+		"message_id": "message-1", "text": "生成 PPT\n📎 courses.pdf",
+	})
+	store := &serviceStore{run: Run{
+		ID: "failed-run", UserID: "user-1", ConversationID: "conversation-1",
+		CharacterID: "character-1", Module: "work", Status: "failed", Input: priorInput,
+	}}
+	service := NewService(store)
+	repaired := map[string]any{
+		"message_id": "message-1",
+		"text":       "生成 PPT\n<!--ai-document:11111111-1111-1111-1111-111111111111|courses.pdf-->",
+	}
+	retried, created, err := service.RetryChatWithPayload(
+		context.Background(), "user-1", "failed-run", "attachment-repair-v1", repaired,
+	)
+	if err != nil || !created {
+		t.Fatalf("RetryChatWithPayload() = %#v, %v, %v", retried, created, err)
+	}
+	var payload map[string]any
+	if err = json.Unmarshal(retried.Input, &payload); err != nil ||
+		!strings.Contains(payload["text"].(string), "<!--ai-document:") {
 		t.Fatalf("retry payload = %#v, %v", payload, err)
 	}
 }

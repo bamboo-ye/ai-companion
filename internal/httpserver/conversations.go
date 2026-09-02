@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +80,20 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "too_many_attachments", Message: "单条消息最多发送 3 个文件"})
 		return
 	}
+	visibleContent := strings.TrimSpace(input.Content)
+	if len(input.DocumentIDs) == 0 {
+		var resolveErr error
+		visibleContent, input.DocumentIDs, resolveErr = s.resolveVisibleDocumentReferences(
+			r.Context(), auth.User.ID, visibleContent,
+		)
+		if resolveErr != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, apiError{
+				Code:    "attachment_reference_invalid",
+				Message: "消息中的附件无法关联到文档库，请重新选择文件后发送",
+			})
+			return
+		}
+	}
 	documents := make([]document.Document, 0, len(input.DocumentIDs))
 	for _, documentID := range input.DocumentIDs {
 		item, documentErr := s.documents.Get(r.Context(), auth.User.ID, documentID)
@@ -88,7 +103,6 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		documents = append(documents, item)
 	}
-	visibleContent := strings.TrimSpace(input.Content)
 	if visibleContent == "" && len(input.DocumentIDs) > 0 {
 		visibleContent = "请处理这个文件"
 	}
@@ -187,6 +201,43 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"message": message, "job": job})
+}
+
+// resolveVisibleDocumentReferences repairs legacy messages that contain only
+// the rendered attachment label ("📎 filename") and have lost document_ids.
+// Resolution is exact-name, user-scoped and newest-first; unresolved labels
+// fail closed instead of letting an exhaustive artifact task run source-free.
+func (s *Server) resolveVisibleDocumentReferences(
+	ctx context.Context,
+	userID string,
+	content string,
+) (string, []string, error) {
+	names := chatattachment.VisibleDocumentNames(content)
+	if len(names) == 0 {
+		return content, nil, nil
+	}
+	if len(names) > 3 {
+		return content, nil, document.ErrValidation
+	}
+	items, err := s.documents.List(ctx, userID)
+	if err != nil {
+		return content, nil, err
+	}
+	resolved := make([]string, 0, len(names))
+	for _, name := range names {
+		found := ""
+		for _, item := range items {
+			if item.Name == name && item.Status != "failed" && item.Status != "deleted" {
+				found = item.ID
+				break
+			}
+		}
+		if found == "" {
+			return content, nil, document.ErrNotFound
+		}
+		resolved = append(resolved, found)
+	}
+	return chatattachment.RemoveVisibleDocumentNames(content), resolved, nil
 }
 
 func requiresDurableArtifactAgent(content string) bool {
