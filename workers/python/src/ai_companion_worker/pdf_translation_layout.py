@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from statistics import median
@@ -10,12 +11,39 @@ from typing import Any
 import pymupdf  # type: ignore[import-untyped]
 
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
+from ai_companion_worker.translation_language import normalize_translated_script
 
 MAX_LAYOUT_PAGES = 100
 MAX_TEXT_BLOCK_CHARS = 20_000
 PREVIEW_MAX_DIMENSION = 420
 PREVIEW_JPEG_QUALITY = 35
 _WHITESPACE = re.compile(r"[ \t]+")
+_BULLET_PREFIX = re.compile(
+    r"^(?P<indent>[ \t]*)(?:[•◦▪▫●○‣⁃‧∙·◆◇►▸▶▷✓✔☑]|(?:\d+|[A-Za-z])[.)])(?:[ \t]+|$)"
+)
+_UNSAFE_OUTPUT_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
+_SAFE_CHARACTER_REPLACEMENTS = str.maketrans(
+    {
+        "‐": "-",
+        "‑": "-",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "−": "-",
+        "→": "->",
+        "←": "<-",
+        "↔": "<->",
+        "⇒": "=>",
+        "⇐": "<=",
+        "⇔": "<=>",
+        "☺": "",
+        "☻": "",
+        "🙂": "",
+        "😀": "",
+        "😊": "",
+        "😉": "",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -94,6 +122,7 @@ def render_layout_translation(
     translations: dict[str, str],
     *,
     font_path: str,
+    simplified_chinese: bool = False,
 ) -> tuple[bytes, dict[str, Any]]:
     expected_markers = {block.marker for block in layout.blocks}
     if set(translations) != expected_markers:
@@ -106,6 +135,7 @@ def render_layout_translation(
         for block in layout.blocks:
             blocks_by_page.setdefault(block.page_no, []).append(block)
 
+        embedded_font = pymupdf.Font(fontfile=font_path)
         for page_no, blocks in blocks_by_page.items():
             page = document[page_no - 1]
             for block in blocks:
@@ -121,12 +151,20 @@ def render_layout_translation(
             )
             font_name = f"TranslatedCJK{page_no}"
             page.insert_font(fontname=font_name, fontfile=font_path)
-            for block in blocks:
-                translated = _normalize_translation(translations[block.marker])
+            for group in _overlapping_text_groups(blocks):
+                block = _merged_text_block(group)
+                translated = _normalize_translation(
+                    "\n".join(translations[item.marker] for item in group)
+                )
+                translated = normalize_translated_script(
+                    translated,
+                    simplified_chinese=simplified_chinese,
+                )
                 if not translated:
                     raise ValueError("translation_model_returned_empty_block")
+                _validate_font_support(translated, embedded_font)
                 if not _insert_fitted_text(page, block, translated, font_name):
-                    overflow_markers.append(block.marker)
+                    overflow_markers.extend(item.marker for item in group)
 
         if overflow_markers:
             raise ValueError("translated_text_does_not_fit_layout")
@@ -140,7 +178,11 @@ def render_layout_translation(
     finally:
         document.close()
 
-    _validate_layout_output(layout, rendered)
+    _validate_layout_output(
+        layout,
+        rendered,
+        simplified_chinese=simplified_chinese,
+    )
     return rendered, {
         "layout_preserved": True,
         "text_block_count": len(layout.blocks),
@@ -254,21 +296,107 @@ def _dominant_rotation(directions: list[tuple[float, float]]) -> int:
 
 
 def _normalize_translation(value: str) -> str:
-    lines = [_WHITESPACE.sub(" ", line).strip() for line in value.splitlines()]
-    return "\n".join(line for line in lines if line).strip()
+    output: list[str] = []
+    pending_bullet_indent: str | None = None
+    for raw_line in unicodedata.normalize("NFC", str(value or "")).splitlines():
+        raw_line = raw_line.translate(_SAFE_CHARACTER_REPLACEMENTS)
+        raw_line = raw_line.replace("\ufe0f", "").replace("\u200d", "")
+        bullet = _BULLET_PREFIX.match(raw_line)
+        if bullet:
+            indent = " " * min(6, len(bullet.group("indent").expandtabs(2)))
+            content = _WHITESPACE.sub(" ", raw_line[bullet.end() :]).strip()
+            if content:
+                output.append(f"{indent}- {content}")
+            else:
+                pending_bullet_indent = indent
+            continue
+        content = _WHITESPACE.sub(" ", raw_line).strip()
+        if not content:
+            continue
+        if pending_bullet_indent is not None:
+            output.append(f"{pending_bullet_indent}- {content}")
+            pending_bullet_indent = None
+        else:
+            output.append(content)
+    if pending_bullet_indent is not None:
+        output.append(f"{pending_bullet_indent}-")
+    return "\n".join(output).strip()
+
+
+def _overlapping_text_groups(blocks: list[PdfTextBlock]) -> list[tuple[PdfTextBlock, ...]]:
+    remaining = list(blocks)
+    groups: list[tuple[PdfTextBlock, ...]] = []
+    while remaining:
+        group = [remaining.pop(0)]
+        changed = True
+        while changed:
+            changed = False
+            for candidate in list(remaining):
+                if any(_near_duplicate_layout_box(candidate, member) for member in group):
+                    group.append(candidate)
+                    remaining.remove(candidate)
+                    changed = True
+        groups.append(tuple(group))
+    return groups
+
+
+def _near_duplicate_layout_box(left: PdfTextBlock, right: PdfTextBlock) -> bool:
+    if left.rotation != right.rotation:
+        return False
+    left_rect = pymupdf.Rect(left.bbox)
+    right_rect = pymupdf.Rect(right.bbox)
+    intersection = left_rect & right_rect
+    minimum_area = min(left_rect.get_area(), right_rect.get_area())
+    return (
+        abs(left_rect.x0 - right_rect.x0) <= 4.0
+        and abs(left_rect.y0 - right_rect.y0) <= 4.0
+        and minimum_area > 0
+        and intersection.get_area() / minimum_area >= 0.72
+    )
+
+
+def _merged_text_block(group: tuple[PdfTextBlock, ...]) -> PdfTextBlock:
+    if len(group) == 1:
+        return group[0]
+    rect = pymupdf.Rect(group[0].bbox)
+    for block in group[1:]:
+        rect |= pymupdf.Rect(block.bbox)
+    return PdfTextBlock(
+        page_no=group[0].page_no,
+        block_no=group[0].block_no,
+        bbox=(float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)),
+        text="\n".join(block.text for block in group),
+        font_size=float(median(block.font_size for block in group)),
+        color=Counter(block.color for block in group).most_common(1)[0][0],
+        rotation=group[0].rotation,
+    )
+
+
+def _validate_font_support(text: str, font: Any) -> None:
+    unsupported = sorted(
+        {
+            character
+            for character in text
+            if character not in "\n\r\t" and not font.has_glyph(ord(character))
+        }
+    )
+    if unsupported:
+        raise ValueError("translated_text_contains_unsupported_glyphs")
 
 
 def _insert_fitted_text(page: Any, block: PdfTextBlock, text: str, font_name: str) -> bool:
     rect = pymupdf.Rect(block.bbox)
-    start_size = min(72.0, max(4.0, block.font_size * 0.92))
+    if rect.width > 4.0 and rect.height > 2.0:
+        rect = pymupdf.Rect(rect.x0 + 0.5, rect.y0 + 0.2, rect.x1 - 0.5, rect.y1 - 0.2)
+    start_size = min(72.0, max(4.0, block.font_size * 0.90))
     size = start_size
-    while size >= 3.5:
+    while size >= 3.0:
         spare = page.insert_textbox(
             rect,
             text,
             fontname=font_name,
             fontsize=size,
-            lineheight=1.05,
+            lineheight=1.12,
             color=block.color,
             align=pymupdf.TEXT_ALIGN_LEFT,
             rotate=block.rotation,
@@ -280,7 +408,12 @@ def _insert_fitted_text(page: Any, block: PdfTextBlock, text: str, font_name: st
     return False
 
 
-def _validate_layout_output(layout: PdfLayout, rendered: bytes) -> None:
+def _validate_layout_output(
+    layout: PdfLayout,
+    rendered: bytes,
+    *,
+    simplified_chinese: bool,
+) -> None:
     output = pymupdf.open(stream=rendered, filetype="pdf")
     try:
         if output.page_count != layout.page_count:
@@ -299,5 +432,34 @@ def _validate_layout_output(layout: PdfLayout, rendered: bytes) -> None:
             images.extend(_page_image_placements(page, index + 1))
         if tuple(images) != layout.image_placements:
             raise ValueError("translated_pdf_image_layout_changed")
+        for page in output:
+            text = page.get_text("text")
+            if _UNSAFE_OUTPUT_CHARACTER.search(text):
+                raise ValueError("translated_pdf_contains_invalid_glyphs")
+            if simplified_chinese and normalize_translated_script(
+                text,
+                simplified_chinese=True,
+            ) != text:
+                raise ValueError("translated_pdf_contains_traditional_chinese")
+            _validate_page_text_collisions(page)
     finally:
         output.close()
+
+
+def _validate_page_text_collisions(page: Any) -> None:
+    blocks = [
+        pymupdf.Rect(block[:4])
+        for block in page.get_text("blocks", sort=True)
+        if int(block[6]) == 0 and str(block[4]).strip()
+    ]
+    for index, left in enumerate(blocks):
+        for right in blocks[index + 1 :]:
+            intersection = left & right
+            minimum_area = min(left.get_area(), right.get_area())
+            if (
+                minimum_area > 0
+                and intersection.width > 0.8
+                and intersection.height > 0.8
+                and intersection.get_area() / minimum_area >= 0.35
+            ):
+                raise ValueError("translated_pdf_contains_overlapping_text")
