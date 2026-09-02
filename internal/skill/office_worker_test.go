@@ -93,7 +93,7 @@ func TestPDFTranslateOutputContractMatchesWorkerParserMetadata(t *testing.T) {
 	run, _, err := service.Start(context.Background(), "u1", "office.pdf_translate", "translate-create", map[string]any{
 		"source_filename": "source.pdf", "source_base64": base64.StdEncoding.EncodeToString([]byte("source")), "target_language": "中文",
 	})
-	if err != nil || run.Status != "succeeded" || run.SkillVersion != "1.3.0" || len(worker.calls) != 1 {
+	if err != nil || run.Status != "succeeded" || run.SkillVersion != "1.3.1" || len(worker.calls) != 1 {
 		t.Fatalf("run = %#v calls=%v err=%v", run, worker.calls, err)
 	}
 	manifest, err := service.ManifestForUser(context.Background(), "u1", "office.pdf_translate")

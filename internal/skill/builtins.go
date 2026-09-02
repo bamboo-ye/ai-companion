@@ -173,7 +173,7 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pdf_translate", Version: "1.3.0", DisplayName: "PDF 多模态翻译", Category: "office",
+				Name: "office.pdf_translate", Version: "1.3.1", DisplayName: "PDF 多模态翻译", Category: "office",
 				Description: "结合页面视觉上下文分轮翻译 PDF，仅替换文字块并保留原页面、图片、图表和坐标，不覆盖源文件。", RiskLevel: "none", Enabled: true,
 				ToolName: "document.translate_pdf", TimeoutMS: 900_000, MaxSteps: 8, MaxInputBytes: 30 << 20, MaxOutputFileBytes: 32 << 20, ExecutionMode: "worker",
 				MaxCostMicros: 60_000,
