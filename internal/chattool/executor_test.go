@@ -2,6 +2,7 @@ package chattool
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/windcry1/ai-companion/internal/skill"
 )
 
-type pdfWorker struct{ operation string }
+type pdfWorker struct {
+	operation string
+	input     map[string]any
+}
 
 type chatLedgerExporter struct{}
 
@@ -23,8 +27,18 @@ func (chatLedgerExporter) Export(_ context.Context, _ ledger.ExportPayload) ([]b
 	return []byte("PK-chat-ledger-workbook"), nil
 }
 
-func (w *pdfWorker) Execute(_ context.Context, operation string, _ map[string]any) (skill.ToolResult, error) {
+func (w *pdfWorker) Execute(_ context.Context, operation string, input map[string]any) (skill.ToolResult, error) {
 	w.operation = operation
+	w.input = input
+	if operation == "pptx_generate" {
+		return skill.ToolResult{Output: map[string]any{
+			"title": "课程介绍", "audience": "学生", "style": "简洁", "slide_count": float64(4),
+			"outline": []any{}, "source_coverage": map[string]any{"coverage_ratio": float64(1), "truncated": false},
+			"visual_report":  map[string]any{"policy_version": "presentation-visuals-v1", "placed_visual_count": float64(1)},
+			"model_usage":    map[string]any{"provider": "none", "cost_micros": float64(0)},
+			"quality_report": map[string]any{"passed": true, "violations": []any{}}, "source_overwritten": false,
+		}, Files: []skill.FileOutput{{Name: "课程介绍.pptx", MediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", Data: []byte("pptx")}}}, nil
+	}
 	return skill.ToolResult{
 		Output: map[string]any{
 			"source_filename": "source.pdf", "output_filename": "source-Chinese.pdf",
@@ -937,6 +951,51 @@ func TestWorkCharacterTranslatesAttachedPDF(t *testing.T) {
 	}
 	if !result.Handled || result.ToolName != "work.pdf.translate" || worker.operation != "pdf_translate" || !strings.Contains(result.Response, "ai-generated-file") {
 		t.Fatalf("unexpected result: %#v operation=%s", result, worker.operation)
+	}
+}
+
+func TestPPTGenerationInjectsOnlyTrustedAttachedPDFBytes(t *testing.T) {
+	ctx := context.Background()
+	sourceBytes := []byte("%PDF-1.4\n% trusted presentation source\n%%EOF")
+	documentService := document.NewService(document.NewMemoryStore(), document.NewMemoryBlobStore(), 20<<20)
+	item, _, err := documentService.Upload(ctx, "user-1", "课程资料.pdf", sourceBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &pdfWorker{}
+	registry := skill.NewRegistry()
+	if err = skill.RegisterBuiltins(registry); err != nil {
+		t.Fatal(err)
+	}
+	if err = skill.RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	executor := New(
+		ledger.NewService(ledger.NewMemoryStore()), planner.NewService(planner.NewMemoryStore()),
+		documentService, skill.NewService(skill.NewMemoryStore(), skill.NewMemoryFileStore(), registry),
+	)
+	text := chatattachment.AppendDocument("根据附件制作 PPT", item.ID, item.Name)
+	result, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "multimodal-ppt", Module: "work", Text: text,
+	}, conversation.ModelToolCall{Name: "work_generate_pptx", Arguments: map[string]any{
+		"title": "课程介绍", "audience": "学生", "style": "简洁", "brief": "课程信息", "slide_count": float64(4),
+		"source_documents": []any{map[string]any{
+			"filename": "forged.pdf", "media_type": "application/pdf", "data_base64": base64.StdEncoding.EncodeToString([]byte("forged")),
+		}},
+	}})
+	if err != nil || !result.Handled || worker.operation != "pptx_generate" {
+		t.Fatalf("result=%#v operation=%s err=%v", result, worker.operation, err)
+	}
+	sources, ok := worker.input["source_documents"].([]any)
+	if !ok || len(sources) != 1 {
+		t.Fatalf("trusted source injection=%#v", worker.input["source_documents"])
+	}
+	source, ok := sources[0].(map[string]any)
+	if !ok || source["filename"] != item.Name || source["media_type"] != "application/pdf" || source["data_base64"] != base64.StdEncoding.EncodeToString(sourceBytes) {
+		t.Fatalf("injected source=%#v", source)
+	}
+	if worker.input["visual_mode"] != "auto" {
+		t.Fatalf("visual mode=%#v", worker.input["visual_mode"])
 	}
 }
 

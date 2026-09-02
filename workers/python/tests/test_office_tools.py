@@ -674,6 +674,137 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(outline["files"], [])
         self.assertEqual(outline["output"]["outline"], result["output"]["outline"])
 
+    def test_pptx_reuses_meaningful_pdf_image_with_source_provenance(self) -> None:
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (800, 450), (45, 105, 190)).save(image_bytes, format="PNG")
+        source = io.BytesIO()
+        document = canvas.Canvas(source, pagesize=(420, 300))
+        document.drawImage(
+            ImageReader(io.BytesIO(image_bytes.getvalue())),
+            165,
+            70,
+            width=225,
+            height=127,
+        )
+        document.setFont("Helvetica", 15)
+        document.drawString(35, 245, "Source visual")
+        document.save()
+
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "多模态课程介绍",
+                "audience": "选课学生",
+                "style": "图文简洁",
+                "brief": "## 课程重点\n- 理解核心内容\n- 识别学习目标\n## 选课建议\n- 结合个人方向选择",
+                "slide_count": 4,
+                "visual_mode": "source_only",
+                "source_documents": [
+                    {
+                        "filename": "课程原文.pdf",
+                        "media_type": "application/pdf",
+                        "data_base64": base64.b64encode(source.getvalue()).decode(),
+                    }
+                ],
+            },
+        )
+
+        report = result["output"]["visual_report"]
+        self.assertEqual(report["source_document_count"], 1)
+        self.assertEqual(report["extracted_visual_count"], 1)
+        self.assertEqual(report["source_visual_count"], 1)
+        self.assertEqual(report["generated_visual_count"], 0)
+        self.assertEqual(result["output"]["model_usage"]["cost_micros"], 0)
+        self.assertEqual(
+            result["output"]["outline"][1]["visual"]["source_locator"],
+            "课程原文.pdf · 第 1 页",
+        )
+        generated = base64.b64decode(result["files"][0]["data_base64"])
+        with ZipFile(io.BytesIO(generated)) as archive:
+            self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
+
+    @patch("urllib.request.urlopen", side_effect=OSError("network unavailable"))
+    def test_pptx_image_generation_failure_safely_falls_back_to_text(
+        self, urlopen: Mock
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_BASE_URL": "https://openrouter.ai/api/v1",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-1",
+                "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+            },
+        ):
+            result = execute(
+                "pptx_generate",
+                {
+                    "title": "安全降级演示",
+                    "audience": "项目团队",
+                    "style": "简洁",
+                    "brief": "## 当前状态\n- 内容完整\n## 下一步\n- 继续推进",
+                    "slide_count": 4,
+                },
+            )
+
+        report = result["output"]["visual_report"]
+        self.assertEqual(report["generation_attempt_count"], 1)
+        self.assertEqual(report["generated_visual_count"], 0)
+        self.assertEqual(report["fallback_text_only_count"], 2)
+        self.assertEqual(report["generation_errors"], ["presentation_image_request_failed"])
+        self.assertEqual(result["output"]["model_usage"]["cost_micros"], 0)
+        self.assertEqual(len(result["files"]), 1)
+        urlopen.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    def test_pptx_generates_visual_through_openrouter_image_api(self, urlopen: Mock) -> None:
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (1600, 900), (220, 140, 65)).save(image_bytes, format="JPEG")
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "data": [{"b64_json": base64.b64encode(image_bytes.getvalue()).decode()}],
+                "model": "openai/gpt-image-2",
+                "provider": "OpenAI",
+                "usage": {"cost": 0.08},
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_BASE_URL": "https://openrouter.ai/api/v1",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
+                "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+            },
+        ):
+            result = execute(
+                "pptx_generate",
+                {
+                    "title": "生成配图演示",
+                    "audience": "项目团队",
+                    "style": "图文简洁",
+                    "brief": "## 核心变化\n- 流程更加清晰\n## 实施结果\n- 信息完整呈现",
+                    "slide_count": 4,
+                },
+            )
+
+        report = result["output"]["visual_report"]
+        self.assertEqual(report["generation_attempt_count"], 1)
+        self.assertEqual(report["generated_visual_count"], 1)
+        self.assertEqual(report["placed_visual_count"], 1)
+        self.assertEqual(result["output"]["model_usage"]["cost_micros"], 80_000)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://openrouter.ai/api/v1/images")
+        request_payload = json.loads(request.data)
+        self.assertEqual(request_payload["aspect_ratio"], "16:9")
+        self.assertEqual(request_payload["output_format"], "jpeg")
+        generated = base64.b64decode(result["files"][0]["data_base64"])
+        with ZipFile(io.BytesIO(generated)) as archive:
+            self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
+
     def test_pptx_title_with_slash_is_safe_for_outline_and_generated_filename(self) -> None:
         payload = {
             "title": "Important Dates - Semester A 2026/27",

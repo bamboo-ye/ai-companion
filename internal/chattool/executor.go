@@ -22,7 +22,11 @@ import (
 	"github.com/windcry1/ai-companion/internal/skill"
 )
 
-const defaultTimezone = "Asia/Shanghai"
+const (
+	defaultTimezone                       = "Asia/Shanghai"
+	maxPresentationSourceDocuments        = 3
+	maxPresentationSourceDocumentRawBytes = 20 << 20
+)
 
 type Executor struct {
 	router    *router.Router
@@ -312,7 +316,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_pptx", Description: "用户明确要求创建或生成 PPT/PPTX 文件时调用。参数完整后直接生成新文件，不需要二次确认，也不会覆盖已有文件。",
+			Name: "work_generate_pptx", Description: "用户明确要求创建或生成 PPT/PPTX 文件时调用。参数完整后直接生成新文件，不需要二次确认，也不会覆盖已有文件；系统会自动复用可信附件中的图片，必要时按配置生成配图。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
@@ -423,7 +427,7 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 	case "work_create_pptx_outline":
 		return e.runSkillWithInput(ctx, request, "office.pptx_outline", call.Arguments)
 	case "work_generate_pptx":
-		return e.runSkillWithInput(ctx, request, "office.pptx_generate", call.Arguments)
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments)
 	default:
 		return conversation.ToolResult{}, fmt.Errorf("unsupported work model tool %q", call.Name)
 	}
@@ -1706,6 +1710,46 @@ func (e *Executor) runSkillWithInput(ctx context.Context, request conversation.T
 		return handled(skillName, skillRunChatResponse(run, "工作工具已执行完成，可以在历史任务中查看结果。"), run), nil
 	}
 	return handled(skillName, skillRunChatResponse(run, "工作工具执行失败，可以直接在聊天窗口或历史任务中重试。"), run), nil
+}
+
+func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request conversation.ToolRequest, arguments map[string]any) (conversation.ToolResult, error) {
+	input := make(map[string]any, len(arguments)+2)
+	for key, value := range arguments {
+		// Source bytes cross a trust boundary here. Never accept source documents
+		// composed by the model or supplied through a forged tool invocation.
+		if key != "source_documents" {
+			input[key] = value
+		}
+	}
+	if _, ok := input["visual_mode"]; !ok {
+		input["visual_mode"] = "auto"
+	}
+
+	ids := attachmentDocumentIDs(request)
+	sources := make([]any, 0, min(len(ids), maxPresentationSourceDocuments))
+	totalBytes := 0
+	for _, documentID := range ids {
+		if len(sources) >= maxPresentationSourceDocuments {
+			break
+		}
+		item, data, err := e.documents.Read(ctx, request.UserID, documentID)
+		if err != nil || item.MediaType != "application/pdf" || len(data) == 0 {
+			continue
+		}
+		if totalBytes+len(data) > maxPresentationSourceDocumentRawBytes {
+			continue
+		}
+		totalBytes += len(data)
+		sources = append(sources, map[string]any{
+			"filename":    item.Name,
+			"media_type":  item.MediaType,
+			"data_base64": base64.StdEncoding.EncodeToString(data),
+		})
+	}
+	if len(sources) > 0 {
+		input["source_documents"] = sources
+	}
+	return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
 }
 
 func skillRunChatResponse(run skill.Run, message string) string {

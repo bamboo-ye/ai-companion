@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import hashlib
 import io
 import json
 import math
@@ -20,9 +21,11 @@ from typing import Any
 
 from docx import Document
 from openpyxl import load_workbook  # type: ignore[import-untyped]
+import pymupdf  # type: ignore[import-untyped]
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
+from PIL import Image
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
 from ai_companion_worker.pdf_translation_layout import (
     PdfLayout,
@@ -54,6 +57,12 @@ MAX_ARCHIVE_BYTES = 25 * 1024 * 1024
 MAX_ROWS = 10_000
 MAX_COLUMNS = 100
 MAX_PRESENTATION_SLIDES = 60
+MAX_PRESENTATION_SOURCE_BYTES = 20 * 1024 * 1024
+MAX_PRESENTATION_SOURCE_DOCUMENTS = 3
+MAX_PRESENTATION_SOURCE_VISUALS = 12
+MAX_PRESENTATION_VISUAL_BYTES = 2 * 1024 * 1024
+MAX_PRESENTATION_IMAGE_RESPONSE_BYTES = 12 * 1024 * 1024
+MAX_PRESENTATION_IMAGE_COST_MICROS = 250_000
 PRESENTATION_DISPLAY_CELL_CHARS = 42
 PRESENTATION_ROWS_PER_SLIDE = 6
 PRESENTATION_TABLE_PAGE_CAPACITY = 12
@@ -150,6 +159,39 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         slide_count = requested_slide_count
     section_specs = _presentation_section_specs(brief) if not table else []
     sections = _presentation_units(brief)
+    groups: list[list[str]] = []
+    headings: list[str] = []
+    if not table:
+        content_pages = slide_count - 2
+        if section_specs:
+            groups = [spec["bullets"] for spec in section_specs]
+            headings = [spec["heading"] for spec in section_specs]
+        else:
+            sections = _ensure_presentation_units(sections, content_pages)
+            groups = _balanced_groups(sections, content_pages)
+            headings = [
+                _presentation_heading(group[0], index)
+                for index, group in enumerate(groups, start=1)
+            ]
+    visual_topics = (
+        [
+            {
+                "title": table["title"] or title,
+                "bullets": [*table["columns"], f"共 {len(table['rows'])} 条记录"],
+            }
+        ]
+        if table
+        else [
+            {"title": headings[index], "bullets": group}
+            for index, group in enumerate(groups)
+        ]
+    )
+    visual_assignments, visual_report, model_usage = _presentation_visuals(
+        payload,
+        visual_topics,
+        include_file=include_file,
+        allow_generated=not table,
+    )
 
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
@@ -195,17 +237,6 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
                 }
             )
     else:
-        content_pages = slide_count - 2
-        if section_specs:
-            groups = [spec["bullets"] for spec in section_specs]
-            headings = [spec["heading"] for spec in section_specs]
-        else:
-            sections = _ensure_presentation_units(sections, content_pages)
-            groups = _balanced_groups(sections, content_pages)
-            headings = [
-                _presentation_heading(group[0], index)
-                for index, group in enumerate(groups, start=1)
-            ]
         for index, group in enumerate(groups, start=1):
             heading = headings[index - 1]
             bullets = [value[:100] for value in group[:5]]
@@ -220,7 +251,17 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
                 paragraph.level = 0
                 paragraph.font.size = Pt(bullet_font_size)
             _style_slide(slide, title_color=RGBColor(72, 104, 183))
-            outline.append({"page": len(outline) + 1, "title": heading, "bullets": bullets})
+            visual = visual_assignments[index - 1] if index - 1 < len(visual_assignments) else None
+            if visual is not None:
+                _add_presentation_visual(slide, slide.placeholders[1], visual)
+            outline_item: dict[str, Any] = {
+                "page": len(outline) + 1,
+                "title": heading,
+                "bullets": bullets,
+            }
+            if visual is not None:
+                outline_item["visual"] = _presentation_visual_outline(visual)
+            outline.append(outline_item)
 
     summary_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
     summary_title = "内容概览" if table else "要点回顾"
@@ -245,7 +286,17 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         paragraph.text = bullet
         paragraph.font.size = Pt(22)
     _style_slide(summary_slide, title_color=RGBColor(43, 63, 117))
-    outline.append({"page": len(outline) + 1, "title": summary_title, "bullets": summary_bullets})
+    summary_visual = visual_assignments[0] if table and visual_assignments else None
+    if summary_visual is not None:
+        _add_presentation_visual(summary_slide, summary_slide.placeholders[1], summary_visual)
+    summary_outline: dict[str, Any] = {
+        "page": len(outline) + 1,
+        "title": summary_title,
+        "bullets": summary_bullets,
+    }
+    if summary_visual is not None:
+        summary_outline["visual"] = _presentation_visual_outline(summary_visual)
+    outline.append(summary_outline)
 
     quality_report = _presentation_quality_report(
         outline=outline,
@@ -255,6 +306,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         source_coverage=source_coverage,
         display_rows=display_rows,
         layout_violations=_presentation_layout_violations(presentation),
+        visual_report=visual_report,
         filename=payload.get("filename"),
         brief=brief,
         requested_slide_count=requested_slide_count,
@@ -280,6 +332,8 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             "requested_slide_count": requested_slide_count,
             "outline": outline,
             "source_coverage": source_coverage,
+            "visual_report": visual_report,
+            "model_usage": model_usage,
             "quality_report": quality_report,
             "source_overwritten": False,
         },
@@ -1307,6 +1361,437 @@ def _presentation_render_text(value: str) -> str:
     return re.sub(r"《[^》\r\n]{1,30}》", protect, text)
 
 
+def _presentation_visuals(
+    payload: dict[str, Any],
+    topics: list[dict[str, Any]],
+    *,
+    include_file: bool,
+    allow_generated: bool,
+) -> tuple[list[dict[str, Any] | None], dict[str, Any], dict[str, Any]]:
+    mode = str(payload.get("visual_mode") or "auto").strip().lower()
+    if mode not in {"auto", "source_only", "none"}:
+        raise ValueError("presentation_visual_mode_is_invalid")
+    cost_limit = _presentation_image_cost_limit()
+    model = os.environ.get("MODEL_PRESENTATION_IMAGE_NAME", "").strip()
+    empty_usage = _presentation_visual_model_usage([], cost_limit, model)
+    if not include_file:
+        return [None] * len(topics), {
+            "policy_version": "presentation-visuals-v1",
+            "mode": "outline",
+            "requested_slot_count": len(topics),
+            "source_document_count": 0,
+            "extracted_visual_count": 0,
+            "generated_visual_count": 0,
+            "placed_visual_count": 0,
+            "source_visual_count": 0,
+            "fallback_text_only_count": 0,
+            "generation_attempt_count": 0,
+            "generation_errors": [],
+        }, empty_usage
+
+    source_documents = _presentation_source_documents(payload.get("source_documents"))
+    extracted: list[dict[str, Any]] = []
+    if mode != "none":
+        for document in source_documents:
+            if document["media_type"] == "application/pdf":
+                extracted.extend(_extract_pdf_presentation_visuals(document))
+            if len(extracted) >= MAX_PRESENTATION_SOURCE_VISUALS:
+                break
+    extracted = extracted[:MAX_PRESENTATION_SOURCE_VISUALS]
+    assignments: list[dict[str, Any] | None] = [None] * len(topics)
+    for index, visual in enumerate(extracted[: len(assignments)]):
+        assignments[index] = visual
+
+    usages: list[dict[str, Any]] = []
+    generation_errors: list[str] = []
+    generation_attempts = 0
+    generated_count = 0
+    maximum_generated = _bounded_positive_int(
+        "MODEL_PRESENTATION_IMAGE_MAX_COUNT",
+        min(2, max(1, len(topics))),
+        min(4, len(topics) or 1),
+    )
+    can_generate = (
+        mode == "auto"
+        and allow_generated
+        and bool(model)
+        and os.environ.get("MODEL_PROVIDER", "development").strip().lower() == "openrouter"
+        and bool(os.environ.get("MODEL_API_KEY", "").strip())
+    )
+    if can_generate:
+        for index, topic in enumerate(topics):
+            if assignments[index] is not None:
+                continue
+            if generated_count >= maximum_generated or generation_attempts >= maximum_generated:
+                break
+            used_cost = sum(_non_negative_int(item.get("cost_micros")) for item in usages)
+            remaining_cost = cost_limit - used_cost
+            if remaining_cost <= 0:
+                generation_errors.append("presentation_image_budget_exhausted")
+                break
+            generation_attempts += 1
+            try:
+                visual, usage = _openrouter_generate_presentation_visual(
+                    topic,
+                    remaining_cost_micros=remaining_cost,
+                )
+            except Exception as exc:
+                code = str(exc).strip()
+                generation_errors.append(
+                    code if code.startswith("presentation_image_") else "presentation_image_failed"
+                )
+                continue
+            assignments[index] = visual
+            usages.append(usage)
+            generated_count += 1
+
+    source_visual_count = sum(
+        visual is not None and visual.get("kind") == "source" for visual in assignments
+    )
+    placed_count = sum(visual is not None for visual in assignments)
+    fallback_count = sum(visual is None for visual in assignments) if mode != "none" else 0
+    report = {
+        "policy_version": "presentation-visuals-v1",
+        "mode": mode,
+        "requested_slot_count": len(topics),
+        "source_document_count": len(source_documents),
+        "extracted_visual_count": len(extracted),
+        "generated_visual_count": generated_count,
+        "placed_visual_count": placed_count,
+        "source_visual_count": source_visual_count,
+        "fallback_text_only_count": fallback_count,
+        "generation_attempt_count": generation_attempts,
+        "generation_errors": list(dict.fromkeys(generation_errors))[:8],
+    }
+    return assignments, report, _presentation_visual_model_usage(usages, cost_limit, model)
+
+
+def _presentation_source_documents(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_PRESENTATION_SOURCE_DOCUMENTS:
+        raise ValueError("presentation_source_documents_are_invalid")
+    documents: list[dict[str, Any]] = []
+    total_bytes = 0
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ValueError("presentation_source_document_is_invalid")
+        filename = str(raw.get("filename") or "").strip()
+        media_type = str(raw.get("media_type") or "").strip().lower()
+        encoded = raw.get("data_base64")
+        if (
+            PurePath(filename).name != filename
+            or media_type != "application/pdf"
+            or not isinstance(encoded, str)
+            or not encoded
+        ):
+            raise ValueError("presentation_source_document_is_invalid")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise ValueError("presentation_source_document_is_invalid") from exc
+        total_bytes += len(data)
+        if not data or total_bytes > MAX_PRESENTATION_SOURCE_BYTES:
+            raise ValueError("presentation_source_documents_are_too_large")
+        documents.append({"filename": filename, "media_type": media_type, "data": data})
+    return documents
+
+
+def _extract_pdf_presentation_visuals(document: dict[str, Any]) -> list[dict[str, Any]]:
+    pdf = pymupdf.open(stream=document["data"], filetype="pdf")
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    try:
+        if pdf.needs_pass and not pdf.authenticate(""):
+            return []
+        for page_index, page in enumerate(pdf, start=1):
+            page_area = max(1.0, float(page.rect.get_area()))
+            page_candidates: list[dict[str, Any]] = []
+            for image_info in page.get_image_info(xrefs=True):
+                bbox = image_info.get("bbox")
+                if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                    continue
+                rect = pymupdf.Rect(tuple(float(value) for value in bbox)) & page.rect
+                width = int(image_info.get("width") or 0)
+                height = int(image_info.get("height") or 0)
+                area_ratio = float(rect.get_area()) / page_area
+                aspect_ratio = float(rect.width) / max(1.0, float(rect.height))
+                if (
+                    width < 180
+                    or height < 120
+                    or rect.width < 90
+                    or rect.height < 60
+                    or area_ratio < 0.035
+                    or area_ratio > 0.96
+                    or not 0.25 <= aspect_ratio <= 4.0
+                ):
+                    continue
+                pixmap = page.get_pixmap(
+                    matrix=pymupdf.Matrix(1.5, 1.5),
+                    clip=rect,
+                    alpha=False,
+                )
+                data = pixmap.tobytes("jpeg", jpg_quality=84)
+                if not data or len(data) > MAX_PRESENTATION_VISUAL_BYTES:
+                    continue
+                digest = hashlib.sha256(data).hexdigest()
+                if digest in seen:
+                    continue
+                seen.add(digest)
+                page_candidates.append(
+                    {
+                        "kind": "source",
+                        "data": data,
+                        "media_type": "image/jpeg",
+                        "width": pixmap.width,
+                        "height": pixmap.height,
+                        "source_filename": document["filename"],
+                        "source_page": page_index,
+                        "source_locator": f"{document['filename']} · 第 {page_index} 页",
+                        "score": area_ratio * min(width, 1600) * min(height, 1200),
+                    }
+                )
+            if page_candidates:
+                candidates.append(max(page_candidates, key=lambda item: float(item["score"])))
+            if len(candidates) >= MAX_PRESENTATION_SOURCE_VISUALS:
+                break
+    finally:
+        pdf.close()
+    for candidate in candidates:
+        candidate.pop("score", None)
+    return candidates
+
+
+def _openrouter_generate_presentation_visual(
+    topic: dict[str, Any],
+    *,
+    remaining_cost_micros: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    base_url = os.environ.get("MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    if base_url != "https://openrouter.ai/api/v1":
+        raise ValueError("presentation_image_endpoint_is_invalid")
+    api_key = os.environ.get("MODEL_API_KEY", "").strip()
+    model = os.environ.get("MODEL_PRESENTATION_IMAGE_NAME", "").strip()
+    if not api_key or not model or _dynamic_model(model):
+        raise ValueError("presentation_image_model_is_not_configured")
+    title = re.sub(r"\s+", " ", str(topic.get("title") or "")).strip()[:160]
+    bullets = [
+        re.sub(r"\s+", " ", str(value or "")).strip()[:220]
+        for value in topic.get("bullets", [])
+        if str(value or "").strip()
+    ][:4]
+    prompt = (
+        "Create one clean 16:9 editorial presentation illustration. "
+        "Use a coherent professional visual metaphor, realistic or polished 3D style, "
+        "ample negative space, and no words, letters, numerals, logos, watermarks, UI, "
+        f"or decorative borders. Topic: {title}. Context: {'; '.join(bullets)}"
+    )
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "aspect_ratio": "16:9",
+            "quality": "medium",
+            "output_format": "jpeg",
+            "output_compression": 84,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + "/images",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + api_key,
+            "Content-Type": "application/json",
+            "HTTP-Referer": os.environ.get("MODEL_HTTP_REFERER", "http://localhost:3000"),
+            "X-OpenRouter-Title": os.environ.get("MODEL_APP_TITLE", "伴AI"),
+        },
+    )
+    started_ns = time.perf_counter_ns()
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            raw = response.read(MAX_PRESENTATION_IMAGE_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"presentation_image_http_{exc.code}") from exc
+    except Exception as exc:
+        raise ValueError("presentation_image_request_failed") from exc
+    latency_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
+    if len(raw) > MAX_PRESENTATION_IMAGE_RESPONSE_BYTES:
+        raise ValueError("presentation_image_response_too_large")
+    try:
+        response_payload = json.loads(raw)
+        image_item = response_payload["data"][0]
+        image_data = base64.b64decode(image_item["b64_json"], validate=True)
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("presentation_image_response_invalid") from exc
+    image_data, media_type, width, height = _normalize_presentation_visual_image(image_data)
+    usage = response_payload.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    reported_cost = _reported_cost_micros(usage.get("cost"))
+    cost_micros = reported_cost if reported_cost is not None else remaining_cost_micros
+    return {
+        "kind": "generated",
+        "data": image_data,
+        "media_type": media_type,
+        "width": width,
+        "height": height,
+        "model": model,
+        "prompt": prompt,
+        "source_locator": "AI 生成配图",
+    }, {
+        "provider": "openrouter",
+        "requested_model": model,
+        "returned_model": str(response_payload.get("model") or model),
+        "upstream_provider": str(response_payload.get("provider") or ""),
+        "prompt_tokens": _non_negative_int(usage.get("prompt_tokens")),
+        "completion_tokens": _non_negative_int(usage.get("completion_tokens")),
+        "cost_micros": cost_micros,
+        "cost_accounting": "reported" if reported_cost is not None else "reserved_upper_bound",
+        "latency_ms": latency_ms,
+    }
+
+
+def _normalize_presentation_visual_image(data: bytes) -> tuple[bytes, str, int, int]:
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            if width < 320 or height < 180 or width * height > 25_000_000:
+                raise ValueError("presentation_image_dimensions_are_invalid")
+            image.load()
+            image_format = str(image.format or "").upper()
+            if image_format in {"JPEG", "PNG"} and len(data) <= MAX_PRESENTATION_VISUAL_BYTES:
+                return data, "image/jpeg" if image_format == "JPEG" else "image/png", width, height
+            converted = image.convert("RGB")
+            output = io.BytesIO()
+            converted.save(output, format="JPEG", quality=84, optimize=True)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("presentation_image_is_invalid") from exc
+    normalized = output.getvalue()
+    if len(normalized) > MAX_PRESENTATION_VISUAL_BYTES:
+        raise ValueError("presentation_image_is_too_large")
+    return normalized, "image/jpeg", width, height
+
+
+def _presentation_image_cost_limit() -> int:
+    return min(
+        _bounded_positive_int(
+            "MODEL_PRESENTATION_IMAGE_MAX_COST_MICROS",
+            MAX_PRESENTATION_IMAGE_COST_MICROS,
+            MAX_PRESENTATION_IMAGE_COST_MICROS,
+        ),
+        MAX_PRESENTATION_IMAGE_COST_MICROS,
+    )
+
+
+def _presentation_visual_model_usage(
+    usages: list[dict[str, Any]],
+    cost_limit: int,
+    model: str,
+) -> dict[str, Any]:
+    returned = {
+        str(usage.get("returned_model") or "") for usage in usages if usage.get("returned_model")
+    }
+    providers = {
+        str(usage.get("upstream_provider") or "")
+        for usage in usages
+        if usage.get("upstream_provider")
+    }
+    return {
+        "provider": "openrouter" if usages else "none",
+        "config_version": os.environ.get(
+            "MODEL_CONFIG_VERSION",
+            "2026-08-structured-composer-v4",
+        ),
+        "requested_model": model,
+        "returned_model": returned.pop() if len(returned) == 1 else ("mixed" if returned else ""),
+        "upstream_provider": (
+            providers.pop() if len(providers) == 1 else ("mixed" if providers else "")
+        ),
+        "prompt_tokens": sum(_non_negative_int(item.get("prompt_tokens")) for item in usages),
+        "completion_tokens": sum(
+            _non_negative_int(item.get("completion_tokens")) for item in usages
+        ),
+        "cost_micros": sum(_non_negative_int(item.get("cost_micros")) for item in usages),
+        "cost_accounting": (
+            "reported"
+            if usages and all(item.get("cost_accounting") == "reported" for item in usages)
+            else "reserved_upper_bound" if usages else "none"
+        ),
+        "latency_ms": sum(_non_negative_int(item.get("latency_ms")) for item in usages),
+        "max_cost_micros": cost_limit,
+        "round_count": len(usages),
+    }
+
+
+def _add_presentation_visual(
+    slide: Any,
+    text_placeholder: Any,
+    visual: dict[str, Any],
+) -> None:
+    text_placeholder.left = Inches(0.68)
+    text_placeholder.top = Inches(1.42)
+    text_placeholder.width = Inches(6.05)
+    text_placeholder.height = Inches(5.25)
+    frame_left = int(Inches(7.15))
+    frame_top = int(Inches(1.58))
+    frame_width = int(Inches(5.55))
+    frame_height = int(Inches(4.72))
+    image_width = max(1, int(visual.get("width") or 1))
+    image_height = max(1, int(visual.get("height") or 1))
+    image_ratio = image_width / image_height
+    frame_ratio = frame_width / frame_height
+    if image_ratio >= frame_ratio:
+        picture_width = frame_width
+        picture_height = int(frame_width / image_ratio)
+    else:
+        picture_height = frame_height
+        picture_width = int(frame_height * image_ratio)
+    picture_left = frame_left + (frame_width - picture_width) // 2
+    picture_top = frame_top + (frame_height - picture_height) // 2
+    slide.shapes.add_picture(
+        io.BytesIO(visual["data"]),
+        picture_left,
+        picture_top,
+        width=picture_width,
+        height=picture_height,
+    )
+    caption = slide.shapes.add_textbox(
+        Inches(7.15), Inches(6.42), Inches(5.55), Inches(0.28)
+    )
+    caption_frame = caption.text_frame
+    caption_frame.clear()
+    caption_frame.paragraphs[0].text = str(visual.get("source_locator") or "")[:100]
+    caption_frame.paragraphs[0].font.size = Pt(9)
+    caption_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+    _add_presentation_visual_notes(slide, visual)
+
+
+def _add_presentation_visual_notes(slide: Any, visual: dict[str, Any]) -> None:
+    if visual.get("kind") == "source":
+        source = str(visual.get("source_locator") or "原文件")
+    else:
+        source = (
+            f"AI-generated visual; model={visual.get('model', '')}; "
+            f"prompt={visual.get('prompt', '')}"
+        )
+    try:
+        notes_frame = slide.notes_slide.notes_text_frame
+        notes_frame.text = f"[Sources]\n- {source}"
+    except Exception:
+        return
+
+
+def _presentation_visual_outline(visual: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": str(visual.get("kind") or ""),
+        "source_locator": str(visual.get("source_locator") or ""),
+    }
+
+
 def _presentation_table(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -1619,6 +2104,7 @@ def _presentation_quality_report(
     source_coverage: dict[str, Any],
     display_rows: list[dict[str, Any]],
     layout_violations: list[dict[str, Any]],
+    visual_report: dict[str, Any],
     filename: Any,
     brief: str,
     requested_slide_count: int,
@@ -1839,6 +2325,7 @@ def _presentation_quality_report(
         "table_row_count": len(table["rows"]) if table else 0,
         "display_row_count": len(display_rows),
         "source_coverage": source_coverage,
+        "visual_report": visual_report,
     }
 
 
