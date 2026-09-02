@@ -42,6 +42,7 @@ type Manifest struct {
 	TimeoutMS            int            `json:"timeout_ms"`
 	MaxSteps             int            `json:"max_steps"`
 	MaxInputBytes        int            `json:"max_input_bytes"`
+	MaxOutputFileBytes   int            `json:"max_output_file_bytes"`
 	MaxCostMicros        int64          `json:"max_cost_micros"`
 	ExecutionMode        string         `json:"execution_mode"`
 	InputSchema          map[string]any `json:"input_schema"`
@@ -189,6 +190,9 @@ func (r *Registry) Register(definition Definition) error {
 	}
 	if manifest.MaxInputBytes <= 0 {
 		manifest.MaxInputBytes = 64 << 10
+	}
+	if manifest.MaxOutputFileBytes <= 0 {
+		manifest.MaxOutputFileBytes = 10 << 20
 	}
 	if manifest.MaxCostMicros < 0 {
 		return fmt.Errorf("%w: max_cost_micros cannot be negative", ErrValidation)
@@ -911,8 +915,18 @@ func (s *Service) execute(ctx context.Context, run Run, definition Definition) (
 	now := s.now().UTC()
 	newFiles := make([]GeneratedFile, 0, len(result.Files))
 	for _, item := range result.Files {
-		if len(item.Data) > 10<<20 || len([]rune(item.Name)) == 0 || len([]rune(item.Name)) > 255 || item.MediaType == "" {
-			return s.fail(ctx, run, definition.Manifest.ToolName, "invalid_file", errors.New("generated file metadata or size is invalid"))
+		if len([]rune(item.Name)) == 0 || len([]rune(item.Name)) > 255 || item.MediaType == "" {
+			return s.fail(ctx, run, definition.Manifest.ToolName, "invalid_file", errors.New("generated file metadata is invalid"))
+		}
+		if len(item.Data) > definition.Manifest.MaxOutputFileBytes {
+			failure := ToolFailure{
+				Code: "output_file_too_large", Category: "resource_limit", Phase: "post_execution",
+				Message: "生成文件超过该技能允许的大小。", SideEffectState: "unknown",
+				SafeDetails: map[string]any{
+					"actual_bytes": len(item.Data), "limit_bytes": definition.Manifest.MaxOutputFileBytes,
+				},
+			}
+			return s.fail(ctx, run, definition.Manifest.ToolName, failure.Code, NewToolExecutionError(failure, errors.New("generated file exceeds skill output budget")))
 		}
 		fileID, idErr := id.New()
 		if idErr != nil {

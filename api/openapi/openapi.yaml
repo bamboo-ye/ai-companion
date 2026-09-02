@@ -2485,7 +2485,7 @@ components:
         error_code: { type: string, maxLength: 128 }
     SkillManifest:
       type: object
-      required: [name, version, display_name, description, category, risk_level, requires_confirmation, enabled, tool_name, allowed_tools, state_graph, timeout_ms, max_steps, max_input_bytes, max_cost_micros, execution_mode, input_schema, output_schema]
+      required: [name, version, display_name, description, category, risk_level, requires_confirmation, enabled, tool_name, allowed_tools, state_graph, timeout_ms, max_steps, max_input_bytes, max_output_file_bytes, max_cost_micros, execution_mode, input_schema, output_schema]
       properties:
         name: { type: string }
         version: { type: string }
@@ -2501,6 +2501,7 @@ components:
         timeout_ms: { type: integer, minimum: 1 }
         max_steps: { type: integer, minimum: 1 }
         max_input_bytes: { type: integer, minimum: 1 }
+        max_output_file_bytes: { type: integer, minimum: 1 }
         max_cost_micros: { type: integer, minimum: 0 }
         execution_mode: { type: string, enum: [inline, worker] }
         input_schema: { type: object, additionalProperties: true }
