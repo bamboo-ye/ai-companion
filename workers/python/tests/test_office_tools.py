@@ -1055,7 +1055,7 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(output["quality_report"]["table_row_count"], 12)
         self.assertEqual(
             output["outline"][-1]["bullets"][-1],
-            "详细信息见前页表格，来源说明见各页页脚",
+            "详情见表格，来源见页脚",
         )
         self.assertEqual(
             list(
