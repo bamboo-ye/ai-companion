@@ -32,6 +32,44 @@ _DEFAULT_COMPANION_RESPONDER_MODELS = (
     "google/gemma-4-31b-it:free",
     "inclusionai/ling-3.0-flash:free",
 )
+_PRESENTATION_TOOLS = frozenset(
+    (
+        "work_create_pptx_outline",
+        "work_generate_pptx",
+        "work_generate_table_pptx",
+        "work_generate_visual_pptx",
+    )
+)
+_STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
+
+
+def _uses_structured_presentation_capability(
+    tool_name: str, context: Mapping[str, Any]
+) -> bool:
+    if tool_name in _STRUCTURED_PRESENTATION_TOOLS:
+        return True
+    if tool_name != "work_generate_pptx":
+        return False
+    contract = context.get("task_contract")
+    if not isinstance(contract, Mapping):
+        return isinstance(context.get("document_processing_round"), Mapping)
+    mode = contract.get("presentation_mode")
+    requested_fields = contract.get("requested_fields")
+    if mode != "structured_table" and not (
+        mode in (None, "", "undetermined")
+        and isinstance(requested_fields, list)
+        and bool(requested_fields)
+    ):
+        return isinstance(context.get("document_processing_round"), Mapping)
+    definitions = context.get("tools")
+    return not (
+        isinstance(definitions, list)
+        and any(
+            isinstance(item, Mapping)
+            and item.get("name") == "work_generate_table_pptx"
+            for item in definitions
+        )
+    )
 
 
 class OpenRouterError(RuntimeError):
@@ -521,6 +559,13 @@ class OpenRouterDecisionPort:
                             "确认→确认后更新→观察最终状态；不得假设事项存在。"
                             "若有多个附件，必须为每个 attachment_index 规划独立提取和观察步骤，"
                             "每个异步任务拥有自己的重试状态，不能合并成一次提取。"
+                            "若目标包含 PPT/PPTX，必须先判定 presentation_mode：普通讲解、"
+                            "汇报、教学或演讲使用 narrative；明确要求把多条记录按指定字段"
+                            "整理为表格时使用 structured_table；明确要求配图、插图、图文、"
+                            "保留来源图片，或关键信息本身必须依赖视觉证据时使用 illustrated，"
+                            "不得仅为装饰启用。讲演时长（例如‘10分钟讲演时间’）"
+                            "只是叙事约束，绝不是 time 字段。只有 structured_table 才填写"
+                            " requested_fields；字段仅可为 code/name/time/venue。"
                             "只返回符合 output_schema 的 JSON 对象，不要返回 Markdown 或解释。"
                         ),
                     },
@@ -530,11 +575,20 @@ class OpenRouterDecisionPort:
                             {
                                 "module": module,
                                 "request": message,
+                                "task_contract": context.get("task_contract", {}),
                                 "available_tools": catalog,
                                 "output_schema": {
                                     "objective": "string",
                                     "steps": ["1-8 non-empty strings"],
                                     "success_criteria": "string",
+                                    "task_intent": {
+                                        "presentation_mode": (
+                                            "not_applicable|narrative|structured_table|illustrated"
+                                        ),
+                                        "requested_fields": ["code|name|time|venue"],
+                                        "confidence": "low|medium|high",
+                                        "rationale": "short string",
+                                    },
                                 },
                             },
                             ensure_ascii=False,
@@ -563,6 +617,8 @@ class OpenRouterDecisionPort:
         objective = arguments.get("objective")
         steps = arguments.get("steps")
         success_criteria = arguments.get("success_criteria")
+        raw_task_intent = arguments.get("task_intent")
+        task_intent = dict(raw_task_intent) if isinstance(raw_task_intent, Mapping) else {}
         if (
             not isinstance(objective, str)
             or not objective.strip()
@@ -577,6 +633,7 @@ class OpenRouterDecisionPort:
             objective=objective.strip(),
             steps=tuple(step.strip() for step in steps),
             success_criteria=success_criteria.strip(),
+            task_intent=task_intent,
         )
 
     def decide(
@@ -801,16 +858,12 @@ class OpenRouterDecisionPort:
                         "上一次草稿未通过确定性质量门禁。重新完整生成所有参数并修复这些"
                         f"问题：{encoded_violations}。"
                     )
-        if tool_name in ("work_create_pptx_outline", "work_generate_pptx"):
+        if tool_name in _PRESENTATION_TOOLS:
             system_prompt += (
                 "当前是演示文稿专用编排：必须逐项满足 task_contract 中的硬要求。"
                 "若来源观察的 truncated 为 true 或 coverage_ratio 小于 1，不得声称内容完整；"
-                "应保留来源覆盖信息。表格型来源必须使用 table.columns 和 table.rows 传递"
-                "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
-                "成为表头或逐页可见字段。source_locator 只能放在每个 row 对象中，严禁放在"
-                "table 对象上；row.cells 的数量必须与 table.columns 完全相同。不得用省略号、"
-                "‘详见原文’、‘多个时段’或示例记录代替真实数据。不得把 Harness 的轮次、"
-                "附件索引、Source IR、来源定位器或质量门术语写入标题、表头或可见单元格。"
+                "应保留来源覆盖信息。不得把 Harness 的轮次、附件索引、Source IR、来源定位器"
+                "或质量门术语写入标题、表头或可见内容。"
                 "输出语言由 task_contract.output_language 锁定。若为 zh-CN，所有面向读者的"
                 "标题、表头、正文、事件说明、名称和时间说明必须使用简体中文；英文来源"
                 "中的普通词句必须翻译，不能只照抄英文，也不得以英文摘要代替中文内容。"
@@ -819,14 +872,26 @@ class OpenRouterDecisionPort:
                 "标识符必须原样保留，翻译不得改变代码与日期时间。"
                 "当 task_contract.exhaustive 为 true 或用户要求‘所有/全部/完整’时，标题、"
                 "表格标题和文件名不得使用‘节选’、‘摘要’、‘示例’、‘部分’等缩减范围标记。"
-                "对于不使用 table 的演示，brief 不是制作计划，而是最终面向受众的正文；"
-                "brief 只能使用固定 Markdown 中间格式：每个内容页先写一行‘## 简短页面标题’，"
-                "随后至少两行‘- 事实或结论’，不得在章节外写任何文字。标题不超过28个字符，"
-                "单条要点不超过100个字符，章节数必须等于 slide_count 减2。多对象对比时，"
-                "每个对象至少有一个独立章节，并另设横向对比或选择建议章节。不得写页数规划、"
-                "制作说明、源文件名、来源覆盖率、抽取过程、引用说明、备注、后续询问或‘请告知’。"
                 "title 是封面可见标题，绝不能包含 .pptx 文件扩展名；扩展名只属于 filename。"
             )
+            if _uses_structured_presentation_capability(tool_name, context):
+                system_prompt += (
+                    "当前只负责结构化表格演示：必须使用 table.columns 和 table.rows 传递"
+                    "结构化数据，不得把多行记录压缩成一段 brief。用户要求的每个字段都必须"
+                    "成为表头。source_locator 只能放在每个 row 对象中，严禁放在 table 对象上；"
+                    "row.cells 的数量必须与 table.columns 完全相同。不得用省略号、‘详见原文’、"
+                    "‘多个时段’或示例记录代替真实数据。"
+                )
+            else:
+                system_prompt += (
+                    "当前只负责非表格演示，禁止返回 table 或 mapping_contract。brief 不是制作计划，"
+                    "而是最终面向受众的正文；"
+                    "brief 只能使用固定 Markdown 中间格式：每个内容页先写一行‘## 简短页面标题’，"
+                    "随后至少两行‘- 事实或结论’，不得在章节外写任何文字。标题不超过28个字符，"
+                    "单条要点不超过100个字符，章节数必须等于 slide_count 减2。多对象对比时，"
+                    "每个对象至少有一个独立章节，并另设横向对比或选择建议章节。不得写页数规划、"
+                    "制作说明、源文件名、来源覆盖率、抽取过程、引用说明、备注、后续询问或‘请告知’。"
+                )
             if isinstance(document_round, Mapping):
                 encoded_round = json.dumps(
                     dict(document_round),
@@ -917,6 +982,21 @@ class OpenRouterDecisionPort:
                             "不得复用空泛 brief，并修复这些问题："
                             f"{encoded_violations}。"
                         )
+        composer_parameters = selected["parameters"]
+        if _uses_structured_presentation_capability(tool_name, context) and isinstance(
+            document_round, Mapping
+        ):
+            composer_parameters = _presentation_batch_parameters(
+                composer_parameters,
+                harness_injects_provenance=(
+                    document_round.get("compact_entity_ir") is True
+                ),
+            )
+        if tool_name in _PRESENTATION_TOOLS:
+            composer_parameters = _model_visible_presentation_parameters(
+                composer_parameters,
+                structured=_uses_structured_presentation_capability(tool_name, context),
+            )
         payload = self._base_payload("composer")
         payload.update(
             {
@@ -936,18 +1016,7 @@ class OpenRouterDecisionPort:
                         "function": {
                             "name": selected["name"],
                             "description": selected["description"],
-                            "parameters": (
-                                _presentation_batch_parameters(
-                                    selected["parameters"],
-                                    harness_injects_provenance=(
-                                        document_round.get("compact_entity_ir") is True
-                                    ),
-                                )
-                                if tool_name
-                                in ("work_create_pptx_outline", "work_generate_pptx")
-                                and isinstance(document_round, Mapping)
-                                else selected["parameters"]
-                            ),
+                            "parameters": composer_parameters,
                         },
                     }
                 ],
@@ -990,7 +1059,7 @@ class OpenRouterDecisionPort:
             and isinstance(email_validation, Mapping)
             and email_validation.get("passed") is False
         ) or (
-            tool_name in ("work_create_pptx_outline", "work_generate_pptx")
+            tool_name in _PRESENTATION_TOOLS
             and isinstance(artifact_validation, Mapping)
             and artifact_validation.get("passed") is False
         )
@@ -2029,6 +2098,35 @@ def _presentation_batch_parameters(
     }
 
 
+def _model_visible_presentation_parameters(
+    parameters: Any, *, structured: bool = False
+) -> dict[str, Any]:
+    """Hide Harness-owned provenance fields from the presentation composer."""
+
+    if not isinstance(parameters, Mapping):
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+    visible = dict(parameters)
+    properties = visible.get("properties")
+    if not isinstance(properties, Mapping):
+        return visible
+    hidden = {"task_contract", "source_coverage"}
+    if not structured:
+        hidden.update(("table", "mapping_contract"))
+    visible["properties"] = {
+        key: value
+        for key, value in properties.items()
+        if key not in hidden
+    }
+    required = visible.get("required")
+    if isinstance(required, list):
+        visible["required"] = [
+            value
+            for value in required
+            if value not in hidden
+        ]
+    return visible
+
+
 def _routing_message(message: str, context: Mapping[str, Any]) -> str:
     observations = context.get("observations", [])
     if not isinstance(observations, list):
@@ -2632,8 +2730,15 @@ def _required_artifact_tool(
         if isinstance(artifact_types, list)
         else set()
     )
+    presentation_mode = str(contract.get("presentation_mode") or "").strip().casefold()
+    presentation_tool = {
+        "structured_table": "work_generate_table_pptx",
+        "illustrated": "work_generate_visual_pptx",
+    }.get(presentation_mode, "work_generate_pptx")
+    if presentation_tool not in names and "work_generate_pptx" in names:
+        presentation_tool = "work_generate_pptx"
     for artifact_type, tool_name in (
-        ("pptx", "work_generate_pptx"),
+        ("pptx", presentation_tool),
         ("markdown", "work_create_markdown_document"),
     ):
         if artifact_type in requested and tool_name in names:

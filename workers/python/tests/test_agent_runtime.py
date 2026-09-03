@@ -204,6 +204,90 @@ def email_tool_definition() -> dict[str, Any]:
 
 
 class AgentRuntimeTest(unittest.TestCase):
+    def test_ppt_planning_selects_narrative_before_router_and_skips_table_gate(self) -> None:
+        class NarrativeDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(ModelDecision(intent="unused"))
+                self.calls: list[str] = []
+
+            def plan(self, **values: Any) -> AgentPlan:
+                self.calls.append("plan")
+                return AgentPlan(
+                    objective=values["message"],
+                    steps=("组织讲演内容", "生成演示文稿", "检查结果"),
+                    success_criteria="生成适合十分钟讲演的 PPT",
+                    task_intent={
+                        "presentation_mode": "narrative",
+                        "requested_fields": [],
+                        "confidence": "high",
+                        "rationale": "时间描述的是讲演时长",
+                    },
+                )
+
+            def decide(self, **_values: Any) -> ModelDecision:
+                self.calls.append("decide")
+                return ModelDecision(
+                    intent="work_generate_pptx",
+                    tool_name="work_generate_pptx",
+                    requires_argument_composition=True,
+                )
+
+            def compose_arguments(self, **_values: Any) -> Mapping[str, Any]:
+                self.calls.append("compose")
+                return {
+                    "title": "智能系统简介",
+                    "audience": "普通听众",
+                    "style": "简洁",
+                    "brief": (
+                        "## 什么是智能系统\n- 能感知环境并处理信息\n- 能依据目标做出行动\n"
+                        "## 核心组成\n- 感知、推理与执行相互协作\n- 数据和规则共同支持决策"
+                    ),
+                    "slide_count": 4,
+                }
+
+        decisions = NarrativeDecisions()
+        tools = FakeTools(
+            ToolPreparation(
+                status="completed",
+                tool_name="work_generate_pptx",
+                response="PPT 已生成。",
+                data={
+                    "kind": "skill_run",
+                    "skill_name": "office.pptx_generate",
+                    "status": "succeeded",
+                    "output": {"quality_report": {"passed": True, "violations": []}},
+                    "files": [{"name": "智能系统简介.pptx"}],
+                },
+            )
+        )
+        graph = build_graph(checkpointer=InMemorySaver(), decisions=decisions, tools=tools)
+        payload = agent_input("run-planner-first-narrative", "work")
+        payload["user_message"] = "帮我做一份简单介绍智能系统的ppt，10分钟讲演时间"
+        payload["context"]["tools"] = [
+            {
+                "name": "work_generate_pptx",
+                "description": "生成普通叙事型 PPT",
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "required": ["title", "audience", "style", "brief", "slide_count"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+        result = AgentRuntime(graph).start(payload)
+        self.assertEqual(decisions.calls[:3], ["plan", "decide", "compose"])
+        self.assertEqual(result["task_contract"]["presentation_mode"], "narrative")
+        self.assertEqual(result["task_contract"]["requested_fields"], [])
+        self.assertEqual(result["outcome"], "completed")
+
     def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
         current = {"table": {"rows": [{"entity_id": "g1"}]}}
         repaired = {"table": {"rows": []}}
@@ -1426,6 +1510,52 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(
             _completed_presentation_continuation(state),  # type: ignore[arg-type]
             "work_generate_pptx",
+        )
+
+    def test_completed_extraction_selects_the_planned_table_capability(self) -> None:
+        state = {
+            "module": "work",
+            "task_contract": {
+                "artifact_types": ["pptx"],
+                "presentation_mode": "structured_table",
+                "source_required": True,
+                "source_document_ids": ["document-1"],
+            },
+            "context": {
+                "tools": [
+                    {
+                        "name": "work_generate_pptx",
+                        "compose_arguments": True,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    {
+                        "name": "work_generate_table_pptx",
+                        "compose_arguments": True,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                ]
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "status": "succeeded",
+                    "arguments": {"attachment_index": 1},
+                    "data": {
+                        "output": {
+                            "truncated": False,
+                            "coverage_ratio": 1.0,
+                            "completed_rounds": 1,
+                            "round_count": 1,
+                            "selected_chunk_count": 1,
+                            "total_chunk_count": 1,
+                        }
+                    },
+                }
+            ],
+        }
+        self.assertEqual(
+            _completed_presentation_continuation(state),  # type: ignore[arg-type]
+            "work_generate_table_pptx",
         )
 
     def test_exhaustive_ppt_composition_checkpoints_each_document_round(self) -> None:

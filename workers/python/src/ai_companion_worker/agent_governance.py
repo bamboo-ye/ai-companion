@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.47.0"
+GRAPH_VERSION = "3.48.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -93,7 +93,12 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         model_role="planner",
         recovery="checkpoint_replay",
         max_model_calls=1,
-        allowed_writes=(*_MODEL_CONTROL_WRITES, "plan", "action_budget"),
+        allowed_writes=(
+            *_MODEL_CONTROL_WRITES,
+            "plan",
+            "task_contract",
+            "action_budget",
+        ),
     ),
     "companion": NodeContract(
         responsibility="Route or answer companion requests within the supplied catalog.",
