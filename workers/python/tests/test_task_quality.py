@@ -5,6 +5,7 @@ import unittest
 from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
+    localize_presentation_field_value,
     presentation_source_record_keys,
     validate_artifact_observation,
     validate_presentation_arguments,
@@ -12,6 +13,17 @@ from ai_companion_worker.task_quality import (
 
 
 class TaskQualityTests(unittest.TestCase):
+    def test_localize_time_repairs_split_weekdays_and_removes_capacity(self) -> None:
+        value = localize_presentation_field_value(
+            "time",
+            "14/9 (Mo n) 1600-1650 12；9/9 (We d) 1100-1150；10/9 (T hu) 0900-0950",
+            "zh-CN",
+        )
+        self.assertEqual(
+            value,
+            "14/9 (周一) 1600-1650；9/9 (周三) 1100-1150；10/9 (周四) 0900-0950",
+        )
+
     def test_compile_contract_locks_exhaustive_ppt_fields(self) -> None:
         contract = compile_task_contract(
             "帮我整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"

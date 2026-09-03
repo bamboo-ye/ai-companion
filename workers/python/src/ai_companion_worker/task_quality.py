@@ -70,6 +70,13 @@ _PRESENTATION_ZH_TIME_REPLACEMENTS = (
     (re.compile(r"\bam\b", re.IGNORECASE), "上午"),
     (re.compile(r"\bpm\b", re.IGNORECASE), "下午"),
 )
+_PRESENTATION_SPLIT_WEEKDAY = re.compile(
+    r"\(\s*([A-Za-z]{1,3})\s+([A-Za-z]{1,8})\s*\)"
+)
+_PRESENTATION_TRAILING_CAPACITY = re.compile(
+    r"(\b(?:[01]\d|2[0-3])[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3])[0-5]\d)"
+    r"\s+\d{1,3}(?=\s*(?:[；;]|$))"
+)
 _PRESENTATION_PARTIAL_SCOPE_MARKER = (
     r"(?:节选|摘要|摘录|示例|样例|部分|excerpt|summary|sample|partial)"
 )
@@ -130,8 +137,37 @@ def localize_presentation_field_value(field: str, value: Any, language: Any) -> 
     """Apply deterministic locale normalization to non-semantic field tokens."""
 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if not str(language or "").casefold().startswith("zh") or field != "time":
+    if field != "time":
         return text
+    text = _PRESENTATION_TRAILING_CAPACITY.sub(r"\1", text)
+    if not str(language or "").casefold().startswith("zh"):
+        return text
+
+    weekdays = {
+        "mon",
+        "monday",
+        "tue",
+        "tues",
+        "tuesday",
+        "wed",
+        "wednesday",
+        "thu",
+        "thur",
+        "thurs",
+        "thursday",
+        "fri",
+        "friday",
+        "sat",
+        "saturday",
+        "sun",
+        "sunday",
+    }
+
+    def join_split_weekday(match: re.Match[str]) -> str:
+        combined = (match.group(1) + match.group(2)).casefold()
+        return f"({combined})" if combined in weekdays else match.group(0)
+
+    text = _PRESENTATION_SPLIT_WEEKDAY.sub(join_split_weekday, text)
     for pattern, replacement in _PRESENTATION_ZH_TIME_REPLACEMENTS:
         text = pattern.sub(replacement, text)
     return re.sub(r"\s*&\s*", "、", text).strip()

@@ -28,6 +28,7 @@ from ai_companion_worker.agent_runtime import (
     _presentation_focus_phrases,
     _presentation_focused_document_batches,
     _presentation_repair_base,
+    _presentation_rewrite_base_for_batch,
     _presentation_structured_batches,
     _validate_checkpoint_identity,
     _validate_tool_arguments,
@@ -203,6 +204,23 @@ def email_tool_definition() -> dict[str, Any]:
 
 
 class AgentRuntimeTest(unittest.TestCase):
+    def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
+        current = {"table": {"rows": [{"entity_id": "g1"}]}}
+        repaired = {"table": {"rows": []}}
+        self.assertEqual(
+            _presentation_rewrite_base_for_batch(current, repaired, {}, "rewrite-1"),
+            repaired,
+        )
+        self.assertEqual(
+            _presentation_rewrite_base_for_batch(
+                current,
+                repaired,
+                {"processing_key": "rewrite-1", "next_batch_index": 1},
+                "rewrite-1",
+            ),
+            current,
+        )
+
     def runtime(
         self,
         decision: ModelDecision,
@@ -887,6 +905,77 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(entities[0]["values"][0], "PED1305")
         self.assertIn("17/9 周四 0900-0950", entities[0]["values"][2])
         self.assertIn("8/10 周四 1400-1450", entities[0]["values"][2])
+
+    def test_structured_batches_recover_temporal_column_shift_and_wrapped_name(self) -> None:
+        state = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1},
+                    "data": {
+                        "output": {
+                            "source_ir": {
+                                "version": "document-source-ir-v1",
+                                "structure_preserved": True,
+                                "tables": [
+                                    {
+                                        "id": "shifted",
+                                        "columns": [
+                                            {"id": "c1", "label": "Course Code"},
+                                            {"id": "c2", "label": "Regular PE Courses"},
+                                            {"id": "c3", "label": "Section No."},
+                                            {"id": "c4", "label": "Column 4"},
+                                            {"id": "c5", "label": "Date"},
+                                            {"id": "c6", "label": "Time Per Section"},
+                                        ],
+                                        "rows": [
+                                            {
+                                                "id": "r1",
+                                                "group_id": "g1",
+                                                "page": 2,
+                                                "cells": [
+                                                    {"column_id": "c1", "text": "PED 1317"},
+                                                    {"column_id": "c2", "text": "High Intensity Interval"},
+                                                    {"column_id": "c3", "text": "T01"},
+                                                    {"column_id": "c4", "text": "14/9, 21/9 (Mo"},
+                                                    {"column_id": "c5", "text": "n)"},
+                                                    {"column_id": "c6", "text": "1500-1550 14"},
+                                                ],
+                                            },
+                                            {
+                                                "id": "r2",
+                                                "group_id": "g1",
+                                                "page": 2,
+                                                "cells": [
+                                                    {"column_id": "c1", "text": ""},
+                                                    {"column_id": "c2", "text": "Training (HIIT)"},
+                                                    {"column_id": "c3", "text": "T02"},
+                                                    {"column_id": "c4", "text": "9/9, 16/9 (We"},
+                                                    {"column_id": "c5", "text": "d)"},
+                                                    {"column_id": "c6", "text": "1100-1150"},
+                                                ],
+                                            },
+                                        ],
+                                        "row_groups": [{"id": "g1", "row_ids": ["r1", "r2"]}],
+                                    }
+                                ],
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+        batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
+        values = batches[0]["grounded_rows"][0]["values"]
+        self.assertEqual(values[0], "PED 1317")
+        self.assertEqual(values[1], "High Intensity Interval Training (HIIT)")
+        self.assertIn("14/9, 21/9 (周一) 1500-1550", values[2])
+        self.assertIn("9/9, 16/9 (周三) 1100-1150", values[2])
+        self.assertNotIn("1500-1550 14", values[2])
 
     def test_composer_circuit_breaker_requires_two_timeouts(self) -> None:
         timeout = {
