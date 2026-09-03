@@ -1406,11 +1406,12 @@ def _presentation_visuals(
     generation_errors: list[str] = []
     generation_attempts = 0
     generated_count = 0
-    maximum_generated = _bounded_positive_int(
+    configured_maximum_generated = _bounded_positive_int(
         "MODEL_PRESENTATION_IMAGE_MAX_COUNT",
-        min(2, max(1, len(topics))),
-        min(4, len(topics) or 1),
+        2,
+        4,
     )
+    maximum_generated = min(configured_maximum_generated, len(topics))
     can_generate = (
         mode == "auto"
         and allow_generated

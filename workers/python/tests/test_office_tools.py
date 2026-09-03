@@ -27,6 +27,7 @@ from ai_companion_worker.office_tools import (
     _translation_batches,
     _presentation_display_rows,
     _presentation_render_text,
+    _presentation_visuals,
     _translated_content,
     execute,
     main,
@@ -43,6 +44,21 @@ from ai_companion_worker.translation_language import translation_language_policy
 
 
 class OfficeToolsTest(unittest.TestCase):
+    def test_pptx_visual_limit_is_capped_by_available_topics(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"MODEL_PRESENTATION_IMAGE_MAX_COUNT": "2"},
+        ):
+            assignments, report, usage = _presentation_visuals(
+                {},
+                [],
+                include_file=True,
+                allow_generated=False,
+            )
+        self.assertEqual(assignments, [])
+        self.assertEqual(report["generation_attempt_count"], 0)
+        self.assertEqual(usage["cost_micros"], 0)
+
     def test_translation_normalization_removes_unrenderable_inline_bullets(self) -> None:
         normalized = _normalize_translation("• 第一项 •\n• 第二项")
 
