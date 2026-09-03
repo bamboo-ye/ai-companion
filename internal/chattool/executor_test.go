@@ -977,7 +977,7 @@ func TestPPTGenerationInjectsOnlyTrustedAttachedPDFBytes(t *testing.T) {
 	text := chatattachment.AppendDocument("根据附件制作 PPT", item.ID, item.Name)
 	result, err := executor.ExecuteModelTool(ctx, conversation.ToolRequest{
 		UserID: "user-1", MessageID: "multimodal-ppt", Module: "work", Text: text,
-	}, conversation.ModelToolCall{Name: "work_generate_pptx", Arguments: map[string]any{
+	}, conversation.ModelToolCall{Name: "work_generate_visual_pptx", Arguments: map[string]any{
 		"title": "课程介绍", "audience": "学生", "style": "简洁", "brief": "课程信息", "slide_count": float64(4),
 		"source_documents": []any{map[string]any{
 			"filename": "forged.pdf", "media_type": "application/pdf", "data_base64": base64.StdEncoding.EncodeToString([]byte("forged")),
@@ -997,6 +997,30 @@ func TestPPTGenerationInjectsOnlyTrustedAttachedPDFBytes(t *testing.T) {
 	if worker.input["visual_mode"] != "auto" {
 		t.Fatalf("visual mode=%#v", worker.input["visual_mode"])
 	}
+	_, err = executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "plain-ppt", Module: "work", Text: text,
+	}, conversation.ModelToolCall{Name: "work_generate_pptx", Arguments: map[string]any{
+		"title": "普通演示", "audience": "学生", "style": "简洁", "brief": "正文", "slide_count": float64(4),
+		"table": map[string]any{"columns": []any{"A", "B"}, "rows": []any{}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.input["visual_mode"] != "none" || worker.input["source_documents"] != nil || worker.input["table"] != nil {
+		t.Fatalf("plain presentation leaked optional capabilities: %#v", worker.input)
+	}
+	_, err = executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "table-ppt", Module: "work", Text: text,
+	}, conversation.ModelToolCall{Name: "work_generate_table_pptx", Arguments: map[string]any{
+		"title": "表格演示", "audience": "学生", "style": "简洁", "brief": "课程", "slide_count": float64(4),
+		"table": map[string]any{"columns": []any{"代码", "名称"}, "rows": []any{}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.input["visual_mode"] != "none" || worker.input["source_documents"] != nil || worker.input["table"] == nil {
+		t.Fatalf("table presentation capability isolation failed: %#v", worker.input)
+	}
 }
 
 func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *testing.T) {
@@ -1010,7 +1034,7 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 		skill.NewService(skill.NewMemoryStore(), skill.NewMemoryFileStore(), registry),
 	)
 	tools := executor.ModelTools(conversation.ToolRequest{Module: "work", Text: "任意自然语言"})
-	if len(tools) != 11 {
+	if len(tools) != 13 {
 		t.Fatalf("work model tools=%#v", tools)
 	}
 	names := map[string]bool{}
@@ -1030,17 +1054,33 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 			extractor = tool
 		}
 	}
-	for _, expected := range []string{"work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx"} {
+	for _, expected := range []string{"work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx", "work_generate_table_pptx", "work_generate_visual_pptx"} {
 		if !composed[expected] {
 			t.Fatalf("work model tool %q must use the dedicated argument composer", expected)
 		}
 	}
-	if len(composed) != 4 {
+	if len(composed) != 6 {
 		t.Fatalf("unexpected composed tool set: %#v", composed)
 	}
-	for _, expected := range []string{"work_no_tool", "work_list_documents", "work_list_skills", "work_query_documents", "work_extract_attached_document", "work_translate_attached_pdf", "work_translate_text", "work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx"} {
+	for _, expected := range []string{"work_no_tool", "work_list_documents", "work_list_skills", "work_query_documents", "work_extract_attached_document", "work_translate_attached_pdf", "work_translate_text", "work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx", "work_generate_table_pptx", "work_generate_visual_pptx"} {
 		if !names[expected] {
 			t.Fatalf("missing work model tool %q", expected)
+		}
+	}
+	for _, tool := range tools {
+		properties, _ := tool.Parameters["properties"].(map[string]any)
+		switch tool.Name {
+		case "work_generate_pptx", "work_generate_visual_pptx":
+			if _, exists := properties["table"]; exists {
+				t.Fatalf("isolated presentation tool %q exposes table schema", tool.Name)
+			}
+			if _, exists := properties["mapping_contract"]; exists {
+				t.Fatalf("isolated presentation tool %q exposes mapping schema", tool.Name)
+			}
+		case "work_generate_table_pptx":
+			if _, exists := properties["table"]; !exists {
+				t.Fatal("structured presentation tool must expose table schema")
+			}
 		}
 	}
 	if !extractor.Repeatable || len(extractor.IdentityFields) != 2 || extractor.IdentityFields[0] != "attachment_index" || extractor.IdentityFields[1] != "round_start" {

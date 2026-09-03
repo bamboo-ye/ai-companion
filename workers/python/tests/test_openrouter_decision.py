@@ -11,6 +11,8 @@ from ai_companion_worker.openrouter_decision import (
     OpenRouterConfig,
     OpenRouterDecisionPort,
     OpenRouterError,
+    _model_visible_presentation_parameters,
+    _required_artifact_tool,
     _presentation_batch_parameters,
 )
 from ai_companion_worker.agent_runtime import ModelBudgetExceeded
@@ -93,6 +95,55 @@ def context() -> dict[str, Any]:
 
 
 class OpenRouterDecisionPortTest(unittest.TestCase):
+    def test_artifact_router_uses_only_the_planned_presentation_capability(self) -> None:
+        tools = [
+            {"name": "work_generate_pptx"},
+            {"name": "work_generate_table_pptx"},
+            {"name": "work_generate_visual_pptx"},
+        ]
+        expected = {
+            "narrative": "work_generate_pptx",
+            "structured_table": "work_generate_table_pptx",
+            "illustrated": "work_generate_visual_pptx",
+        }
+        for mode, tool_name in expected.items():
+            with self.subTest(mode=mode):
+                self.assertEqual(
+                    _required_artifact_tool(
+                        {
+                            "task_contract": {
+                                "artifact_types": ["pptx"],
+                                "presentation_mode": mode,
+                            },
+                            "artifact_validation": {},
+                        },
+                        tools,
+                    ),
+                    tool_name,
+                )
+
+    def test_model_visible_presentation_schema_is_capability_scoped(self) -> None:
+        schema = {
+            "type": "object",
+            "required": ["brief", "table", "task_contract"],
+            "properties": {
+                "brief": {"type": "string"},
+                "table": {"type": "object"},
+                "mapping_contract": {"type": "object"},
+                "task_contract": {"type": "object"},
+                "source_coverage": {"type": "object"},
+            },
+            "additionalProperties": False,
+        }
+        narrative = _model_visible_presentation_parameters(schema)
+        self.assertEqual(set(narrative["properties"]), {"brief"})
+        self.assertEqual(narrative["required"], ["brief"])
+        structured = _model_visible_presentation_parameters(schema, structured=True)
+        self.assertEqual(
+            set(structured["properties"]),
+            {"brief", "table", "mapping_contract"},
+        )
+
     def test_compact_entity_batch_schema_leaves_provenance_to_harness(self) -> None:
         schema = {
             "type": "object",
@@ -257,6 +308,47 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("查询真实未完成事项", system_prompt)
         self.assertIn("无匹配或多匹配", system_prompt)
         self.assertTrue(user_payload["available_tools"][0]["requires_plan"])
+
+    def test_planner_classifies_presentation_capability_before_routing(self) -> None:
+        port = StubOpenRouter(
+            [
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "objective": "介绍智能系统",
+                                        "steps": ["组织叙事", "生成演示", "检查结果"],
+                                        "success_criteria": "生成适合十分钟讲演的演示文稿",
+                                        "task_intent": {
+                                            "presentation_mode": "narrative",
+                                            "requested_fields": [],
+                                            "confidence": "high",
+                                            "rationale": "十分钟是讲演时长",
+                                        },
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        plan = port.plan(
+            module="work",
+            message="帮我做一份简单介绍智能系统的ppt，10分钟讲演时间",
+            context={
+                "tools": [],
+                "task_contract": {"artifact_types": ["pptx"]},
+            },
+        )
+        self.assertEqual(plan.task_intent["presentation_mode"], "narrative")
+        system_prompt = port.requests[0]["messages"][0]["content"]
+        self.assertIn("讲演时长", system_prompt)
+        user_payload = json.loads(port.requests[0]["messages"][1]["content"])
+        self.assertEqual(user_payload["task_contract"]["artifact_types"], ["pptx"])
 
     def test_plan_failure_uses_generic_decoupled_fallback(self) -> None:
         port = StubOpenRouter(

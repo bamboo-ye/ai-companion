@@ -199,50 +199,54 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 	}
 	presentationFields := func() map[string]any {
 		return map[string]any{
-			"title":       stringField("封面可见标题，不得包含 .pptx 文件扩展名"),
-			"audience":    stringField("目标受众"),
-			"style":       stringField("视觉与表达风格"),
-			"brief":       map[string]any{"type": "string", "description": "最终面向受众的正文。非表格演示只能按内容页依次写为：## 简短标题，随后至少两行 - 事实或结论；不得写页数规划、制作说明、文件名、覆盖率、抽取过程、引用说明、备注或后续询问。标题不超过28字符、要点不超过100字符、章节数必须等于 slide_count 减2。表格演示可填写一句内容目的", "maxLength": 10000},
-			"slide_count": map[string]any{"type": "integer", "description": "页数，3 到 60；完整性任务按数据量自动扩页", "minimum": 3, "maximum": 60},
-			"filename":    filenameField(".pptx"),
-			"table": map[string]any{
-				"type": "object", "description": "表格型内容必须使用此结构，禁止压缩为单段 brief",
-				"required": []string{"columns", "rows"}, "additionalProperties": false,
-				"properties": map[string]any{
-					"title":   map[string]any{"type": "string", "maxLength": 60},
-					"columns": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 40}},
-					"rows": map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{
-						"type": "object", "required": []string{"cells", "source_locator"}, "additionalProperties": false,
-						"properties": map[string]any{
-							"cells":          map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}},
-							"source_locator": map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
-							"entity_id":      map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
-							"source_refs":    map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
-						},
-					}},
-				},
-			},
-			"mapping_contract": map[string]any{
-				"type": "object", "additionalProperties": false,
-				"required": []string{"version", "source_table_ids", "entity_level", "field_mappings"},
-				"properties": map[string]any{
-					"version":          map[string]any{"type": "string", "enum": []string{"target-mapping-v1"}},
-					"source_table_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
-					"entity_level":     map[string]any{"type": "string", "enum": []string{"row_group", "row"}},
-					"field_mappings": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{
-						"type": "object", "additionalProperties": false,
-						"required": []string{"target_index", "source_column_ids", "mode"},
-						"properties": map[string]any{
-							"target_index":      map[string]any{"type": "integer", "minimum": 0, "maximum": 5},
-							"source_column_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
-							"mode":              map[string]any{"type": "string", "enum": []string{"direct", "aggregate"}},
-						},
-					}},
-				},
-			},
+			"title":           stringField("封面可见标题，不得包含 .pptx 文件扩展名"),
+			"audience":        stringField("目标受众"),
+			"style":           stringField("视觉与表达风格"),
+			"brief":           map[string]any{"type": "string", "description": "最终面向受众的正文。非表格演示只能按内容页依次写为：## 简短标题，随后至少两行 - 事实或结论；不得写页数规划、制作说明、文件名、覆盖率、抽取过程、引用说明、备注或后续询问。标题不超过28字符、要点不超过100字符、章节数必须等于 slide_count 减2。表格演示可填写一句内容目的", "maxLength": 10000},
+			"slide_count":     map[string]any{"type": "integer", "description": "页数，3 到 60；完整性任务按数据量自动扩页", "minimum": 3, "maximum": 60},
+			"filename":        filenameField(".pptx"),
 			"task_contract":   map[string]any{"type": "object", "description": "Harness 注入的可信任务契约"},
 			"source_coverage": map[string]any{"type": "object", "description": "Harness 注入的可信来源覆盖率"},
 		}
+	}
+	presentationTableFields := func() map[string]any {
+		fields := presentationFields()
+		fields["table"] = map[string]any{
+			"type": "object", "description": "表格型内容必须使用此结构，禁止压缩为单段 brief",
+			"required": []string{"columns", "rows"}, "additionalProperties": false,
+			"properties": map[string]any{
+				"title":   map[string]any{"type": "string", "maxLength": 60},
+				"columns": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 40}},
+				"rows": map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{
+					"type": "object", "required": []string{"cells", "source_locator"}, "additionalProperties": false,
+					"properties": map[string]any{
+						"cells":          map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}},
+						"source_locator": map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+						"entity_id":      map[string]any{"type": "string", "minLength": 1, "maxLength": 160},
+						"source_refs":    map[string]any{"type": "array", "minItems": 1, "maxItems": 500, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+					},
+				}},
+			},
+		}
+		fields["mapping_contract"] = map[string]any{
+			"type": "object", "additionalProperties": false,
+			"required": []string{"version", "source_table_ids", "entity_level", "field_mappings"},
+			"properties": map[string]any{
+				"version":          map[string]any{"type": "string", "enum": []string{"target-mapping-v1"}},
+				"source_table_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+				"entity_level":     map[string]any{"type": "string", "enum": []string{"row_group", "row"}},
+				"field_mappings": map[string]any{"type": "array", "minItems": 2, "maxItems": 6, "items": map[string]any{
+					"type": "object", "additionalProperties": false,
+					"required": []string{"target_index", "source_column_ids", "mode"},
+					"properties": map[string]any{
+						"target_index":      map[string]any{"type": "integer", "minimum": 0, "maximum": 5},
+						"source_column_ids": map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": map[string]any{"type": "string", "minLength": 1, "maxLength": 160}},
+						"mode":              map[string]any{"type": "string", "enum": []string{"direct", "aggregate"}},
+					},
+				}},
+			},
+		}
+		return fields
 	}
 	if attachmentCount < 1 {
 		attachmentCount = 1
@@ -316,7 +320,19 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_pptx", Description: "用户明确要求创建或生成 PPT/PPTX 文件时调用。参数完整后直接生成新文件，不需要二次确认，也不会覆盖已有文件；系统会自动复用可信附件中的图片，必要时按配置生成配图。",
+			Name: "work_generate_pptx", Description: "用户要求创建普通叙事型 PPT/PPTX 时调用。只处理逐页标题与要点，不接受表格数据，不提取或生成插图。",
+			ComposeArguments: true,
+			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
+			RepairPolicies:   filenameRepairs(".pptx"),
+		},
+		{
+			Name: "work_generate_table_pptx", Description: "只在用户明确要求将多条记录按字段整理、合并或展示为表格 PPT/PPTX 时调用。不负责普通叙事或插图。",
+			ComposeArguments: true,
+			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count", "table"}, presentationTableFields()),
+			RepairPolicies:   filenameRepairs(".pptx"),
+		},
+		{
+			Name: "work_generate_visual_pptx", Description: "只在规划已判定必须使用插图、图文、来源图片或其他视觉证据时调用，不得仅为装饰启用。系统可复用可信 PDF 图片或按配置生成配图；不接受表格数据。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
@@ -427,7 +443,11 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 	case "work_create_pptx_outline":
 		return e.runSkillWithInput(ctx, request, "office.pptx_outline", call.Arguments)
 	case "work_generate_pptx":
-		return e.runPresentationSkillWithSources(ctx, request, call.Arguments)
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "narrative")
+	case "work_generate_table_pptx":
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "structured_table")
+	case "work_generate_visual_pptx":
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "illustrated")
 	default:
 		return conversation.ToolResult{}, fmt.Errorf("unsupported work model tool %q", call.Name)
 	}
@@ -1712,17 +1732,29 @@ func (e *Executor) runSkillWithInput(ctx context.Context, request conversation.T
 	return handled(skillName, skillRunChatResponse(run, "工作工具执行失败，可以直接在聊天窗口或历史任务中重试。"), run), nil
 }
 
-func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request conversation.ToolRequest, arguments map[string]any) (conversation.ToolResult, error) {
+func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request conversation.ToolRequest, arguments map[string]any, mode string) (conversation.ToolResult, error) {
 	input := make(map[string]any, len(arguments)+2)
 	for key, value := range arguments {
 		// Source bytes cross a trust boundary here. Never accept source documents
 		// composed by the model or supplied through a forged tool invocation.
-		if key != "source_documents" {
+		if key != "source_documents" && key != "visual_mode" {
 			input[key] = value
 		}
 	}
-	if _, ok := input["visual_mode"]; !ok {
+	switch mode {
+	case "structured_table":
+		input["visual_mode"] = "none"
+	case "illustrated":
+		delete(input, "table")
+		delete(input, "mapping_contract")
 		input["visual_mode"] = "auto"
+	default:
+		delete(input, "table")
+		delete(input, "mapping_contract")
+		input["visual_mode"] = "none"
+	}
+	if mode != "illustrated" {
+		return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
 	}
 
 	ids := attachmentDocumentIDs(request)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from ai_companion_worker.task_quality import (
+    apply_planned_task_intent,
     artifact_observation_applicable,
     compile_task_contract,
     localize_presentation_field_value,
@@ -94,6 +95,45 @@ class TaskQualityTests(unittest.TestCase):
         self.assertEqual(contract["artifact_types"], ["pptx"])
         self.assertEqual(contract["requested_fields"], ["code", "name", "time"])
         self.assertEqual(contract["output_language"], "zh-CN")
+
+    def test_speech_duration_does_not_create_a_structured_time_field(self) -> None:
+        contract = compile_task_contract(
+            "帮我做一份简单介绍智能系统的ppt，10分钟讲演时间",
+            "work",
+        )
+        self.assertEqual(contract["requested_fields"], [])
+        self.assertEqual(contract["presentation_mode"], "undetermined")
+
+    def test_planner_selects_one_presentation_capability_without_relaxing_hard_facts(self) -> None:
+        contract = compile_task_contract(
+            "整理所有课程的名称和代码并生成中文 PPT\n📎 courses.pdf",
+            "work",
+        )
+        narrative = apply_planned_task_intent(
+            contract,
+            {
+                "presentation_mode": "narrative",
+                "requested_fields": ["time"],
+                "confidence": "high",
+                "rationale": "用户要求主题讲解，而非逐条字段表",
+            },
+        )
+        self.assertEqual(narrative["requested_fields"], [])
+        self.assertNotIn("requested_fields_present", narrative["hard_requirements"])
+        self.assertTrue(narrative["source_required"])
+        self.assertTrue(narrative["exhaustive"])
+        self.assertEqual(narrative["output_language"], "zh-CN")
+
+        structured = apply_planned_task_intent(
+            contract,
+            {
+                "presentation_mode": "structured_table",
+                "requested_fields": ["code", "name"],
+                "confidence": "high",
+            },
+        )
+        self.assertEqual(structured["requested_fields"], ["code", "name"])
+        self.assertIn("requested_fields_present", structured["hard_requirements"])
 
     def test_compile_contract_fails_closed_for_legacy_visible_attachment(self) -> None:
         contract = compile_task_contract(

@@ -1,6 +1,6 @@
 # OpenRouter model and Graph policy
 
-Updated: 2026-08-10
+Updated: 2026-09-03
 
 ## Production selection
 
@@ -84,6 +84,22 @@ The default 64-call ceiling covers bounded large-document work: extraction conti
 The PDF translation tool is an independently persisted Skill Run, so its model usage is not misattributed to a Graph node. It uses the same fixed Mini model and OpenRouter privacy/routing policy, reserves cost before dispatch at `$0.30/M` prompt and `$2.50/M` completion ceilings, persists returned usage in the Skill output, and rejects reported cost above `60,000` micro-USD. Production configuration requires `companion,life,work` in `AGENT_CHAT_MODULES`; the legacy direct-chat model path remains available only for development and staged canaries. An OpenRouter workspace/key budget is still the final hard spending limit.
 
 ## Node and recovery contract
+
+Graph version `3.48.0` makes presentation capability selection a planner-owned
+semantic decision. Work-module PPT requests now enter `plan` before routing. The
+planner classifies exactly one of `narrative`, `structured_table`, or
+`illustrated`; the Harness then refines the task contract without allowing the
+model to relax source, language, exhaustiveness, or artifact requirements. A
+speech-duration phrase such as “10 minutes” is not a table time field. Routing
+then forces one minimal model-visible tool: `work_generate_pptx` exposes only
+narrative fields, `work_generate_table_pptx` owns table/mapping and large-source
+record merging, and `work_generate_visual_pptx` owns trusted-source image reuse
+or configured image generation. Harness-owned provenance fields are hidden from
+the Composer schema and injected after composition. All three capabilities reuse
+the same internal `office.pptx_generate` renderer; the executor pins narrative
+and table modes to no visuals, while only the illustrated mode receives source
+PDF bytes and `visual_mode=auto`. Old immutable checkpoints without the split
+catalog retain a bounded compatibility path through the legacy generator name.
 
 Graph version `3.12.0` replaces text-only exhaustive document composition with a domain-neutral `document-source-ir-v1` contract. Fixed-width sources preserve logical tables, columns, row groups, rows, cells, explicit/inherited values and stable provenance IDs before batching. Structured batches retain parent context, split only between logical groups or checkpointed child slices, lock one `target-mapping-v1` field/granularity contract, merge by source entity ID, and apply bidirectional precision/recall gates for missing, extra, orphaned and unreferenced entities. PPTX is a deterministic renderer over the validated dataset: it paginates readable continuation rows, hides internal Harness locators, checks canvas geometry and capacity, and withholds the file whenever the hard quality report fails. A per-run Composer circuit breaker still gives the configured DeepSeek structured Composer the first attempt, then bypasses a timed-out candidate only after a healthy fallback has been observed.
 

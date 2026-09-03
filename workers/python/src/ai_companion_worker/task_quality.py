@@ -5,7 +5,10 @@ from pathlib import PurePath
 from typing import Any, Mapping
 
 
-TASK_CONTRACT_VERSION = "task-contract-v1"
+TASK_CONTRACT_VERSION = "task-contract-v2"
+
+_PRESENTATION_MODES = frozenset(("narrative", "structured_table", "illustrated"))
+_PRESENTATION_FIELDS = frozenset(("code", "name", "time", "venue"))
 ARTIFACT_QUALITY_POLICY_VERSION = "artifact-quality-v1"
 
 _ARTIFACT_SKILL_TYPES = {
@@ -775,7 +778,10 @@ def compile_task_contract(
     field_patterns = (
         ("code", r"(?:课程代码|课程编号|代码|编号|\bcode\b)"),
         ("name", r"(?:课程名称|名称|名字|\bname\b)"),
-        ("time", r"(?:上课时间|时间|日期|星期|时段|\btime\b|\bdate\b|\bschedule\b)"),
+        (
+            "time",
+            r"(?:上课时间|时间字段|时间列|日期|星期|时段|\bclass time\b|\bdate\b|\bschedule\b)",
+        ),
         ("venue", r"(?:地点|教室|场地|\bvenue\b|\blocation\b)"),
     )
     for field, pattern in field_patterns:
@@ -803,11 +809,86 @@ def compile_task_contract(
         ),
         "exhaustive": exhaustive,
         "requested_fields": requested_fields,
+        "presentation_mode": "undetermined" if "pptx" in artifact_types else "not_applicable",
+        "intent_source": "fallback_rules",
         "output_language": "zh-CN" if re.search(r"(?:中文|汉语|chinese)", lowered) else "",
         "hard_requirements": hard_requirements,
         "completion_policy": "all_hard_requirements_pass",
         "inherited_from_history": normalized != current,
     }
+
+
+def apply_planned_task_intent(
+    task_contract: Mapping[str, Any],
+    task_intent: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Refine presentation-only requirements from the planner's semantic intent.
+
+    The planner may select one presentation capability, but cannot relax source,
+    language, exhaustiveness, or artifact requirements compiled by the Harness.
+    """
+
+    contract = dict(task_contract)
+    artifact_types = contract.get("artifact_types")
+    if not isinstance(artifact_types, list) or "pptx" not in artifact_types:
+        return contract
+    if not isinstance(task_intent, Mapping):
+        requested = contract.get("requested_fields")
+        contract["presentation_mode"] = (
+            "structured_table" if isinstance(requested, list) and requested else "narrative"
+        )
+        return contract
+
+    raw_mode = str(task_intent.get("presentation_mode") or "").strip().casefold()
+    if raw_mode not in _PRESENTATION_MODES:
+        requested = contract.get("requested_fields")
+        contract["presentation_mode"] = (
+            "structured_table" if isinstance(requested, list) and requested else "narrative"
+        )
+        return contract
+
+    raw_fields = task_intent.get("requested_fields")
+    planned_fields = (
+        list(
+            dict.fromkeys(
+                str(value).strip().casefold()
+                for value in raw_fields
+                if isinstance(value, str)
+                and str(value).strip().casefold() in _PRESENTATION_FIELDS
+            )
+        )
+        if isinstance(raw_fields, list)
+        else []
+    )
+    if raw_mode == "structured_table":
+        fallback_fields = contract.get("requested_fields")
+        if not planned_fields and isinstance(fallback_fields, list):
+            planned_fields = [
+                str(value)
+                for value in fallback_fields
+                if isinstance(value, str) and value in _PRESENTATION_FIELDS
+            ]
+        contract["requested_fields"] = planned_fields
+    else:
+        contract["requested_fields"] = []
+
+    hard_requirements = [
+        str(value)
+        for value in contract.get("hard_requirements", [])
+        if isinstance(value, str) and value != "requested_fields_present"
+    ]
+    if raw_mode == "structured_table" and planned_fields:
+        hard_requirements.append("requested_fields_present")
+    contract["hard_requirements"] = list(dict.fromkeys(hard_requirements))
+    contract["presentation_mode"] = raw_mode
+    contract["intent_source"] = "planner"
+    confidence = str(task_intent.get("confidence") or "").strip().casefold()
+    if confidence in ("low", "medium", "high"):
+        contract["intent_confidence"] = confidence
+    rationale = str(task_intent.get("rationale") or "").strip()
+    if rationale:
+        contract["intent_rationale"] = rationale[:240]
+    return contract
 
 
 def task_contract_requires_artifact(task_contract: Mapping[str, Any]) -> bool:

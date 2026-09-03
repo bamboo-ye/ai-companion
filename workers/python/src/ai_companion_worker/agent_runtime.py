@@ -24,6 +24,7 @@ from ai_companion_worker.email_quality import (
 )
 from ai_companion_worker.response_quality import inspect_and_repair_response
 from ai_companion_worker.task_quality import (
+    apply_planned_task_intent,
     artifact_observation_applicable,
     clean_presentation_field_fragment,
     compile_task_contract,
@@ -68,6 +69,78 @@ RiskLevel = Literal["none", "low", "medium", "high"]
 ToolStatus = Literal["completed", "requires_confirmation"]
 AssessmentStatus = Literal["completed", "continue", "blocked"]
 ExecutionMode = Literal["direct", "single_action", "agentic"]
+
+_PRESENTATION_TOOLS = frozenset(
+    (
+        "work_create_pptx_outline",
+        "work_generate_pptx",
+        "work_generate_table_pptx",
+        "work_generate_visual_pptx",
+    )
+)
+_STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
+
+
+def _presentation_tool_for_contract(task_contract: Mapping[str, Any]) -> str:
+    mode = str(task_contract.get("presentation_mode") or "").strip().casefold()
+    if mode == "structured_table":
+        return "work_generate_table_pptx"
+    if mode == "illustrated":
+        return "work_generate_visual_pptx"
+    return "work_generate_pptx"
+
+
+def _sanitize_plan_task_intent(value: Mapping[str, Any]) -> dict[str, Any]:
+    allowed_modes = ("not_applicable", "narrative", "structured_table", "illustrated")
+    allowed_fields = ("code", "name", "time", "venue")
+    mode = str(value.get("presentation_mode") or "").strip().casefold()
+    fields = value.get("requested_fields")
+    result: dict[str, Any] = {}
+    if mode in allowed_modes:
+        result["presentation_mode"] = mode
+    if isinstance(fields, list):
+        result["requested_fields"] = list(
+            dict.fromkeys(
+                str(item).strip().casefold()
+                for item in fields
+                if isinstance(item, str)
+                and str(item).strip().casefold() in allowed_fields
+            )
+        )
+    confidence = str(value.get("confidence") or "").strip().casefold()
+    if confidence in ("low", "medium", "high"):
+        result["confidence"] = confidence
+    rationale = str(value.get("rationale") or "").strip()
+    if rationale:
+        result["rationale"] = rationale[:240]
+    return result
+
+
+def _uses_structured_presentation_capability(
+    state: Mapping[str, Any], tool_name: str
+) -> bool:
+    if tool_name in _STRUCTURED_PRESENTATION_TOOLS:
+        return True
+    if tool_name != "work_generate_pptx":
+        return False
+    task_contract = state.get("task_contract")
+    if not isinstance(task_contract, Mapping):
+        return False
+    mode = task_contract.get("presentation_mode")
+    requested_fields = task_contract.get("requested_fields")
+    if mode != "structured_table" and not (
+        mode in (None, "", "undetermined")
+        and isinstance(requested_fields, list)
+        and bool(requested_fields)
+    ):
+        return False
+    # Resume old checkpoints safely when their immutable catalog predates the
+    # split tool. Fresh catalogs always expose the dedicated table capability.
+    try:
+        _trusted_tool_definition(state, "work_generate_table_pptx")
+    except ValueError:
+        return True
+    return False
 
 
 class AgentInput(TypedDict):
@@ -142,6 +215,7 @@ class AgentPlan:
     objective: str
     steps: tuple[str, ...]
     success_criteria: str
+    task_intent: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -2610,6 +2684,21 @@ def _supervise(
     }
 
 
+def _after_supervisor(state: AgentState) -> str:
+    task_contract = state.get("task_contract")
+    artifact_types = (
+        task_contract.get("artifact_types") if isinstance(task_contract, Mapping) else None
+    )
+    if (
+        state.get("module") == "work"
+        and isinstance(artifact_types, list)
+        and "pptx" in artifact_types
+        and not state.get("plan")
+    ):
+        return "plan"
+    return state["module"]
+
+
 def _module_route(state: AgentState) -> str:
     return state["module"]
 
@@ -2912,12 +3001,14 @@ def build_graph(
             if reason:
                 return model_terminal_update(state, node="plan", reason=reason)
             try:
+                planning_context = dict(state.get("context", {}))
+                planning_context["task_contract"] = dict(state.get("task_contract", {}))
                 plan = planner(
                     module=state["module"],
                     message=state["user_message"],
                     context=with_model_allowance(
                         state,
-                        state.get("context", {}),
+                        planning_context,
                         node="plan",
                     ),
                 )
@@ -2960,13 +3051,23 @@ def build_graph(
                     _trace_event("plan", "succeeded", started_ns=started_ns),
                 ]
             }
+        task_intent = (
+            _sanitize_plan_task_intent(plan.task_intent)
+            if isinstance(plan.task_intent, Mapping)
+            else {}
+        )
         return {
             **model_update,
             "plan": {
                 "objective": plan.objective.strip(),
                 "steps": list(steps),
                 "success_criteria": plan.success_criteria.strip(),
+                "task_intent": task_intent,
             },
+            "task_contract": apply_planned_task_intent(
+                state.get("task_contract", {}),
+                task_intent,
+            ),
             "action_budget": policy.max_actions,
             "steps": state.get("steps", 0) + 1,
         }
@@ -3144,6 +3245,8 @@ def build_graph(
             "model_unavailable",
         ):
             return "finalize"
+        if not state.get("proposed_tool"):
+            return state["module"]
         return after_decision(state)
 
     def compose_arguments(state: AgentState) -> dict[str, Any]:
@@ -3163,16 +3266,13 @@ def build_graph(
         if not callable(composer):
             raise ValueError("decision port must implement compose_arguments for marked tools")
         normalized_tool_name = tool_name.strip()
-        presentation_tool = normalized_tool_name in (
-            "work_create_pptx_outline",
-            "work_generate_pptx",
-        )
+        presentation_tool = normalized_tool_name in _PRESENTATION_TOOLS
         task_contract = state.get("task_contract", {})
         source_ir = _presentation_source_ir(state) if presentation_tool else {}
         structural_mapping: dict[str, Any] = {}
         structural_violations: list[dict[str, Any]] = []
         requires_structural_source = (
-            presentation_tool
+            _uses_structured_presentation_capability(state, normalized_tool_name)
             and isinstance(task_contract, Mapping)
             and task_contract.get("exhaustive") is True
             and task_contract.get("source_required") is True
@@ -3233,7 +3333,9 @@ def build_graph(
                     "steps": state.get("steps", 0) + 1,
                 }
         candidate_document_batches = (
-            _presentation_document_batches(state) if presentation_tool else []
+            _presentation_document_batches(state)
+            if _uses_structured_presentation_capability(state, normalized_tool_name)
+            else []
         )
         all_document_batches = (
             candidate_document_batches
@@ -3640,7 +3742,7 @@ def build_graph(
         proposed = state.get("proposed_tool", {})
         tool_name = str(proposed.get("name") or "")
         arguments = proposed.get("arguments")
-        if tool_name in ("work_create_pptx_outline", "work_generate_pptx"):
+        if tool_name in _PRESENTATION_TOOLS:
             if not isinstance(arguments, Mapping):
                 raise ValueError("presentation quality gate requires composed arguments")
             definition = _trusted_tool_definition(state, tool_name)
@@ -3657,8 +3759,18 @@ def build_graph(
                             "reason": str(exc).strip()[:240],
                         }
                     )
+            capability_violations: list[dict[str, Any]] = []
+            has_table = isinstance(arguments.get("table"), Mapping)
+            if _uses_structured_presentation_capability(state, tool_name) and not has_table:
+                capability_violations.append(
+                    {
+                        "code": "structured_table_missing",
+                        "message": "结构化表格演示工具必须提供表格数据",
+                    }
+                )
             violations = [
                 *schema_violations,
+                *capability_violations,
                 *validate_presentation_arguments(
                     arguments,
                     state.get("task_contract", {}),
@@ -5263,8 +5375,9 @@ def build_graph(
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
         "supervisor",
-        _module_route,
+        _after_supervisor,
         {
+            "plan": "plan",
             "companion": "companion",
             "life": "life",
             "work": "work",
@@ -5287,6 +5400,9 @@ def build_graph(
         "plan",
         after_plan,
         {
+            "companion": "companion",
+            "life": "life",
+            "work": "work",
             "compose_arguments": "compose_arguments",
             "preflight_normalize": "preflight_normalize",
             "generate_response": "generate_response",
@@ -5636,8 +5752,17 @@ def _completed_presentation_continuation(state: AgentState) -> str:
         coverage.get("coverage_ratio") or 0.0
     ) < 1.0:
         return ""
-    tool_name = "work_generate_pptx"
-    definition = _trusted_tool_definition(state, tool_name)
+    tool_name = _presentation_tool_for_contract(task_contract)
+    try:
+        definition = _trusted_tool_definition(state, tool_name)
+    except ValueError:
+        definition = None
+    if not isinstance(definition, Mapping) and tool_name != "work_generate_pptx":
+        tool_name = "work_generate_pptx"
+        try:
+            definition = _trusted_tool_definition(state, tool_name)
+        except ValueError:
+            definition = None
     if not isinstance(definition, Mapping) or definition.get("compose_arguments") is not True:
         return ""
     return tool_name

@@ -70,10 +70,12 @@ class ScriptedDecisions:
         if not isinstance(value, Mapping):
             raise EvalCaseError("scripted plan must be an object")
         steps = value.get("steps", [])
+        task_intent = value.get("task_intent", {})
         return AgentPlan(
             objective=str(value.get("objective") or ""),
             steps=tuple(str(item) for item in steps if isinstance(item, str)),
             success_criteria=str(value.get("success_criteria") or ""),
+            task_intent=(dict(task_intent) if isinstance(task_intent, Mapping) else {}),
         )
 
     def decide(
