@@ -681,8 +681,8 @@ _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
-_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 24_000
-_STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 24
+_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 10_000
+_STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 12
 _FOCUSED_PAGE_MAX_CHARS = 5_000
 _FOCUSED_MATCH_CONTEXT_CHARS = 2_200
 
@@ -1567,8 +1567,6 @@ def _presentation_logical_entity_batch(
         "entities": [
             {
                 "entity_id": entity.get("entity_id"),
-                "source_refs": entity.get("source_refs", []),
-                "source_locator": entity.get("source_locator"),
                 "values": entity.get("values", []),
             }
             for entity in entities
@@ -3276,6 +3274,11 @@ def build_graph(
                 "missing_record_keys": missing_keys,
                 "structured": batch.get("structured") is True,
                 "focused": batch.get("focused") is True,
+                "compact_entity_ir": (
+                    isinstance(batch.get("source_ir"), Mapping)
+                    and batch.get("source_ir", {}).get("version")
+                    == "presentation-logical-entity-ir-v1"
+                ),
                 "focus_phrases": list(batch.get("focus_phrases") or []),
             }
         try:

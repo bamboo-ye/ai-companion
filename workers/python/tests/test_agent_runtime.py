@@ -785,7 +785,7 @@ class AgentRuntimeTest(unittest.TestCase):
         }
         batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
         self.assertEqual(len(batches), 1)
-        self.assertLessEqual(len(str(batches[0]["text"])), 24_000)
+        self.assertLessEqual(len(str(batches[0]["text"])), 10_000)
         self.assertEqual(
             batches[0]["source_ir"]["version"],
             "presentation-logical-entity-ir-v1",
@@ -793,12 +793,9 @@ class AgentRuntimeTest(unittest.TestCase):
         entities = batches[0]["source_ir"]["entities"]
         self.assertEqual(len(entities), 1)
         self.assertTrue(entities[0]["entity_id"].startswith("entity:"))
-        self.assertEqual(len(entities[0]["source_refs"]), 30)
-        for index in range(1, 31):
-            self.assertEqual(
-                sum(f'"a1:r{index}"' in batch["text"] for batch in batches),
-                1,
-            )
+        self.assertNotIn("source_refs", entities[0])
+        self.assertEqual(len(batches[0]["grounded_rows"][0]["source_refs"]), 30)
+        self.assertNotIn('"a1:r1"', batches[0]["text"])
 
     def test_structured_composer_context_does_not_replay_merged_rows(self) -> None:
         compact = _composer_previous_arguments(
@@ -885,7 +882,8 @@ class AgentRuntimeTest(unittest.TestCase):
         batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
         entities = batches[0]["source_ir"]["entities"]
         self.assertEqual(len(entities), 1)
-        self.assertEqual(entities[0]["source_refs"], ["a1:r1", "a1:r2", "a1:r3"])
+        grounded = batches[0]["grounded_rows"][0]
+        self.assertEqual(grounded["source_refs"], ["a1:r1", "a1:r2", "a1:r3"])
         self.assertEqual(entities[0]["values"][0], "PED1305")
         self.assertIn("17/9 周四 0900-0950", entities[0]["values"][2])
         self.assertIn("8/10 周四 1400-1450", entities[0]["values"][2])

@@ -11,6 +11,7 @@ from ai_companion_worker.openrouter_decision import (
     OpenRouterConfig,
     OpenRouterDecisionPort,
     OpenRouterError,
+    _presentation_batch_parameters,
 )
 from ai_companion_worker.agent_runtime import ModelBudgetExceeded
 
@@ -92,6 +93,42 @@ def context() -> dict[str, Any]:
 
 
 class OpenRouterDecisionPortTest(unittest.TestCase):
+    def test_compact_entity_batch_schema_leaves_provenance_to_harness(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "audience": {"type": "string"},
+                "style": {"type": "string"},
+                "table": {
+                    "type": "object",
+                    "properties": {
+                        "rows": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["cells", "source_locator"],
+                                "properties": {
+                                    "cells": {"type": "array"},
+                                    "entity_id": {"type": "string"},
+                                    "source_locator": {"type": "string"},
+                                    "source_refs": {"type": "array"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                },
+            },
+        }
+        compact = _presentation_batch_parameters(
+            schema, harness_injects_provenance=True
+        )
+        items = compact["properties"]["table"]["properties"]["rows"]["items"]
+        self.assertEqual(items["required"], ["cells", "entity_id"])
+        self.assertNotIn("source_locator", items["properties"])
+        self.assertNotIn("source_refs", items["properties"])
+
     def test_default_profile_prefers_deepseek_and_keeps_gpt_fallbacks(self) -> None:
         with patch.dict(os.environ, {"MODEL_API_KEY": "test-key"}, clear=True):
             config = OpenRouterConfig.from_env()
