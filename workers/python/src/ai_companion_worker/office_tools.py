@@ -190,7 +190,10 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         payload,
         visual_topics,
         include_file=include_file,
-        allow_generated=not table,
+        # Table and visual are composable capabilities. A structured deck uses
+        # its visual on the summary slide, so it must be allowed to fill an
+        # empty source slot through the configured image provider as well.
+        allow_generated=True,
     )
 
     presentation = Presentation()
@@ -2165,6 +2168,18 @@ def _presentation_quality_report(
             {
                 "code": "structured_table_missing",
                 "message": "结构化字段任务必须提供表格数据，不能只生成通用内容页",
+            }
+        )
+    presentation_capabilities = task_contract.get("presentation_capabilities")
+    if (
+        isinstance(presentation_capabilities, list)
+        and "visual" in presentation_capabilities
+        and int(visual_report.get("placed_visual_count") or 0) < 1
+    ):
+        violations.append(
+            {
+                "code": "requested_visual_missing",
+                "message": "用户明确要求插图，但视觉子能力没有生成或提取到可用图片",
             }
         )
     if table and isinstance(requested_fields, list):

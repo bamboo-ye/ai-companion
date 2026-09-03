@@ -821,6 +821,88 @@ class OfficeToolsTest(unittest.TestCase):
         with ZipFile(io.BytesIO(generated)) as archive:
             self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
 
+    @patch("urllib.request.urlopen")
+    def test_pptx_table_and_visual_capabilities_can_be_composed(self, urlopen: Mock) -> None:
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (1600, 900), (52, 99, 155)).save(image_bytes, format="JPEG")
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "data": [{"b64_json": base64.b64encode(image_bytes.getvalue()).decode()}],
+                "model": "openai/gpt-image-2",
+                "provider": "OpenAI",
+                "usage": {"cost": 0.08},
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_BASE_URL": "https://openrouter.ai/api/v1",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
+                "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+            },
+        ):
+            result = execute(
+                "pptx_generate",
+                {
+                    "title": "智能系统比较",
+                    "audience": "技术团队",
+                    "style": "简洁表格与插图",
+                    "brief": "比较三类智能系统",
+                    "slide_count": 4,
+                    "visual_mode": "auto",
+                    "table": {
+                        "title": "三类系统比较",
+                        "columns": ["系统", "工作方式", "优势", "局限"],
+                        "rows": [
+                            {
+                                "cells": ["规则系统", "规则推理", "可解释", "维护成本高"],
+                                "source_locator": "用户输入",
+                            }
+                        ],
+                    },
+                    "task_contract": {
+                        "presentation_capabilities": ["narrative", "table", "visual"],
+                        "output_language": "zh-CN",
+                    },
+                },
+            )
+
+        report = result["output"]["visual_report"]
+        self.assertEqual(report["generation_attempt_count"], 1)
+        self.assertEqual(report["generated_visual_count"], 1)
+        self.assertEqual(report["placed_visual_count"], 1)
+        self.assertTrue(result["output"]["quality_report"]["passed"])
+        self.assertIn("visual", result["output"]["outline"][-1])
+        self.assertEqual(len(result["files"]), 1)
+
+    def test_pptx_explicit_visual_capability_fails_closed_without_an_image(self) -> None:
+        with patch.dict(os.environ, {"MODEL_PRESENTATION_IMAGE_NAME": ""}):
+            result = execute(
+                "pptx_generate",
+                {
+                    "title": "需要插图的演示",
+                    "audience": "项目团队",
+                    "style": "简洁",
+                    "brief": "## 核心变化\n- 流程更加清晰",
+                    "slide_count": 3,
+                    "visual_mode": "auto",
+                    "task_contract": {
+                        "presentation_capabilities": ["narrative", "visual"],
+                    },
+                },
+            )
+
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "requested_visual_missing",
+            {item["code"] for item in report["violations"]},
+        )
+        self.assertEqual(result["files"], [])
+
     def test_pptx_title_with_slash_is_safe_for_outline_and_generated_filename(self) -> None:
         payload = {
             "title": "Important Dates - Semester A 2026/27",

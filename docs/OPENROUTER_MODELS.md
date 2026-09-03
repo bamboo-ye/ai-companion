@@ -85,7 +85,7 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.49.0` makes presentation capability selection a planner-owned
+Graph version `3.49.1` makes presentation capability selection a planner-owned
 semantic decision. Work-module PPT requests now enter `plan` before routing. The
 planner returns a composable capability set containing `narrative` and, only
 when required, `table` and/or `visual`; the Harness then refines the task
@@ -106,8 +106,11 @@ child Schema, injects locked provenance after composition, and permits table and
 visual capabilities to coexist. The executor then combines the selected child
 outputs and invokes the shared `office.pptx_generate` renderer. Narrative-only
 runs receive neither table data nor source PDF bytes; visual runs alone receive
-trusted source bytes and `visual_mode=auto`. Old immutable checkpoints that call
-a child tool directly retain a bounded compatibility path.
+trusted source bytes and `visual_mode=auto`. When table and visual are combined,
+the visual child may fill the summary-slide slot from a trusted source image or
+the configured image provider; an explicit visual request fails closed instead
+of silently returning a text-only deck. Old immutable checkpoints that call a
+child tool directly retain a bounded compatibility path.
 
 Graph version `3.12.0` replaces text-only exhaustive document composition with a domain-neutral `document-source-ir-v1` contract. Fixed-width sources preserve logical tables, columns, row groups, rows, cells, explicit/inherited values and stable provenance IDs before batching. Structured batches retain parent context, split only between logical groups or checkpointed child slices, lock one `target-mapping-v1` field/granularity contract, merge by source entity ID, and apply bidirectional precision/recall gates for missing, extra, orphaned and unreferenced entities. PPTX is a deterministic renderer over the validated dataset: it paginates readable continuation rows, hides internal Harness locators, checks canvas geometry and capacity, and withholds the file whenever the hard quality report fails. A per-run Composer circuit breaker still gives the configured DeepSeek structured Composer the first attempt, then bypasses a timed-out candidate only after a healthy fallback has been observed.
 
