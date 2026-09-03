@@ -95,18 +95,13 @@ def context() -> dict[str, Any]:
 
 
 class OpenRouterDecisionPortTest(unittest.TestCase):
-    def test_artifact_router_uses_only_the_planned_presentation_capability(self) -> None:
+    def test_artifact_router_uses_public_presentation_orchestrator_for_all_capabilities(self) -> None:
         tools = [
             {"name": "work_generate_pptx"},
             {"name": "work_generate_table_pptx"},
             {"name": "work_generate_visual_pptx"},
         ]
-        expected = {
-            "narrative": "work_generate_pptx",
-            "structured_table": "work_generate_table_pptx",
-            "illustrated": "work_generate_visual_pptx",
-        }
-        for mode, tool_name in expected.items():
+        for mode in ("narrative", "structured_table", "illustrated", "composed"):
             with self.subTest(mode=mode):
                 self.assertEqual(
                     _required_artifact_tool(
@@ -119,8 +114,41 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                         },
                         tools,
                     ),
-                    tool_name,
+                    "work_generate_pptx",
                 )
+
+    def test_router_hides_private_presentation_children(self) -> None:
+        port = StubOpenRouter([tool_response("work_generate_pptx")])
+        definitions = [
+            {
+                "name": name,
+                "description": name,
+                "compose_arguments": True,
+                "parameters": {"type": "object", "properties": {}},
+            }
+            for name in (
+                "work_generate_pptx",
+                "work_generate_table_pptx",
+                "work_generate_visual_pptx",
+            )
+        ]
+        decision = port.decide(
+            module="work",
+            message="生成带表格和配图的 PPT",
+            context={
+                "tools": definitions,
+                "task_contract": {
+                    "artifact_types": ["pptx"],
+                    "presentation_capabilities": ["narrative", "table", "visual"],
+                },
+                "artifact_validation": {},
+            },
+        )
+        self.assertEqual(decision.tool_name, "work_generate_pptx")
+        exposed = [
+            item["function"]["name"] for item in port.requests[0]["tools"]
+        ]
+        self.assertEqual(exposed, ["work_generate_pptx"])
 
     def test_model_visible_presentation_schema_is_capability_scoped(self) -> None:
         schema = {
@@ -143,6 +171,76 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             set(structured["properties"]),
             {"brief", "table", "mapping_contract"},
         )
+
+    def test_public_ppt_composer_projects_private_table_child_schema(self) -> None:
+        arguments = {
+            "title": "课程一览",
+            "audience": "学生",
+            "style": "简洁",
+            "brief": "课程安排",
+            "slide_count": 4,
+            "table": {
+                "columns": ["课程代码", "课程名称"],
+                "rows": [
+                    {
+                        "cells": ["PED1101", "独木舟"],
+                        "source_locator": "Page 1",
+                    }
+                ],
+            },
+        }
+        common = {
+            "title": {"type": "string"},
+            "audience": {"type": "string"},
+            "style": {"type": "string"},
+            "brief": {"type": "string"},
+            "slide_count": {"type": "integer"},
+            "task_contract": {"type": "object"},
+            "source_coverage": {"type": "object"},
+        }
+        table = {
+            "type": "object",
+            "properties": {"rows": {"type": "array"}},
+        }
+        port = StubOpenRouter(
+            [tool_response("work_generate_pptx", json.dumps(arguments, ensure_ascii=False))]
+        )
+        port.compose_arguments(
+            module="work",
+            message="整理课程并生成带表格的 PPT",
+            tool_name="work_generate_pptx",
+            context={
+                "task_contract": {
+                    "presentation_capabilities": ["narrative", "table"],
+                    "requested_fields": ["code", "name"],
+                },
+                "tools": [
+                    {
+                        "name": "work_generate_pptx",
+                        "description": "PPT 主工具",
+                        "compose_arguments": True,
+                        "parameters": {
+                            "type": "object",
+                            "properties": common,
+                            "additionalProperties": False,
+                        },
+                    },
+                    {
+                        "name": "work_generate_table_pptx",
+                        "description": "表格子工具",
+                        "compose_arguments": True,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {**common, "table": table},
+                            "additionalProperties": False,
+                        },
+                    },
+                ],
+            },
+        )
+        function = port.requests[0]["tools"][0]["function"]
+        self.assertEqual(function["name"], "work_generate_pptx")
+        self.assertIn("table", function["parameters"]["properties"])
 
     def test_compact_entity_batch_schema_leaves_provenance_to_harness(self) -> None:
         schema = {
@@ -322,7 +420,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                                         "steps": ["组织叙事", "生成演示", "检查结果"],
                                         "success_criteria": "生成适合十分钟讲演的演示文稿",
                                         "task_intent": {
-                                            "presentation_mode": "narrative",
+                                            "presentation_capabilities": ["narrative"],
                                             "requested_fields": [],
                                             "confidence": "high",
                                             "rationale": "十分钟是讲演时长",
@@ -340,15 +438,31 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             module="work",
             message="帮我做一份简单介绍智能系统的ppt，10分钟讲演时间",
             context={
-                "tools": [],
+                "tools": [
+                    {
+                        "name": name,
+                        "description": name,
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                    for name in (
+                        "work_generate_pptx",
+                        "work_generate_table_pptx",
+                        "work_generate_visual_pptx",
+                    )
+                ],
                 "task_contract": {"artifact_types": ["pptx"]},
             },
         )
-        self.assertEqual(plan.task_intent["presentation_mode"], "narrative")
+        self.assertEqual(plan.task_intent["presentation_capabilities"], ["narrative"])
         system_prompt = port.requests[0]["messages"][0]["content"]
         self.assertIn("讲演时长", system_prompt)
+        self.assertIn("可以同时出现", system_prompt)
         user_payload = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(user_payload["task_contract"]["artifact_types"], ["pptx"])
+        self.assertEqual(
+            [item["name"] for item in user_payload["available_tools"]],
+            ["work_generate_pptx"],
+        )
         self.assertEqual(port.requests[0]["max_tokens"], 1024)
 
     def test_plan_failure_uses_generic_decoupled_fallback(self) -> None:

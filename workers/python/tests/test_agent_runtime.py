@@ -217,7 +217,7 @@ class AgentRuntimeTest(unittest.TestCase):
                     steps=("组织讲演内容", "生成演示文稿", "检查结果"),
                     success_criteria="生成适合十分钟讲演的 PPT",
                     task_intent={
-                        "presentation_mode": "narrative",
+                        "presentation_capabilities": ["narrative"],
                         "requested_fields": [],
                         "confidence": "high",
                         "rationale": "时间描述的是讲演时长",
@@ -285,6 +285,9 @@ class AgentRuntimeTest(unittest.TestCase):
         result = AgentRuntime(graph).start(payload)
         self.assertEqual(decisions.calls[:3], ["plan", "decide", "compose"])
         self.assertEqual(result["task_contract"]["presentation_mode"], "narrative")
+        self.assertEqual(
+            result["task_contract"]["presentation_capabilities"], ["narrative"]
+        )
         self.assertEqual(result["task_contract"]["requested_fields"], [])
         self.assertEqual(result["outcome"], "completed")
 
@@ -1512,11 +1515,12 @@ class AgentRuntimeTest(unittest.TestCase):
             "work_generate_pptx",
         )
 
-    def test_completed_extraction_selects_the_planned_table_capability(self) -> None:
+    def test_completed_extraction_selects_main_orchestrator_for_table_capability(self) -> None:
         state = {
             "module": "work",
             "task_contract": {
                 "artifact_types": ["pptx"],
+                "presentation_capabilities": ["narrative", "table"],
                 "presentation_mode": "structured_table",
                 "source_required": True,
                 "source_document_ids": ["document-1"],
@@ -1555,7 +1559,7 @@ class AgentRuntimeTest(unittest.TestCase):
         }
         self.assertEqual(
             _completed_presentation_continuation(state),  # type: ignore[arg-type]
-            "work_generate_table_pptx",
+            "work_generate_pptx",
         )
 
     def test_exhaustive_ppt_composition_checkpoints_each_document_round(self) -> None:
