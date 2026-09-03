@@ -854,10 +854,11 @@ class OpenRouterDecisionPort:
                     system_prompt += (
                         "当前来源过大，Harness 正按逻辑实体分轮处理。若观察中包含 COMPACT "
                         "LOGICAL ENTITY IR，其 values 已由 Harness 按锁定字段映射无损聚合；必须"
-                        "为每个 entity 精确返回一行，逐字复制 entity_id 和 source_locator，保持"
-                        "行顺序，只翻译名称等受众文本。课程代码、日期和时间由 Harness 回填，"
-                        "不要概括、删减或把同一 entity 拆成多行；source_refs 将由 Harness 注入，"
-                        "无需在模型输出中重复。若观察中包含旧版 STRUCTURED SOURCE IR，则必须按"
+                        "为每个 entity 精确返回一行，逐字复制 entity_id，保持行顺序，只翻译名称"
+                        "等受众文本。课程代码、日期、时间、source_locator 和 source_refs 均由"
+                        "Harness 回填，不要概括、删减或把同一 entity 拆成多行，也不要在模型"
+                        "输出中重复这些 Harness 字段。若观察中包含旧版 STRUCTURED SOURCE IR，"
+                        "则必须按"
                         "table/row_group/row/cell 关系读取，不得把子行标识重新解释成父实体字段。"
                         "第一轮必须生成 mapping_contract：version 固定为"
                         " target-mapping-v1，source_table_ids 必须覆盖 source_structure_summary"
@@ -936,7 +937,12 @@ class OpenRouterDecisionPort:
                             "name": selected["name"],
                             "description": selected["description"],
                             "parameters": (
-                                _presentation_batch_parameters(selected["parameters"])
+                                _presentation_batch_parameters(
+                                    selected["parameters"],
+                                    harness_injects_provenance=(
+                                        document_round.get("compact_entity_ir") is True
+                                    ),
+                                )
                                 if tool_name
                                 in ("work_create_pptx_outline", "work_generate_pptx")
                                 and isinstance(document_round, Mapping)
@@ -1976,7 +1982,9 @@ def _router_parameters(definition: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _presentation_batch_parameters(parameters: Any) -> dict[str, Any]:
+def _presentation_batch_parameters(
+    parameters: Any, *, harness_injects_provenance: bool = False
+) -> dict[str, Any]:
     """Restrict oversized-source Composer calls to compact mergeable data.
 
     Harness owns the mapping contract, task contract, source coverage, brief,
@@ -1996,6 +2004,20 @@ def _presentation_batch_parameters(parameters: Any) -> dict[str, Any]:
         for key in ("title", "audience", "style", "filename", "table")
         if isinstance(properties.get(key), Mapping)
     }
+    if harness_injects_provenance and isinstance(selected.get("table"), Mapping):
+        table = dict(selected["table"])
+        table_properties = dict(table.get("properties") or {})
+        rows = dict(table_properties.get("rows") or {})
+        row_items = dict(rows.get("items") or {})
+        row_properties = dict(row_items.get("properties") or {})
+        row_properties.pop("source_locator", None)
+        row_properties.pop("source_refs", None)
+        row_items["properties"] = row_properties
+        row_items["required"] = ["cells", "entity_id"]
+        rows["items"] = row_items
+        table_properties["rows"] = rows
+        table["properties"] = table_properties
+        selected["table"] = table
     required = [
         key for key in ("title", "audience", "style", "table") if key in selected
     ]
