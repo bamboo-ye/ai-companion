@@ -1000,8 +1000,31 @@ class AgentRuntimeTest(unittest.TestCase):
                                                     {"column_id": "c6", "text": "1100-1150"},
                                                 ],
                                             },
+                                            {
+                                                "id": "r3",
+                                                "group_id": "g1",
+                                                "page": 2,
+                                                "cells": [
+                                                    {
+                                                        "column_id": "c1",
+                                                        "text": "",
+                                                        "inherited_text": "PED 1317",
+                                                    },
+                                                    {
+                                                        "column_id": "c2",
+                                                        "text": "",
+                                                        "inherited_text": "Training (HIIT)",
+                                                    },
+                                                    {"column_id": "c3", "text": "T03"},
+                                                    {"column_id": "c4", "text": "11/9 (Fri)"},
+                                                    {"column_id": "c5", "text": "(Thu)"},
+                                                    {"column_id": "c6", "text": "1600-1750 12"},
+                                                ],
+                                            },
                                         ],
-                                        "row_groups": [{"id": "g1", "row_ids": ["r1", "r2"]}],
+                                        "row_groups": [
+                                            {"id": "g1", "row_ids": ["r1", "r2", "r3"]}
+                                        ],
                                     }
                                 ],
                             }
@@ -1016,6 +1039,8 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(values[1], "High Intensity Interval Training (HIIT)")
         self.assertIn("14/9, 21/9 (周一) 1500-1550", values[2])
         self.assertIn("9/9, 16/9 (周三) 1100-1150", values[2])
+        self.assertIn("11/9 (周五) 1600-1750", values[2])
+        self.assertNotIn("(周五) (周四)", values[2])
         self.assertNotIn("1500-1550 14", values[2])
 
     def test_composer_circuit_breaker_requires_two_timeouts(self) -> None:

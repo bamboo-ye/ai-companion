@@ -57,6 +57,23 @@ _PRESENTATION_ENGLISH_WEEKDAY = re.compile(
     r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
     re.IGNORECASE,
 )
+_PRESENTATION_WEEKDAY_ONLY = re.compile(
+    r"^[（(]?\s*(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?|(?:星期|周)[一二三四五六日天])\s*[）)]?$",
+    re.IGNORECASE,
+)
+_PRESENTATION_DATED_WEEKDAY = re.compile(
+    r"\b\d{1,2}\s*/\s*\d{1,2}\b.*(?:"
+    r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|(?:星期|周)[一二三四五六日天])",
+    re.IGNORECASE,
+)
+_PRESENTATION_SPLIT_WEEKDAY_START = re.compile(r"\(\s*([A-Za-z]{1,2})\s*$")
+_PRESENTATION_SPLIT_WEEKDAY_END = re.compile(r"^\s*([A-Za-z]{1,8})\s*\)")
+_PRESENTATION_ADJACENT_WEEKDAYS = re.compile(
+    r"[（(]\s*(?:星期|周)[一二三四五六日天]\s*[）)]\s*"
+    r"[（(]\s*(?:星期|周)[一二三四五六日天]\s*[）)]"
+)
 _PRESENTATION_ZH_TIME_REPLACEMENTS = (
     (re.compile(r"\bmonday\b|\bmon\b", re.IGNORECASE), "周一"),
     (re.compile(r"\btuesday\b|\btue\b", re.IGNORECASE), "周二"),
@@ -69,6 +86,7 @@ _PRESENTATION_ZH_TIME_REPLACEMENTS = (
     (re.compile(r"\btime\s*[:：]", re.IGNORECASE), "时间："),
     (re.compile(r"\bam\b", re.IGNORECASE), "上午"),
     (re.compile(r"\bpm\b", re.IGNORECASE), "下午"),
+    (re.compile(r"\btbd\b|\btbc\b", re.IGNORECASE), "待定"),
 )
 _PRESENTATION_SPLIT_WEEKDAY = re.compile(
     r"\(\s*([A-Za-z]{1,3})\s+([A-Za-z]{1,8})\s*\)"
@@ -171,6 +189,113 @@ def localize_presentation_field_value(field: str, value: Any, language: Any) -> 
     for pattern, replacement in _PRESENTATION_ZH_TIME_REPLACEMENTS:
         text = pattern.sub(replacement, text)
     return re.sub(r"\s*&\s*", "、", text).strip()
+
+
+def select_presentation_temporal_source_values(values: Any) -> list[str]:
+    """Keep only lossless date/time components from one physical source row.
+
+    PDF table extraction can place a wrapped weekday in the narrow column next
+    to the real date column.  That column may also contain stale glyphs from a
+    different printed row (for example ``hu)`` or ``(Thu)`` beside an already
+    complete ``(Fri)``).  Join genuine adjacent fragments first, then discard
+    bare weekday noise whenever the dated value already owns its weekday.
+    """
+
+    raw = (
+        [re.sub(r"\s+", " ", str(value or "")).strip() for value in values]
+        if isinstance(values, (list, tuple))
+        else []
+    )
+    raw = [value for value in raw if value]
+    weekdays = {
+        "mon",
+        "monday",
+        "tue",
+        "tues",
+        "tuesday",
+        "wed",
+        "wednesday",
+        "thu",
+        "thur",
+        "thurs",
+        "thursday",
+        "fri",
+        "friday",
+        "sat",
+        "saturday",
+        "sun",
+        "sunday",
+    }
+    stitched: list[str] = []
+    index = 0
+    while index < len(raw):
+        value = raw[index]
+        if index + 1 < len(raw):
+            start = _PRESENTATION_SPLIT_WEEKDAY_START.search(value)
+            end = _PRESENTATION_SPLIT_WEEKDAY_END.search(raw[index + 1])
+            if start and end:
+                combined = (start.group(1) + end.group(1)).casefold()
+                if combined in weekdays:
+                    suffix_end = end.end()
+                    stitched.append(value + raw[index + 1][:suffix_end])
+                    remainder = raw[index + 1][suffix_end:].strip()
+                    if remainder:
+                        stitched.append(remainder)
+                    index += 2
+                    continue
+        stitched.append(value)
+        index += 1
+
+    has_dated_weekday = any(_PRESENTATION_DATED_WEEKDAY.search(value) for value in stitched)
+    selected: list[str] = []
+    for value in stitched:
+        if _PRESENTATION_TEMPORAL_EVIDENCE.search(value) is None:
+            continue
+        if has_dated_weekday and _PRESENTATION_WEEKDAY_ONLY.fullmatch(value):
+            continue
+        if value.casefold() not in {existing.casefold() for existing in selected}:
+            selected.append(value)
+    return selected
+
+
+_PRESENTATION_SOURCE_LEVEL = re.compile(
+    r"(?:[-–—/]\s*|[（(]\s*)"
+    r"(ele(?:mentary)?|beginner|basic|inter(?:mediate)?|intro(?:ductory)?|"
+    r"improver|adv(?:anced)?)\s*[）)]?\s*$",
+    re.IGNORECASE,
+)
+_PRESENTATION_ZH_LEVEL = re.compile(
+    r"(?<=[（(，,])\s*(?:小学|初级|基础级?|入门|中级|提升班|提高班|进阶|高级)\s*"
+    r"(?=[）)，,])"
+)
+
+
+def normalize_presentation_name_translation(
+    value: Any, source_value: Any, language: Any
+) -> str:
+    """Normalize source-declared proficiency levels across Composer batches."""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not str(language or "").casefold().startswith("zh"):
+        return text
+    source = re.sub(r"\s+", " ", str(source_value or "")).strip()
+    match = _PRESENTATION_SOURCE_LEVEL.search(source)
+    if match is None:
+        return text
+    token = match.group(1).casefold()
+    if token.startswith(("ele", "beginner", "basic")):
+        translated = "初级"
+    elif token.startswith("inter"):
+        translated = "中级"
+    elif token.startswith("intro"):
+        translated = "入门"
+    elif token.startswith("improver"):
+        translated = "提高班"
+    else:
+        translated = "高级"
+    if _PRESENTATION_ZH_LEVEL.search(text):
+        return _PRESENTATION_ZH_LEVEL.sub(translated, text)
+    return f"{text}（{translated}）" if text else translated
 
 
 def normalize_presentation_scope_label(value: Any, exhaustive: bool) -> str:
@@ -351,22 +476,32 @@ def presentation_table_language_violations(
             )
     time_column = _requested_field_column(columns, "time")
     if time_column >= 0:
-        untranslated_weekdays = [
+        invalid_time_language = [
             index
             for index, row in enumerate(rows, start=1)
             if isinstance(row, Mapping)
             and isinstance(row.get("cells"), list)
             and time_column < len(row["cells"])
-            and _PRESENTATION_ENGLISH_WEEKDAY.search(str(row["cells"][time_column] or ""))
+            and (
+                _PRESENTATION_ENGLISH_WEEKDAY.search(
+                    str(row["cells"][time_column] or "")
+                )
+                or _PRESENTATION_LATIN_LETTER.search(
+                    str(row["cells"][time_column] or "")
+                )
+                or _PRESENTATION_ADJACENT_WEEKDAYS.search(
+                    str(row["cells"][time_column] or "")
+                )
+            )
         ]
-        if untranslated_weekdays:
+        if invalid_time_language:
             violations.append(
                 {
                     "code": "presentation_time_language_mismatch",
                     "field": "time",
-                    "message": "中文演示文稿中的星期标记必须本地化为中文",
-                    "affected_rows": untranslated_weekdays[:20],
-                    "affected_count": len(untranslated_weekdays),
+                    "message": "中文演示文稿中的时间字段不得残留外文碎片或冲突的星期标记",
+                    "affected_rows": invalid_time_language[:20],
+                    "affected_count": len(invalid_time_language),
                 }
             )
     return violations
