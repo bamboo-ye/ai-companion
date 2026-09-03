@@ -205,6 +205,8 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 
 // resolveVisibleDocumentReferences repairs legacy messages that contain only
 // the rendered attachment label ("📎 filename") and have lost document_ids.
+// It also repairs explicit follow-ups such as "use the previous courses.pdf"
+// where the UI persisted the filename but omitted the attachment marker.
 // Resolution is exact-name, user-scoped and newest-first; unresolved labels
 // fail closed instead of letting an exhaustive artifact task run source-free.
 func (s *Server) resolveVisibleDocumentReferences(
@@ -213,15 +215,33 @@ func (s *Server) resolveVisibleDocumentReferences(
 	content string,
 ) (string, []string, error) {
 	names := chatattachment.VisibleDocumentNames(content)
+	inlineReference := len(names) == 0 && explicitlyReferencesPriorDocument(content)
+	if len(names) == 0 && !inlineReference {
+		return content, nil, nil
+	}
+	items, err := s.documents.List(ctx, userID)
+	if err != nil {
+		return content, nil, err
+	}
+	if inlineReference {
+		seen := map[string]bool{}
+		visible := strings.ToLower(chatattachment.VisibleText(content))
+		for _, item := range items {
+			name := strings.TrimSpace(item.Name)
+			if name == "" || seen[name] || item.Status == "failed" || item.Status == "deleted" {
+				continue
+			}
+			if strings.Contains(visible, strings.ToLower(name)) {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
 	if len(names) == 0 {
 		return content, nil, nil
 	}
 	if len(names) > 3 {
 		return content, nil, document.ErrValidation
-	}
-	items, err := s.documents.List(ctx, userID)
-	if err != nil {
-		return content, nil, err
 	}
 	resolved := make([]string, 0, len(names))
 	for _, name := range names {
@@ -238,6 +258,22 @@ func (s *Server) resolveVisibleDocumentReferences(
 		resolved = append(resolved, found)
 	}
 	return chatattachment.RemoveVisibleDocumentNames(content), resolved, nil
+}
+
+func explicitlyReferencesPriorDocument(content string) bool {
+	visible := strings.ToLower(chatattachment.VisibleText(content))
+	if visible == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"上一条", "上一个", "之前", "刚才", "原文件", "源文件", "附件", "文档", "文件",
+		"previous", "prior", "above", "attached", "attachment", "document", "file",
+	} {
+		if strings.Contains(visible, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func requiresDurableArtifactAgent(content string) bool {
