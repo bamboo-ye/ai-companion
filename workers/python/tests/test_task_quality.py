@@ -26,6 +26,17 @@ class TaskQualityTests(unittest.TestCase):
             "14/9 (周一) 1600-1650；9/9 (周三) 1100-1150；10/9 (周四) 0900-0950",
         )
 
+    def test_localize_time_repairs_pdf_split_numeric_dates(self) -> None:
+        value = localize_presentation_field_value(
+            "time",
+            "10/9, 29/10, 5/1 1 (Thu) 1500-1550；27/ 10 (Tue) 1400-1450",
+            "zh-CN",
+        )
+        self.assertEqual(
+            value,
+            "10/9, 29/10, 5/11 (周四) 1500-1550；27/10 (周二) 1400-1450",
+        )
+
     def test_temporal_source_values_drop_stale_adjacent_column_noise(self) -> None:
         self.assertEqual(
             select_presentation_temporal_source_values(
@@ -63,6 +74,15 @@ class TaskQualityTests(unittest.TestCase):
             ),
             "跑步（提高班）",
         )
+        self.assertEqual(
+            normalize_presentation_name_translation(
+                "网球 - 初级",
+                "Tennis - Elementary",
+                "zh-CN",
+            ),
+            "网球 - 初级",
+        )
+
     def test_compile_contract_locks_exhaustive_ppt_fields(self) -> None:
         contract = compile_task_contract(
             "帮我整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"

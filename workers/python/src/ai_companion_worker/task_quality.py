@@ -95,6 +95,12 @@ _PRESENTATION_TRAILING_CAPACITY = re.compile(
     r"(\b(?:[01]\d|2[0-3])[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3])[0-5]\d)"
     r"\s+\d{1,3}(?=\s*(?:[；;]|$))"
 )
+_PRESENTATION_SPLIT_DATE_SUFFIX = re.compile(
+    r"\b(\d{1,2})\s*/\s*(\d)\s+(\d)\b"
+)
+_PRESENTATION_SPLIT_DATE_PREFIX = re.compile(
+    r"\b(\d)\s+(\d)\s*/\s*(\d{1,2})\b"
+)
 _PRESENTATION_PARTIAL_SCOPE_MARKER = (
     r"(?:节选|摘要|摘录|示例|样例|部分|excerpt|summary|sample|partial)"
 )
@@ -157,6 +163,14 @@ def localize_presentation_field_value(field: str, value: Any, language: Any) -> 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if field != "time":
         return text
+    # PDF text layers frequently split a two-digit day/month across adjacent
+    # glyph runs (for example ``5/1 1`` or ``27/ 10``). These are transport
+    # artifacts inside an otherwise unambiguous numeric date token, so repair
+    # them before evidence validation and rendering without altering the
+    # spacing between independent dates or times.
+    text = _PRESENTATION_SPLIT_DATE_SUFFIX.sub(r"\1/\2\3", text)
+    text = _PRESENTATION_SPLIT_DATE_PREFIX.sub(r"\1\2/\3", text)
+    text = re.sub(r"(?<=\d)\s*/\s*(?=\d)", "/", text)
     text = _PRESENTATION_TRAILING_CAPACITY.sub(r"\1", text)
     if not str(language or "").casefold().startswith("zh"):
         return text
@@ -268,6 +282,10 @@ _PRESENTATION_ZH_LEVEL = re.compile(
     r"(?<=[（(，,])\s*(?:小学|初级|基础级?|入门|中级|提升班|提高班|进阶|高级)\s*"
     r"(?=[）)，,])"
 )
+_PRESENTATION_TRAILING_ZH_LEVEL = re.compile(
+    r"(?P<prefix>[-–—/]\s*)"
+    r"(?:小学|初级|基础级?|入门|中级|提升班|提高班|进阶|高级)\s*$"
+)
 
 
 def normalize_presentation_name_translation(
@@ -295,6 +313,11 @@ def normalize_presentation_name_translation(
         translated = "高级"
     if _PRESENTATION_ZH_LEVEL.search(text):
         return _PRESENTATION_ZH_LEVEL.sub(translated, text)
+    if _PRESENTATION_TRAILING_ZH_LEVEL.search(text):
+        return _PRESENTATION_TRAILING_ZH_LEVEL.sub(
+            lambda match: f"{match.group('prefix')}{translated}",
+            text,
+        )
     return f"{text}（{translated}）" if text else translated
 
 
