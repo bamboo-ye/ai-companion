@@ -814,6 +814,13 @@ def compile_task_contract(
         "requested_fields": requested_fields,
         "presentation_capabilities": [],
         "presentation_mode": "undetermined" if "pptx" in artifact_types else "not_applicable",
+        "table_requested": bool(
+            "pptx" in artifact_types
+            and re.search(
+                r"(?:表格|表形式|列表展示|按.{0,10}字段.{0,10}(?:整理|展示)|\b(?:tabular|table)\b)",
+                lowered,
+            )
+        ),
         "visual_requested": bool(
             "pptx" in artifact_types
             and re.search(r"(?:配图|插图|图文|来源图片|原文件.{0,8}图片|visuals?|images?)", lowered)
@@ -842,7 +849,7 @@ def apply_planned_task_intent(
         return contract
     requested = contract.get("requested_fields")
     fallback_capabilities = ["narrative"]
-    if isinstance(requested, list) and requested:
+    if (isinstance(requested, list) and requested) or contract.get("table_requested") is True:
         fallback_capabilities.append("table")
     if contract.get("visual_requested") is True:
         fallback_capabilities.append("visual")
@@ -881,6 +888,12 @@ def apply_planned_task_intent(
         capabilities = fallback_capabilities
     if "narrative" not in capabilities:
         capabilities.insert(0, "narrative")
+    # Planner semantics decide ambiguous intent, but cannot relax an explicit
+    # user instruction to include a table or visuals.
+    if contract.get("table_requested") is True and "table" not in capabilities:
+        capabilities.append("table")
+    if contract.get("visual_requested") is True and "visual" not in capabilities:
+        capabilities.append("visual")
 
     raw_fields = (
         task_intent.get("requested_fields")
@@ -981,9 +994,21 @@ def validate_presentation_arguments(
     scope_violations = presentation_exhaustive_scope_violations(arguments, task_contract)
     language_violations = presentation_visible_language_violations(arguments, task_contract)
     audience_violations = presentation_audience_content_violations(arguments, task_contract)
+    capabilities = task_contract.get("presentation_capabilities")
+    table_required = isinstance(capabilities, list) and "table" in capabilities
+    table = arguments.get("table")
+    if table_required and not isinstance(table, Mapping):
+        return [
+            *scope_violations,
+            *language_violations,
+            *audience_violations,
+            {
+                "code": "structured_table_missing",
+                "message": "能力计划要求结构化表格，但参数中没有表格数据",
+            },
+        ]
     if not requested_fields:
         return [*scope_violations, *language_violations, *audience_violations]
-    table = arguments.get("table")
     if not isinstance(table, Mapping):
         return [
             {

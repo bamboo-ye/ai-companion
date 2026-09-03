@@ -903,6 +903,30 @@ class OfficeToolsTest(unittest.TestCase):
         )
         self.assertEqual(result["files"], [])
 
+    def test_pptx_explicit_table_capability_fails_closed_without_a_table(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "需要表格的演示",
+                "audience": "项目团队",
+                "style": "简洁",
+                "brief": "## 三种方案\n- 规则系统\n- 机器学习系统\n- 多智能体系统",
+                "slide_count": 3,
+                "visual_mode": "none",
+                "task_contract": {
+                    "presentation_capabilities": ["narrative", "table"],
+                },
+            },
+        )
+
+        report = result["output"]["quality_report"]
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "requested_table_missing",
+            {item["code"] for item in report["violations"]},
+        )
+        self.assertEqual(result["files"], [])
+
     def test_pptx_title_with_slash_is_safe_for_outline_and_generated_filename(self) -> None:
         payload = {
             "title": "Important Dates - Semester A 2026/27",

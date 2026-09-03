@@ -2145,7 +2145,12 @@ def _presentation_quality_report(
             task_contract,
         )
     )
-    if "表格" in style and not table:
+    presentation_capabilities = task_contract.get("presentation_capabilities")
+    table_required = (
+        isinstance(presentation_capabilities, list)
+        and "table" in presentation_capabilities
+    )
+    if (table_required or "表格" in style) and not table:
         violations.append(
             {"code": "requested_table_missing", "message": "用户要求表格，但未提供结构化表格数据"}
         )
@@ -2170,7 +2175,6 @@ def _presentation_quality_report(
                 "message": "结构化字段任务必须提供表格数据，不能只生成通用内容页",
             }
         )
-    presentation_capabilities = task_contract.get("presentation_capabilities")
     if (
         isinstance(presentation_capabilities, list)
         and "visual" in presentation_capabilities

@@ -105,6 +105,36 @@ class TaskQualityTests(unittest.TestCase):
         self.assertEqual(contract["presentation_capabilities"], [])
         self.assertEqual(contract["presentation_mode"], "undetermined")
 
+    def test_attachment_timetable_filename_does_not_force_explicit_table_capability(self) -> None:
+        contract = compile_task_contract(
+            "请概述附件并生成 PPT\n<!--ai-document:doc-1|Course_Timetable.pdf-->",
+            "work",
+        )
+
+        self.assertFalse(contract["table_requested"])
+
+    def test_explicit_table_and_visual_requirements_survive_planner_omission(self) -> None:
+        contract = compile_task_contract(
+            "生成中文 PPT，请用表格比较三个方案，并配一张插图",
+            "work",
+        )
+        refined = apply_planned_task_intent(
+            contract,
+            {
+                "presentation_capabilities": ["narrative"],
+                "requested_fields": [],
+                "confidence": "low",
+            },
+        )
+
+        self.assertTrue(refined["table_requested"])
+        self.assertTrue(refined["visual_requested"])
+        self.assertEqual(
+            refined["presentation_capabilities"],
+            ["narrative", "table", "visual"],
+        )
+        self.assertEqual(refined["presentation_mode"], "composed")
+
     def test_planner_selects_composable_presentation_capabilities_without_relaxing_hard_facts(self) -> None:
         contract = compile_task_contract(
             "整理所有课程的名称和代码并生成中文 PPT\n📎 courses.pdf",
