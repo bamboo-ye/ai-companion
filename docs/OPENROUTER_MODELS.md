@@ -85,25 +85,29 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.48.1` makes presentation capability selection a planner-owned
+Graph version `3.49.0` makes presentation capability selection a planner-owned
 semantic decision. Work-module PPT requests now enter `plan` before routing. The
-planner classifies exactly one of `narrative`, `structured_table`, or
-`illustrated`; the Harness then refines the task contract without allowing the
+planner returns a composable capability set containing `narrative` and, only
+when required, `table` and/or `visual`; the Harness then refines the task
+contract without allowing the
 model to relax source, language, exhaustiveness, or artifact requirements. A
 planner node admits the configured primary plus one bounded fallback, with a
 1,024-token structured-output budget, so a
 DeepSeek timeout does not silently turn semantic classification into the normal
 path. A
 speech-duration phrase such as “10 minutes” is not a table time field. Routing
-then forces one minimal model-visible tool: `work_generate_pptx` exposes only
-narrative fields, `work_generate_table_pptx` owns table/mapping and large-source
-record merging, and `work_generate_visual_pptx` owns trusted-source image reuse
-or configured image generation. Harness-owned provenance fields are hidden from
-the Composer schema and injected after composition. All three capabilities reuse
-the same internal `office.pptx_generate` renderer; the executor pins narrative
-and table modes to no visuals, while only the illustrated mode receives source
-PDF bytes and `visual_mode=auto`. Old immutable checkpoints without the split
-catalog retain a bounded compatibility path through the legacy generator name.
+always exposes and selects one public `work_generate_pptx` orchestrator. The
+private `work_generate_table_pptx` child owns table/mapping and large-source
+record merging, while `work_generate_visual_pptx` owns trusted-source image reuse
+or configured image generation. They remain in the immutable catalog for
+capability-specific Schema projection and old-checkpoint replay, but are hidden
+from Planner and Router action choices. The Harness projects only the selected
+child Schema, injects locked provenance after composition, and permits table and
+visual capabilities to coexist. The executor then combines the selected child
+outputs and invokes the shared `office.pptx_generate` renderer. Narrative-only
+runs receive neither table data nor source PDF bytes; visual runs alone receive
+trusted source bytes and `visual_mode=auto`. Old immutable checkpoints that call
+a child tool directly retain a bounded compatibility path.
 
 Graph version `3.12.0` replaces text-only exhaustive document composition with a domain-neutral `document-source-ir-v1` contract. Fixed-width sources preserve logical tables, columns, row groups, rows, cells, explicit/inherited values and stable provenance IDs before batching. Structured batches retain parent context, split only between logical groups or checkpointed child slices, lock one `target-mapping-v1` field/granularity contract, merge by source entity ID, and apply bidirectional precision/recall gates for missing, extra, orphaned and unreferenced entities. PPTX is a deterministic renderer over the validated dataset: it paginates readable continuation rows, hides internal Harness locators, checks canvas geometry and capacity, and withholds the file whenever the hard quality report fails. A per-run Composer circuit breaker still gives the configured DeepSeek structured Composer the first attempt, then bypasses a timed-out candidate only after a healthy fallback has been observed.
 

@@ -5,9 +5,12 @@ from pathlib import PurePath
 from typing import Any, Mapping
 
 
-TASK_CONTRACT_VERSION = "task-contract-v2"
+TASK_CONTRACT_VERSION = "task-contract-v3"
 
-_PRESENTATION_MODES = frozenset(("narrative", "structured_table", "illustrated"))
+_PRESENTATION_MODES = frozenset(
+    ("narrative", "structured_table", "illustrated", "composed")
+)
+_PRESENTATION_CAPABILITIES = frozenset(("narrative", "table", "visual"))
 _PRESENTATION_FIELDS = frozenset(("code", "name", "time", "venue"))
 ARTIFACT_QUALITY_POLICY_VERSION = "artifact-quality-v1"
 
@@ -809,7 +812,12 @@ def compile_task_contract(
         ),
         "exhaustive": exhaustive,
         "requested_fields": requested_fields,
+        "presentation_capabilities": [],
         "presentation_mode": "undetermined" if "pptx" in artifact_types else "not_applicable",
+        "visual_requested": bool(
+            "pptx" in artifact_types
+            and re.search(r"(?:配图|插图|图文|来源图片|原文件.{0,8}图片|visuals?|images?)", lowered)
+        ),
         "intent_source": "fallback_rules",
         "output_language": "zh-CN" if re.search(r"(?:中文|汉语|chinese)", lowered) else "",
         "hard_requirements": hard_requirements,
@@ -824,7 +832,7 @@ def apply_planned_task_intent(
 ) -> dict[str, Any]:
     """Refine presentation-only requirements from the planner's semantic intent.
 
-    The planner may select one presentation capability, but cannot relax source,
+    The planner may select composable presentation capabilities, but cannot relax source,
     language, exhaustiveness, or artifact requirements compiled by the Harness.
     """
 
@@ -832,22 +840,53 @@ def apply_planned_task_intent(
     artifact_types = contract.get("artifact_types")
     if not isinstance(artifact_types, list) or "pptx" not in artifact_types:
         return contract
-    if not isinstance(task_intent, Mapping):
-        requested = contract.get("requested_fields")
-        contract["presentation_mode"] = (
-            "structured_table" if isinstance(requested, list) and requested else "narrative"
-        )
-        return contract
+    requested = contract.get("requested_fields")
+    fallback_capabilities = ["narrative"]
+    if isinstance(requested, list) and requested:
+        fallback_capabilities.append("table")
+    if contract.get("visual_requested") is True:
+        fallback_capabilities.append("visual")
 
-    raw_mode = str(task_intent.get("presentation_mode") or "").strip().casefold()
-    if raw_mode not in _PRESENTATION_MODES:
-        requested = contract.get("requested_fields")
-        contract["presentation_mode"] = (
-            "structured_table" if isinstance(requested, list) and requested else "narrative"
+    raw_capabilities = (
+        task_intent.get("presentation_capabilities")
+        if isinstance(task_intent, Mapping)
+        else None
+    )
+    capabilities = (
+        list(
+            dict.fromkeys(
+                str(value).strip().casefold()
+                for value in raw_capabilities
+                if isinstance(value, str)
+                and str(value).strip().casefold() in _PRESENTATION_CAPABILITIES
+            )
         )
-        return contract
+        if isinstance(raw_capabilities, list)
+        else []
+    )
+    planner_supplied_valid_capabilities = bool(capabilities)
+    # Resume plans/checkpoints produced by graph v3.48 and earlier.
+    raw_mode = (
+        str(task_intent.get("presentation_mode") or "").strip().casefold()
+        if isinstance(task_intent, Mapping)
+        else ""
+    )
+    if not capabilities and raw_mode in _PRESENTATION_MODES:
+        capabilities = ["narrative"]
+        if raw_mode in ("structured_table", "composed"):
+            capabilities.append("table")
+        if raw_mode in ("illustrated", "composed"):
+            capabilities.append("visual")
+    if not capabilities:
+        capabilities = fallback_capabilities
+    if "narrative" not in capabilities:
+        capabilities.insert(0, "narrative")
 
-    raw_fields = task_intent.get("requested_fields")
+    raw_fields = (
+        task_intent.get("requested_fields")
+        if isinstance(task_intent, Mapping)
+        else None
+    )
     planned_fields = (
         list(
             dict.fromkeys(
@@ -860,7 +899,7 @@ def apply_planned_task_intent(
         if isinstance(raw_fields, list)
         else []
     )
-    if raw_mode == "structured_table":
+    if "table" in capabilities:
         fallback_fields = contract.get("requested_fields")
         if not planned_fields and isinstance(fallback_fields, list):
             planned_fields = [
@@ -877,15 +916,35 @@ def apply_planned_task_intent(
         for value in contract.get("hard_requirements", [])
         if isinstance(value, str) and value != "requested_fields_present"
     ]
-    if raw_mode == "structured_table" and planned_fields:
+    if "table" in capabilities and planned_fields:
         hard_requirements.append("requested_fields_present")
     contract["hard_requirements"] = list(dict.fromkeys(hard_requirements))
-    contract["presentation_mode"] = raw_mode
-    contract["intent_source"] = "planner"
-    confidence = str(task_intent.get("confidence") or "").strip().casefold()
+    contract["presentation_capabilities"] = capabilities
+    contract["presentation_mode"] = (
+        "composed"
+        if "table" in capabilities and "visual" in capabilities
+        else "structured_table"
+        if "table" in capabilities
+        else "illustrated"
+        if "visual" in capabilities
+        else "narrative"
+    )
+    if isinstance(task_intent, Mapping) and (
+        planner_supplied_valid_capabilities or raw_mode in _PRESENTATION_MODES
+    ):
+        contract["intent_source"] = "planner"
+    confidence = (
+        str(task_intent.get("confidence") or "").strip().casefold()
+        if isinstance(task_intent, Mapping)
+        else ""
+    )
     if confidence in ("low", "medium", "high"):
         contract["intent_confidence"] = confidence
-    rationale = str(task_intent.get("rationale") or "").strip()
+    rationale = (
+        str(task_intent.get("rationale") or "").strip()
+        if isinstance(task_intent, Mapping)
+        else ""
+    )
     if rationale:
         contract["intent_rationale"] = rationale[:240]
     return contract

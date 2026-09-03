@@ -1010,6 +1010,19 @@ func TestPPTGenerationInjectsOnlyTrustedAttachedPDFBytes(t *testing.T) {
 		t.Fatalf("plain presentation leaked optional capabilities: %#v", worker.input)
 	}
 	_, err = executor.ExecuteModelTool(ctx, conversation.ToolRequest{
+		UserID: "user-1", MessageID: "composed-ppt", Module: "work", Text: text,
+	}, conversation.ModelToolCall{Name: "work_generate_pptx", Arguments: map[string]any{
+		"title": "图文表格演示", "audience": "学生", "style": "简洁", "brief": "课程", "slide_count": float64(4),
+		"table":         map[string]any{"columns": []any{"代码", "名称"}, "rows": []any{}},
+		"task_contract": map[string]any{"presentation_capabilities": []any{"narrative", "table", "visual"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.input["visual_mode"] != "auto" || worker.input["source_documents"] == nil || worker.input["table"] == nil {
+		t.Fatalf("main presentation orchestrator did not compose child capabilities: %#v", worker.input)
+	}
+	_, err = executor.ExecuteModelTool(ctx, conversation.ToolRequest{
 		UserID: "user-1", MessageID: "table-ppt", Module: "work", Text: text,
 	}, conversation.ModelToolCall{Name: "work_generate_table_pptx", Arguments: map[string]any{
 		"title": "表格演示", "audience": "学生", "style": "简洁", "brief": "课程", "slide_count": float64(4),
@@ -1020,6 +1033,24 @@ func TestPPTGenerationInjectsOnlyTrustedAttachedPDFBytes(t *testing.T) {
 	}
 	if worker.input["visual_mode"] != "none" || worker.input["source_documents"] != nil || worker.input["table"] == nil {
 		t.Fatalf("table presentation capability isolation failed: %#v", worker.input)
+	}
+}
+
+func TestPresentationModeFromArgumentsSupportsComposableCapabilities(t *testing.T) {
+	arguments := map[string]any{
+		"task_contract": map[string]any{
+			"presentation_capabilities": []any{"narrative", "table", "visual"},
+		},
+	}
+	if mode := presentationModeFromArguments(arguments); mode != "composed" {
+		t.Fatalf("mode=%q", mode)
+	}
+	if mode := presentationModeFromArguments(map[string]any{}); mode != "narrative" {
+		t.Fatalf("default mode=%q", mode)
+	}
+	legacy := map[string]any{"task_contract": map[string]any{"presentation_mode": "illustrated"}}
+	if mode := presentationModeFromArguments(legacy); mode != "illustrated" {
+		t.Fatalf("legacy mode=%q", mode)
 	}
 }
 

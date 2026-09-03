@@ -102,9 +102,10 @@ class TaskQualityTests(unittest.TestCase):
             "work",
         )
         self.assertEqual(contract["requested_fields"], [])
+        self.assertEqual(contract["presentation_capabilities"], [])
         self.assertEqual(contract["presentation_mode"], "undetermined")
 
-    def test_planner_selects_one_presentation_capability_without_relaxing_hard_facts(self) -> None:
+    def test_planner_selects_composable_presentation_capabilities_without_relaxing_hard_facts(self) -> None:
         contract = compile_task_contract(
             "整理所有课程的名称和代码并生成中文 PPT\n📎 courses.pdf",
             "work",
@@ -112,13 +113,14 @@ class TaskQualityTests(unittest.TestCase):
         narrative = apply_planned_task_intent(
             contract,
             {
-                "presentation_mode": "narrative",
+                "presentation_capabilities": ["narrative"],
                 "requested_fields": ["time"],
                 "confidence": "high",
                 "rationale": "用户要求主题讲解，而非逐条字段表",
             },
         )
         self.assertEqual(narrative["requested_fields"], [])
+        self.assertEqual(narrative["presentation_capabilities"], ["narrative"])
         self.assertNotIn("requested_fields_present", narrative["hard_requirements"])
         self.assertTrue(narrative["source_required"])
         self.assertTrue(narrative["exhaustive"])
@@ -127,13 +129,29 @@ class TaskQualityTests(unittest.TestCase):
         structured = apply_planned_task_intent(
             contract,
             {
-                "presentation_mode": "structured_table",
+                "presentation_capabilities": ["narrative", "table", "visual"],
                 "requested_fields": ["code", "name"],
                 "confidence": "high",
             },
         )
         self.assertEqual(structured["requested_fields"], ["code", "name"])
+        self.assertEqual(
+            structured["presentation_capabilities"],
+            ["narrative", "table", "visual"],
+        )
+        self.assertEqual(structured["presentation_mode"], "composed")
         self.assertIn("requested_fields_present", structured["hard_requirements"])
+
+        fallback = apply_planned_task_intent(
+            contract,
+            {
+                "presentation_capabilities": ["unknown"],
+                "requested_fields": ["time"],
+                "confidence": "high",
+            },
+        )
+        self.assertEqual(fallback["presentation_capabilities"], ["narrative", "table"])
+        self.assertEqual(fallback["intent_source"], "fallback_rules")
 
     def test_compile_contract_fails_closed_for_legacy_visible_attachment(self) -> None:
         contract = compile_task_contract(

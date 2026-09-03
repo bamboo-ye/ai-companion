@@ -320,19 +320,19 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_pptx", Description: "用户要求创建普通叙事型 PPT/PPTX 时调用。只处理逐页标题与要点，不接受表格数据，不提取或生成插图。",
+			Name: "work_generate_pptx", Description: "创建 PPT/PPTX 的唯一主入口。根据 Harness 锁定的能力计划编排正文、结构化表格和视觉子能力，最后统一生成并校验文件；模型不得自行传入或改变能力计划。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_table_pptx", Description: "只在用户明确要求将多条记录按字段整理、合并或展示为表格 PPT/PPTX 时调用。不负责普通叙事或插图。",
+			Name: "work_generate_table_pptx", Description: "主 PPT 工具内部使用的结构化表格子能力。负责字段映射、实体聚合和无损记录合并；新任务不得把它作为顶层工具直接调用。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count", "table"}, presentationTableFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_visual_pptx", Description: "只在规划已判定必须使用插图、图文、来源图片或其他视觉证据时调用，不得仅为装饰启用。系统可复用可信 PDF 图片或按配置生成配图；不接受表格数据。",
+			Name: "work_generate_visual_pptx", Description: "主 PPT 工具内部使用的视觉子能力。仅在能力计划包含 visual 时复用可信 PDF 图片或按配置生成配图；新任务不得把它作为顶层工具直接调用。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
@@ -443,7 +443,7 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 	case "work_create_pptx_outline":
 		return e.runSkillWithInput(ctx, request, "office.pptx_outline", call.Arguments)
 	case "work_generate_pptx":
-		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "narrative")
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, presentationModeFromArguments(call.Arguments))
 	case "work_generate_table_pptx":
 		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "structured_table")
 	case "work_generate_visual_pptx":
@@ -1741,21 +1741,28 @@ func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request 
 			input[key] = value
 		}
 	}
-	switch mode {
-	case "structured_table":
-		input["visual_mode"] = "none"
-	case "illustrated":
-		delete(input, "table")
-		delete(input, "mapping_contract")
-		input["visual_mode"] = "auto"
-	default:
-		delete(input, "table")
-		delete(input, "mapping_contract")
-		input["visual_mode"] = "none"
+	structured := mode == "structured_table" || mode == "composed"
+	visual := mode == "illustrated" || mode == "composed"
+	runPresentationTableSubtool(input, structured)
+	e.runPresentationVisualSubtool(ctx, request, input, visual)
+	return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
+}
+
+func runPresentationTableSubtool(input map[string]any, enabled bool) {
+	if enabled {
+		return
 	}
-	if mode != "illustrated" {
-		return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
+	delete(input, "table")
+	delete(input, "mapping_contract")
+}
+
+func (e *Executor) runPresentationVisualSubtool(ctx context.Context, request conversation.ToolRequest, input map[string]any, enabled bool) {
+	if !enabled {
+		input["visual_mode"] = "none"
+		delete(input, "source_documents")
+		return
 	}
+	input["visual_mode"] = "auto"
 
 	ids := attachmentDocumentIDs(request)
 	sources := make([]any, 0, min(len(ids), maxPresentationSourceDocuments))
@@ -1781,7 +1788,53 @@ func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request 
 	if len(sources) > 0 {
 		input["source_documents"] = sources
 	}
-	return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
+}
+
+func presentationModeFromArguments(arguments map[string]any) string {
+	contract, _ := arguments["task_contract"].(map[string]any)
+	table, visual := false, false
+	if contract != nil {
+		switch values := contract["presentation_capabilities"].(type) {
+		case []any:
+			for _, value := range values {
+				switch strings.ToLower(strings.TrimSpace(fmt.Sprint(value))) {
+				case "table":
+					table = true
+				case "visual":
+					visual = true
+				}
+			}
+		case []string:
+			for _, value := range values {
+				switch strings.ToLower(strings.TrimSpace(value)) {
+				case "table":
+					table = true
+				case "visual":
+					visual = true
+				}
+			}
+		}
+		if !table && !visual {
+			switch strings.ToLower(strings.TrimSpace(fmt.Sprint(contract["presentation_mode"]))) {
+			case "structured_table":
+				table = true
+			case "illustrated":
+				visual = true
+			case "composed":
+				table, visual = true, true
+			}
+		}
+	}
+	if table && visual {
+		return "composed"
+	}
+	if table {
+		return "structured_table"
+	}
+	if visual {
+		return "illustrated"
+	}
+	return "narrative"
 }
 
 func skillRunChatResponse(run skill.Run, message string) string {

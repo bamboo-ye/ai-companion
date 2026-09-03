@@ -82,20 +82,65 @@ _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
 
 
 def _presentation_tool_for_contract(task_contract: Mapping[str, Any]) -> str:
-    mode = str(task_contract.get("presentation_mode") or "").strip().casefold()
-    if mode == "structured_table":
-        return "work_generate_table_pptx"
-    if mode == "illustrated":
-        return "work_generate_visual_pptx"
+    # Fresh runs always invoke the public orchestration tool. The legacy child
+    # tool names stay in the immutable catalog only so old checkpoints resume.
     return "work_generate_pptx"
 
 
+def _presentation_capabilities(value: Mapping[str, Any]) -> tuple[str, ...]:
+    raw = value.get("presentation_capabilities")
+    capabilities = (
+        list(
+            dict.fromkeys(
+                str(item).strip().casefold()
+                for item in raw
+                if isinstance(item, str)
+                and str(item).strip().casefold() in ("narrative", "table", "visual")
+            )
+        )
+        if isinstance(raw, list)
+        else []
+    )
+    if not capabilities:
+        mode = str(value.get("presentation_mode") or "").strip().casefold()
+        capabilities = ["narrative"]
+        if mode in ("structured_table", "composed"):
+            capabilities.append("table")
+        if mode in ("illustrated", "composed"):
+            capabilities.append("visual")
+    if "narrative" not in capabilities:
+        capabilities.insert(0, "narrative")
+    return tuple(capabilities)
+
+
 def _sanitize_plan_task_intent(value: Mapping[str, Any]) -> dict[str, Any]:
-    allowed_modes = ("not_applicable", "narrative", "structured_table", "illustrated")
+    allowed_modes = (
+        "not_applicable",
+        "narrative",
+        "structured_table",
+        "illustrated",
+        "composed",
+    )
     allowed_fields = ("code", "name", "time", "venue")
+    raw_capabilities = value.get("presentation_capabilities")
+    if isinstance(raw_capabilities, list):
+        capabilities = list(
+            dict.fromkeys(
+                str(item).strip().casefold()
+                for item in raw_capabilities
+                if isinstance(item, str)
+                and str(item).strip().casefold() in ("narrative", "table", "visual")
+            )
+        )
+    else:
+        capabilities = []
     mode = str(value.get("presentation_mode") or "").strip().casefold()
     fields = value.get("requested_fields")
     result: dict[str, Any] = {}
+    if capabilities:
+        if "narrative" not in capabilities:
+            capabilities.insert(0, "narrative")
+        result["presentation_capabilities"] = capabilities
     if mode in allowed_modes:
         result["presentation_mode"] = mode
     if isinstance(fields, list):
@@ -126,21 +171,7 @@ def _uses_structured_presentation_capability(
     task_contract = state.get("task_contract")
     if not isinstance(task_contract, Mapping):
         return False
-    mode = task_contract.get("presentation_mode")
-    requested_fields = task_contract.get("requested_fields")
-    if mode != "structured_table" and not (
-        mode in (None, "", "undetermined")
-        and isinstance(requested_fields, list)
-        and bool(requested_fields)
-    ):
-        return False
-    # Resume old checkpoints safely when their immutable catalog predates the
-    # split tool. Fresh catalogs always expose the dedicated table capability.
-    try:
-        _trusted_tool_definition(state, "work_generate_table_pptx")
-    except ValueError:
-        return True
-    return False
+    return "table" in _presentation_capabilities(task_contract)
 
 
 class AgentInput(TypedDict):
@@ -424,7 +455,24 @@ def _trusted_tool_definition(
         raise ValueError("trusted tool catalog does not contain the selected tool")
     if len(matches) != 1:
         raise ValueError("trusted tool catalog contains duplicate tool names")
-    return cast(Mapping[str, Any], matches[0])
+    selected = cast(Mapping[str, Any], matches[0])
+    if tool_name == "work_generate_pptx" and _uses_structured_presentation_capability(
+        state, tool_name
+    ):
+        # The public PPT tool remains a thin orchestrator. Its effective input
+        # contract is projected from the private table child only after the
+        # Harness has locked the capability plan.
+        children = [
+            item
+            for item in definitions
+            if isinstance(item, dict) and item.get("name") == "work_generate_table_pptx"
+        ]
+        if len(children) == 1 and isinstance(children[0].get("parameters"), Mapping):
+            effective = dict(selected)
+            effective["parameters"] = dict(children[0]["parameters"])
+            effective["capability_schema"] = "work_generate_table_pptx"
+            return effective
+    return selected
 
 
 def _validate_tool_arguments(

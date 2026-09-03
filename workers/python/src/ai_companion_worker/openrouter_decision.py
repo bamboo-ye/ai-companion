@@ -41,6 +41,37 @@ _PRESENTATION_TOOLS = frozenset(
     )
 )
 _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
+_PRESENTATION_SUBTOOLS = frozenset(
+    ("work_generate_table_pptx", "work_generate_visual_pptx")
+)
+
+
+def _presentation_capabilities(context: Mapping[str, Any]) -> tuple[str, ...]:
+    contract = context.get("task_contract")
+    if not isinstance(contract, Mapping):
+        return ()
+    raw = contract.get("presentation_capabilities")
+    capabilities = (
+        list(
+            dict.fromkeys(
+                str(item).strip().casefold()
+                for item in raw
+                if isinstance(item, str)
+                and str(item).strip().casefold() in ("narrative", "table", "visual")
+            )
+        )
+        if isinstance(raw, list)
+        else []
+    )
+    if not capabilities:
+        mode = str(contract.get("presentation_mode") or "").strip().casefold()
+        if mode not in ("", "undetermined", "not_applicable"):
+            capabilities.append("narrative")
+        if mode in ("structured_table", "composed"):
+            capabilities.append("table")
+        if mode in ("illustrated", "composed"):
+            capabilities.append("visual")
+    return tuple(capabilities)
 
 
 def _uses_structured_presentation_capability(
@@ -53,23 +84,17 @@ def _uses_structured_presentation_capability(
     contract = context.get("task_contract")
     if not isinstance(contract, Mapping):
         return isinstance(context.get("document_processing_round"), Mapping)
+    if "table" in _presentation_capabilities(context):
+        return True
     mode = contract.get("presentation_mode")
     requested_fields = contract.get("requested_fields")
-    if mode != "structured_table" and not (
+    if mode in ("structured_table", "composed") or (
         mode in (None, "", "undetermined")
         and isinstance(requested_fields, list)
         and bool(requested_fields)
     ):
-        return isinstance(context.get("document_processing_round"), Mapping)
-    definitions = context.get("tools")
-    return not (
-        isinstance(definitions, list)
-        and any(
-            isinstance(item, Mapping)
-            and item.get("name") == "work_generate_table_pptx"
-            for item in definitions
-        )
-    )
+        return True
+    return isinstance(context.get("document_processing_round"), Mapping)
 
 
 class OpenRouterError(RuntimeError):
@@ -541,6 +566,7 @@ class OpenRouterDecisionPort:
                 "requires_plan": item.get("requires_plan") is True,
             }
             for item in definitions
+            if item["name"] not in _PRESENTATION_SUBTOOLS
         ]
         payload = self._base_payload("planner")
         payload.update(
@@ -559,12 +585,12 @@ class OpenRouterDecisionPort:
                             "确认→确认后更新→观察最终状态；不得假设事项存在。"
                             "若有多个附件，必须为每个 attachment_index 规划独立提取和观察步骤，"
                             "每个异步任务拥有自己的重试状态，不能合并成一次提取。"
-                            "若目标包含 PPT/PPTX，必须先判定 presentation_mode：普通讲解、"
-                            "汇报、教学或演讲使用 narrative；明确要求把多条记录按指定字段"
-                            "整理为表格时使用 structured_table；明确要求配图、插图、图文、"
-                            "保留来源图片，或关键信息本身必须依赖视觉证据时使用 illustrated，"
-                            "不得仅为装饰启用。讲演时长（例如‘10分钟讲演时间’）"
-                            "只是叙事约束，绝不是 time 字段。只有 structured_table 才填写"
+                            "若目标包含 PPT/PPTX，必须先给出可组合的 presentation_capabilities："
+                            "所有演示都包含 narrative；明确要求把多条记录按指定字段整理为表格"
+                            "时额外加入 table；明确要求配图、插图、图文、保留来源图片，或关键"
+                            "信息本身必须依赖视觉证据时额外加入 visual，不得仅为装饰启用。"
+                            "table 与 visual 可以同时出现。讲演时长（例如‘10分钟讲演时间’）"
+                            "只是叙事约束，绝不是 time 字段。只有包含 table 时才填写"
                             " requested_fields；字段仅可为 code/name/time/venue。"
                             "只返回符合 output_schema 的 JSON 对象，不要返回 Markdown 或解释。"
                         ),
@@ -582,9 +608,9 @@ class OpenRouterDecisionPort:
                                     "steps": ["1-8 non-empty strings"],
                                     "success_criteria": "string",
                                     "task_intent": {
-                                        "presentation_mode": (
-                                            "not_applicable|narrative|structured_table|illustrated"
-                                        ),
+                                        "presentation_capabilities": [
+                                            "narrative|table|visual"
+                                        ],
                                         "requested_fields": ["code|name|time|venue"],
                                         "confidence": "low|medium|high",
                                         "rationale": "short string",
@@ -652,6 +678,13 @@ class OpenRouterDecisionPort:
             _tool_definitions(context.get("tools")),
             context.get("observations"),
         )
+        # Table and visual builders are private implementation capabilities of
+        # the public PPT orchestrator. They remain in the immutable catalog for
+        # schema projection and legacy checkpoint replay, but are never offered
+        # to the router as top-level actions on fresh runs.
+        definitions = [
+            item for item in definitions if item["name"] not in _PRESENTATION_SUBTOOLS
+        ]
         actionable = [item for item in definitions if not _is_no_tool(item["name"])]
         no_tool_definitions = [item for item in definitions if _is_no_tool(item["name"])]
         artifact_pending = _artifact_goal_pending(context)
@@ -830,6 +863,27 @@ class OpenRouterDecisionPort:
         )
         if selected is None or selected.get("compose_arguments") is not True:
             raise ValueError("argument composition requires a trusted catalog marker")
+        if tool_name == "work_generate_pptx" and _uses_structured_presentation_capability(
+            tool_name, context
+        ):
+            table_child = next(
+                (
+                    item
+                    for item in definitions
+                    if item["name"] == "work_generate_table_pptx"
+                    and item.get("compose_arguments") is True
+                ),
+                None,
+            )
+            if table_child is not None:
+                selected = {
+                    **selected,
+                    "parameters": table_child["parameters"],
+                    "description": (
+                        f"{selected['description']} 内部启用结构化表格子能力："
+                        f"{table_child['description']}"
+                    ),
+                }
         system_prompt = (
             "你是伴AI的工具参数编排器。路由节点已经选定唯一工具；"
             "你只能为该工具生成完整、可执行且符合 schema 的参数，不能改选工具。"
@@ -2735,15 +2789,8 @@ def _required_artifact_tool(
         if isinstance(artifact_types, list)
         else set()
     )
-    presentation_mode = str(contract.get("presentation_mode") or "").strip().casefold()
-    presentation_tool = {
-        "structured_table": "work_generate_table_pptx",
-        "illustrated": "work_generate_visual_pptx",
-    }.get(presentation_mode, "work_generate_pptx")
-    if presentation_tool not in names and "work_generate_pptx" in names:
-        presentation_tool = "work_generate_pptx"
     for artifact_type, tool_name in (
-        ("pptx", presentation_tool),
+        ("pptx", "work_generate_pptx"),
         ("markdown", "work_create_markdown_document"),
     ):
         if artifact_type in requested and tool_name in names:
