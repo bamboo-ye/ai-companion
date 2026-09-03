@@ -90,6 +90,9 @@ semantic decision. Work-module PPT requests now enter `plan` before routing. The
 planner classifies exactly one of `narrative`, `structured_table`, or
 `illustrated`; the Harness then refines the task contract without allowing the
 model to relax source, language, exhaustiveness, or artifact requirements. A
+planner node admits the configured primary plus one bounded fallback so a
+DeepSeek timeout does not silently turn semantic classification into the normal
+path. A
 speech-duration phrase such as “10 minutes” is not a table time field. Routing
 then forces one minimal model-visible tool: `work_generate_pptx` exposes only
 narrative fields, `work_generate_table_pptx` owns table/mapping and large-source
