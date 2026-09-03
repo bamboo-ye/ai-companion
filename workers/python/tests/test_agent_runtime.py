@@ -784,16 +784,21 @@ class AgentRuntimeTest(unittest.TestCase):
             ],
         }
         batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
-        self.assertGreater(len(batches), 1)
-        self.assertTrue(all(len(str(batch["text"])) <= 6_000 for batch in batches))
-        self.assertTrue(
-            all(
-                len(batch["source_ir"]["table"]["rows"]) <= 8
-                for batch in batches
-            )
+        self.assertEqual(len(batches), 1)
+        self.assertLessEqual(len(str(batches[0]["text"])), 24_000)
+        self.assertEqual(
+            batches[0]["source_ir"]["version"],
+            "presentation-logical-entity-ir-v1",
         )
+        entities = batches[0]["source_ir"]["entities"]
+        self.assertEqual(len(entities), 1)
+        self.assertTrue(entities[0]["entity_id"].startswith("entity:"))
+        self.assertEqual(len(entities[0]["source_refs"]), 30)
         for index in range(1, 31):
-            self.assertEqual(sum(f'"id":"a1:r{index}"' in batch["text"] for batch in batches), 1)
+            self.assertEqual(
+                sum(f'"a1:r{index}"' in batch["text"] for batch in batches),
+                1,
+            )
 
     def test_structured_composer_context_does_not_replay_merged_rows(self) -> None:
         compact = _composer_previous_arguments(
@@ -812,6 +817,78 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(compact["mapping_contract"]["version"], "target-mapping-v1")
         self.assertNotIn("brief", compact)
         self.assertNotIn("rows", compact["table"])
+
+    def test_structured_batches_merge_cross_table_child_rows_before_composer(self) -> None:
+        def row(row_id: str, page: int, code: str, name: str, schedule: str) -> dict[str, Any]:
+            return {
+                "id": row_id,
+                "group_id": "course-1",
+                "page": page,
+                "source_locator": f"page {page}",
+                "cells": [
+                    {"column_id": "code", "text": code},
+                    {"column_id": "name", "text": name},
+                    {"column_id": "date", "text": schedule.split(" ", 1)[0]},
+                    {"column_id": "time", "text": schedule.split(" ", 1)[1]},
+                ],
+            }
+
+        first_rows = [
+            row("r1", 1, "PED1305", "Physical Fitness", "17/9 Thu 0900-0950"),
+            row("r2", 1, "", "", "24/9 Thu 0900-0950"),
+        ]
+        second_rows = [row("r3", 2, "PED1305", "Physical Fitness", "8/10 Thu 1400-1450")]
+        state = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "arguments": {"attachment_index": 1},
+                    "data": {
+                        "output": {
+                            "source_ir": {
+                                "version": "document-source-ir-v1",
+                                "structure_preserved": True,
+                                "tables": [
+                                    {
+                                        "id": "t1",
+                                        "columns": [
+                                            {"id": "code", "label": "Course Code"},
+                                            {"id": "name", "label": "Course Name"},
+                                            {"id": "date", "label": "Date"},
+                                            {"id": "time", "label": "Time"},
+                                        ],
+                                        "rows": first_rows,
+                                        "row_groups": [{"id": "course-1", "row_ids": ["r1", "r2"]}],
+                                    },
+                                    {
+                                        "id": "t2",
+                                        "columns": [
+                                            {"id": "code", "label": "Course Code"},
+                                            {"id": "name", "label": "Course Name"},
+                                            {"id": "date", "label": "Date"},
+                                            {"id": "time", "label": "Time"},
+                                        ],
+                                        "rows": second_rows,
+                                        "row_groups": [{"id": "course-1", "row_ids": ["r3"]}],
+                                    },
+                                ],
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+        batches = _presentation_structured_batches(state)  # type: ignore[arg-type]
+        entities = batches[0]["source_ir"]["entities"]
+        self.assertEqual(len(entities), 1)
+        self.assertEqual(entities[0]["source_refs"], ["a1:r1", "a1:r2", "a1:r3"])
+        self.assertEqual(entities[0]["values"][0], "PED1305")
+        self.assertIn("17/9 周四 0900-0950", entities[0]["values"][2])
+        self.assertIn("8/10 周四 1400-1450", entities[0]["values"][2])
 
     def test_composer_circuit_breaker_requires_two_timeouts(self) -> None:
         timeout = {
@@ -1247,21 +1324,22 @@ class AgentRuntimeTest(unittest.TestCase):
                     )
                     raise ComposerTimeout("composer fallback deadline exhausted")
                 text = context["observations"][0]["data"]["output"]["text"]
-                if "PED1102" in text:
-                    code, name, schedule, locator, entity_id = (
-                        "PED1102",
-                        "游泳",
-                        "周四 14:00-14:50",
-                        "Page 2",
-                        "a1:r2",
+                rows = []
+                if "PED1101" in text:
+                    rows.append(
+                        {
+                            "cells": ["PED1101", "独木舟", "周三 10:00-11:50"],
+                            "source_locator": "Page 1",
+                            "entity_id": "a1:r1",
+                        }
                     )
-                else:
-                    code, name, schedule, locator, entity_id = (
-                        "PED1101",
-                        "独木舟",
-                        "周三 10:00-11:50",
-                        "Page 1",
-                        "a1:r1",
+                if "PED1102" in text:
+                    rows.append(
+                        {
+                            "cells": ["PED1102", "游泳", "周四 14:00-14:50"],
+                            "source_locator": "Page 2",
+                            "entity_id": "a1:r2",
+                        }
                     )
                 return {
                     "title": "体育课课程表",
@@ -1271,14 +1349,7 @@ class AgentRuntimeTest(unittest.TestCase):
                     "slide_count": 3,
                     "table": {
                         "columns": ["课程代码", "课程名称", "上课时间"],
-                        "rows": [
-                            {
-                                "cells": [code, name, schedule],
-                                "source_locator": locator,
-                                "entity_id": entity_id,
-                                "source_refs": [entity_id],
-                            }
-                        ],
+                        "rows": rows,
                     },
                 }
 
@@ -1488,7 +1559,7 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(result["outcome"], "completed")
         self.assertEqual(
             decisions.composed_batches,
-            ["a1:table:one:b1", "a1:table:one:b1", "a1:table:two:b2"],
+            ["logical-entities:b1", "logical-entities:b1"],
         )
         ppt_arguments = next(
             item["arguments"]

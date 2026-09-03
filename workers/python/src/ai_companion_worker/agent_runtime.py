@@ -681,8 +681,8 @@ _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
-_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 6_000
-_STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 8
+_STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 24_000
+_STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 24
 _FOCUSED_PAGE_MAX_CHARS = 5_000
 _FOCUSED_MATCH_CONTEXT_CHARS = 2_200
 
@@ -1397,122 +1397,205 @@ def _deterministic_presentation_mapping(
 
 
 def _presentation_structured_batches(state: AgentState) -> list[dict[str, Any]]:
+    """Build compact, lossless batches at the task's logical entity grain.
+
+    Source PDF tables often contain dozens of physical rows for one logical
+    entity (for example, one course with many sections). Sending those rows to
+    Composer eight at a time is both slow and semantically dangerous: the
+    model sees partial entities and must reconstruct them across calls. The
+    harness already owns a deterministic mapping contract, so aggregate the
+    mapped source values and provenance first. Composer then only performs the
+    audience-facing transformation, such as translating a course name.
+    """
+
     task_contract = state.get("task_contract", {})
     source_ir = _presentation_source_ir(state)
     tables = _relevant_source_tables(
         source_ir, task_contract if isinstance(task_contract, Mapping) else {}
     )
+    if not tables or not isinstance(task_contract, Mapping):
+        return []
+    mapping, violations = _deterministic_presentation_mapping(source_ir, task_contract)
+    if violations:
+        return []
+    entities = _presentation_logical_entities(tables, mapping, task_contract)
+    if not entities:
+        return []
+    fields = _presentation_logical_fields(mapping, task_contract)
     batches: list[dict[str, Any]] = []
-    maximum_characters = _STRUCTURED_COMPOSER_BATCH_MAX_CHARS
-    payload_limit = max(1_000, maximum_characters - 256)
-    for raw_table in tables:
-        table = _project_source_table(
-            raw_table, task_contract if isinstance(task_contract, Mapping) else {}
-        )
-        rows_by_id = {
-            str(row.get("id") or ""): dict(row)
-            for row in table.get("rows", [])
-            if isinstance(row, Mapping)
-        }
-        bundles: list[dict[str, Any]] = []
-        for raw_group in table.get("row_groups", []):
-            if not isinstance(raw_group, Mapping):
-                continue
-            group_rows = [
-                rows_by_id[str(value)]
-                for value in raw_group.get("row_ids", [])
-                if str(value) in rows_by_id
-            ]
-            if not group_rows:
-                continue
-            current: list[dict[str, Any]] = []
-            for row in group_rows:
-                candidate = [*current, row]
-                if current and (
-                    _structured_rows_size(candidate) > maximum_characters
-                    or len(candidate) > _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
-                ):
-                    bundles.append(
-                        {
-                            "group": {**dict(raw_group), "partial": True},
-                            "rows": current,
-                        }
-                    )
-                    current = []
-                current.append(row)
-            if current:
-                bundles.append(
-                    {
-                        "group": {
-                            **dict(raw_group),
-                            "partial": bool(raw_group.get("partial"))
-                            or len(current) < len(group_rows),
-                        },
-                        "rows": current,
-                    }
-                )
-        current_bundles: list[dict[str, Any]] = []
-        fitted_bundles = [
-            fitted
-            for bundle in bundles
-            for fitted in _fit_structured_bundle(table, bundle, payload_limit)
-        ]
-        for bundle in fitted_bundles:
-            candidate = [*current_bundles, bundle]
-            preview = _structured_batch(table, candidate, len(batches) + 1)
-            candidate_row_count = sum(len(item.get("rows", [])) for item in candidate)
-            if current_bundles and (
-                len(str(preview.get("text") or "")) > payload_limit
-                or candidate_row_count > _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
-            ):
-                batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
-                current_bundles = []
-            current_bundles.append(bundle)
-        if current_bundles:
-            batches.append(_structured_batch(table, current_bundles, len(batches) + 1))
+    current: list[dict[str, Any]] = []
+    for entity in entities:
+        candidate = [*current, entity]
+        preview = _presentation_logical_entity_batch(fields, candidate, len(batches) + 1)
+        if current and (
+            len(str(preview.get("text") or "")) > _STRUCTURED_COMPOSER_BATCH_MAX_CHARS
+            or len(candidate) > _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
+        ):
+            batches.append(_presentation_logical_entity_batch(fields, current, len(batches) + 1))
+            current = []
+        current.append(entity)
+    if current:
+        batches.append(_presentation_logical_entity_batch(fields, current, len(batches) + 1))
     return batches
 
 
-def _fit_structured_bundle(
-    table: Mapping[str, Any], bundle: Mapping[str, Any], maximum_characters: int
+def _presentation_logical_fields(
+    mapping: Mapping[str, Any], task_contract: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    """Split a logical group only when its serialized payload exceeds the hard bound."""
-
-    pending = [
+    requested = _presentation_requested_columns(task_contract)
+    by_target = {
+        int(item.get("target_index")): item
+        for item in mapping.get("field_mappings", [])
+        if isinstance(item, Mapping)
+        and isinstance(item.get("target_index"), int)
+        and not isinstance(item.get("target_index"), bool)
+    }
+    return [
         {
-            "group": dict(bundle.get("group") or {}),
-            "rows": [dict(row) for row in bundle.get("rows", []) if isinstance(row, Mapping)],
+            "target_index": index,
+            "field": field,
+            "label": label,
+            "mode": str(by_target.get(index, {}).get("mode") or "direct"),
+            "source_column_ids": list(by_target.get(index, {}).get("source_column_ids") or []),
         }
+        for index, (field, label) in enumerate(requested)
     ]
-    fitted: list[dict[str, Any]] = []
-    while pending:
-        current = pending.pop(0)
-        preview = _structured_batch(table, [current], 1)
-        rows = current["rows"]
-        if (
-            len(str(preview.get("text") or "")) <= maximum_characters
-            and len(rows) <= _STRUCTURED_COMPOSER_BATCH_MAX_ROWS
-        ) or len(rows) <= 1:
-            fitted.append(current)
-            continue
-        midpoint = max(1, len(rows) // 2)
-        pending[0:0] = [
-            {"group": {**dict(current["group"]), "partial": True}, "rows": rows[:midpoint]},
-            {"group": {**dict(current["group"]), "partial": True}, "rows": rows[midpoint:]},
-        ]
-    return fitted
 
 
-def _structured_rows_size(rows: list[Mapping[str, Any]]) -> int:
-    return sum(
-        120
-        + sum(
-            70 + len(str(cell.get("text") or ""))
-            for cell in row.get("cells", [])
-            if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
+def _presentation_logical_entities(
+    tables: list[dict[str, Any]],
+    mapping: Mapping[str, Any],
+    task_contract: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    fields = _presentation_logical_fields(mapping, task_contract)
+    source_ids = [
+        {str(value) for value in field.get("source_column_ids", []) if str(value)}
+        for field in fields
+    ]
+    entity_level = str(mapping.get("entity_level") or "row_group")
+    output_language = str(task_contract.get("output_language") or "")
+    entities: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for table in tables:
+        attachment_index = int(table.get("attachment_index") or 1)
+        for raw_row in table.get("rows", []):
+            if not isinstance(raw_row, Mapping):
+                continue
+            row_id = str(raw_row.get("id") or "").strip()
+            entity_id = (
+                row_id if entity_level == "row" else str(raw_row.get("group_id") or "").strip()
+            )
+            if not row_id or not entity_id:
+                continue
+            if entity_id not in entities:
+                entities[entity_id] = {
+                    "entity_id": entity_id,
+                    "attachment_indices": [],
+                    "source_refs": [],
+                    "source_pages": [],
+                    "values": [[] for _ in fields],
+                }
+                order.append(entity_id)
+            entity = entities[entity_id]
+            if attachment_index not in entity["attachment_indices"]:
+                entity["attachment_indices"].append(attachment_index)
+            if row_id not in entity["source_refs"]:
+                entity["source_refs"].append(row_id)
+            page = int(raw_row.get("page") or 0)
+            if page > 0 and page not in entity["source_pages"]:
+                entity["source_pages"].append(page)
+            cells = [cell for cell in raw_row.get("cells", []) if isinstance(cell, Mapping)]
+            for target_index, allowed_ids in enumerate(source_ids):
+                row_values: list[str] = []
+                for cell in cells:
+                    if str(cell.get("column_id") or "") not in allowed_ids:
+                        continue
+                    value = re.sub(
+                        r"\s+",
+                        " ",
+                        str(cell.get("text") or cell.get("inherited_text") or ""),
+                    ).strip()
+                    if value and value.casefold() not in {
+                        existing.casefold() for existing in row_values
+                    }:
+                        row_values.append(value)
+                if not row_values:
+                    continue
+                row_value = " ".join(row_values)
+                values = entity["values"][target_index]
+                if row_value.casefold() not in {existing.casefold() for existing in values}:
+                    values.append(row_value)
+    result: list[dict[str, Any]] = []
+    for entity_id in order:
+        entity = entities[entity_id]
+        visible_values: list[str] = []
+        for index, field in enumerate(fields):
+            values = entity["values"][index]
+            value = (
+                "；".join(values)
+                if field.get("mode") == "aggregate"
+                else (values[0] if values else "")
+            )
+            visible_values.append(
+                localize_presentation_field_value(
+                    str(field.get("field") or ""), value, output_language
+                )
+            )
+        attachments = entity["attachment_indices"]
+        pages = sorted(entity["source_pages"])
+        page_label = "、".join(str(value) for value in pages[:12]) or "未知"
+        attachment_label = "、".join(str(value) for value in attachments[:6]) or "1"
+        result.append(
+            {
+                "entity_id": entity_id,
+                "source_refs": list(entity["source_refs"]),
+                "source_locator": f"附件 {attachment_label} · 第 {page_label} 页"[:160],
+                "values": visible_values,
+                "source_pages": pages,
+                "attachment_indices": attachments,
+            }
         )
-        for row in rows
+    return result
+
+
+def _presentation_logical_entity_batch(
+    fields: list[dict[str, Any]], entities: list[dict[str, Any]], sequence: int
+) -> dict[str, Any]:
+    logical_ir = {
+        "version": "presentation-logical-entity-ir-v1",
+        "fields": fields,
+        "entities": [
+            {
+                "entity_id": entity.get("entity_id"),
+                "source_refs": entity.get("source_refs", []),
+                "source_locator": entity.get("source_locator"),
+                "values": entity.get("values", []),
+            }
+            for entity in entities
+        ],
+    }
+    text = "[[COMPACT LOGICAL ENTITY IR]]\n" + json.dumps(
+        logical_ir, ensure_ascii=False, separators=(",", ":")
     )
+    attachments = sorted(
+        {int(value) for entity in entities for value in entity.get("attachment_indices", [])}
+    )
+    pages = sorted({int(value) for entity in entities for value in entity.get("source_pages", [])})
+    return {
+        "batch_id": f"logical-entities:b{sequence}",
+        "attachment_index": attachments[0] if attachments else 1,
+        "round_no": sequence,
+        "segment_no": 1,
+        "segment_count": 1,
+        "text": text,
+        "processing_text": text,
+        "token_count": max(1, math.ceil(len(text) / 3)),
+        "source_filename": "",
+        "source_ir": logical_ir,
+        "source_pages": pages,
+        "structured": True,
+        "grounded_rows": [dict(entity) for entity in entities],
+    }
 
 
 def _project_source_table(
@@ -1551,69 +1634,6 @@ def _project_source_table(
         projected_rows.append(row)
     projected["rows"] = projected_rows
     return projected
-
-
-def _structured_batch(
-    table: Mapping[str, Any], bundles: list[dict[str, Any]], sequence: int
-) -> dict[str, Any]:
-    rows = [row for bundle in bundles for row in bundle["rows"]]
-    compact_groups: list[dict[str, Any]] = []
-    for bundle in bundles:
-        group = dict(bundle["group"])
-        first_row = bundle["rows"][0] if bundle["rows"] else {}
-        group["context_cells"] = [
-            {
-                "column_id": cell.get("column_id"),
-                "text": str(cell.get("text") or cell.get("inherited_text") or ""),
-            }
-            for cell in first_row.get("cells", [])
-            if isinstance(cell, Mapping)
-            and str(cell.get("text") or cell.get("inherited_text") or "").strip()
-        ]
-        compact_groups.append(group)
-    compact_rows = [
-        {
-            "id": row.get("id"),
-            "group_id": row.get("group_id"),
-            "source_locator": row.get("source_locator"),
-            "cells": [
-                {
-                    "column_id": cell.get("column_id"),
-                    "text": cell.get("text"),
-                }
-                for cell in row.get("cells", [])
-                if isinstance(cell, Mapping) and str(cell.get("text") or "").strip()
-            ],
-        }
-        for row in rows
-    ]
-    source_ir = {
-        "version": "document-source-ir-v1",
-        "table": {
-            "id": table.get("id"),
-            "columns": table.get("columns", []),
-            "row_groups": compact_groups,
-            "rows": compact_rows,
-        },
-    }
-    text = "[[STRUCTURED SOURCE IR]]\n" + json.dumps(
-        source_ir, ensure_ascii=False, separators=(",", ":")
-    )
-    pages = sorted({int(row.get("page") or 0) for row in rows})
-    return {
-        "batch_id": f"{table.get('id')}:b{sequence}",
-        "attachment_index": int(table.get("attachment_index") or 1),
-        "round_no": sequence,
-        "segment_no": 1,
-        "segment_count": 1,
-        "text": text,
-        "processing_text": text,
-        "token_count": max(1, math.ceil(len(text) / 3)),
-        "source_filename": str(table.get("source_filename") or ""),
-        "source_ir": source_ir,
-        "source_pages": pages,
-        "structured": True,
-    }
 
 
 def _presentation_document_batches(state: AgentState) -> list[dict[str, Any]]:
@@ -1712,6 +1732,83 @@ def _presentation_row_key(row: Mapping[str, Any]) -> str:
         return ""
     normalized = [re.sub(r"\s+", " ", str(value or "").strip()).casefold() for value in cells]
     return json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+
+
+def _ground_structured_batch_arguments(
+    arguments: Mapping[str, Any], batch: Mapping[str, Any], state: AgentState
+) -> dict[str, Any]:
+    """Restore harness-owned identity, provenance, and lossless source fields.
+
+    Composer is responsible for audience-facing transformations. It must not
+    be the persistence layer for hundreds of child-row references, nor should
+    a provider omission be able to drop dates or change identifiers. Match its
+    translated rows back to the compact logical entities and re-inject those
+    trusted fields before deterministic cross-batch merging.
+    """
+
+    grounded = [
+        dict(value) for value in batch.get("grounded_rows", []) if isinstance(value, Mapping)
+    ]
+    if not grounded:
+        return dict(arguments)
+    result = dict(arguments)
+    raw_table = arguments.get("table")
+    table = dict(raw_table) if isinstance(raw_table, Mapping) else {}
+    raw_rows = table.get("rows")
+    model_rows = [dict(value) for value in raw_rows or [] if isinstance(value, Mapping)]
+    by_entity = {
+        str(row.get("entity_id") or "").strip(): row
+        for row in model_rows
+        if str(row.get("entity_id") or "").strip()
+    }
+    positional = model_rows if len(model_rows) == len(grounded) else []
+    task_contract = state.get("task_contract", {})
+    requested = _presentation_requested_columns(task_contract)
+    output_language = (
+        str(task_contract.get("output_language") or "")
+        if isinstance(task_contract, Mapping)
+        else ""
+    )
+    rows: list[dict[str, Any]] = []
+    for index, source_row in enumerate(grounded):
+        entity_id = str(source_row.get("entity_id") or "").strip()
+        model_row = by_entity.get(entity_id)
+        if model_row is None and positional:
+            model_row = positional[index]
+        model_cells = list(model_row.get("cells") or []) if isinstance(model_row, Mapping) else []
+        source_cells = [str(value or "").strip() for value in source_row.get("values", [])]
+        cells: list[str] = []
+        for target_index, (field, _) in enumerate(requested):
+            source_value = source_cells[target_index] if target_index < len(source_cells) else ""
+            model_value = (
+                str(model_cells[target_index] or "").strip()
+                if target_index < len(model_cells)
+                else ""
+            )
+            # Codes and schedules are lossless source data. Translation may
+            # change weekday tokens, but deterministic normalization owns that
+            # transformation. Names and other audience text remain Composer's
+            # responsibility.
+            value = source_value if field in ("code", "time") else (model_value or source_value)
+            cells.append(localize_presentation_field_value(field, value, output_language))
+        rows.append(
+            {
+                "cells": cells,
+                "source_locator": str(source_row.get("source_locator") or "")[:160],
+                "entity_id": entity_id,
+                "source_refs": list(
+                    dict.fromkeys(
+                        str(value).strip()
+                        for value in source_row.get("source_refs", [])
+                        if str(value).strip()
+                    )
+                ),
+            }
+        )
+    table["columns"] = [label for _, label in requested]
+    table["rows"] = rows
+    result["table"] = table
+    return result
 
 
 def _merge_presentation_arguments(
@@ -3201,6 +3298,18 @@ def build_graph(
                 )
                 if structural_mapping:
                     normalized_arguments["mapping_contract"] = structural_mapping
+                if batch is not None and batch.get("structured") is True:
+                    normalized_arguments = _ground_structured_batch_arguments(
+                        normalized_arguments,
+                        batch,
+                        state,
+                    )
+                    normalized_arguments = _normalize_presentation_arguments(
+                        normalized_arguments,
+                        state,
+                    )
+                    if structural_mapping:
+                        normalized_arguments["mapping_contract"] = structural_mapping
                 if batch is not None:
                     normalized_arguments = _merge_presentation_arguments(
                         base_arguments,

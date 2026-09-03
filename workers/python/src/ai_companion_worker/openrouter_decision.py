@@ -852,16 +852,21 @@ class OpenRouterDecisionPort:
                     )
                 elif structured_round:
                     system_prompt += (
-                        "当前来源过大，Harness 正按逻辑行组分轮处理。若观察中包含 STRUCTURED "
-                        "SOURCE IR，必须按 table/row_group/row/cell 关系读取，不得把子行标识重新"
-                        "解释成父实体字段。第一轮必须生成 mapping_contract：version 固定为"
+                        "当前来源过大，Harness 正按逻辑实体分轮处理。若观察中包含 COMPACT "
+                        "LOGICAL ENTITY IR，其 values 已由 Harness 按锁定字段映射无损聚合；必须"
+                        "为每个 entity 精确返回一行，逐字复制 entity_id 和 source_locator，保持"
+                        "行顺序，只翻译名称等受众文本。课程代码、日期和时间由 Harness 回填，"
+                        "不要概括、删减或把同一 entity 拆成多行；source_refs 将由 Harness 注入，"
+                        "无需在模型输出中重复。若观察中包含旧版 STRUCTURED SOURCE IR，则必须按"
+                        "table/row_group/row/cell 关系读取，不得把子行标识重新解释成父实体字段。"
+                        "第一轮必须生成 mapping_contract：version 固定为"
                         " target-mapping-v1，source_table_ids 必须覆盖 source_structure_summary"
                         "列出的全部相关逻辑表，entity_level"
                         "根据用户要求的目标记录粒度选择 row_group 或 row，field_mappings 为每个"
                         "目标列声明 target_index、source_column_ids 和 direct/aggregate 模式。"
-                        "每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须是锁定粒度"
-                        "下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行实际使用的"
-                        "来源 row ID。你只处理 completed_observations 中当前这一轮的全部逻辑实体，"
+                        "旧版 IR 的每个输出 row 必须填写 entity_id 和 source_refs；entity_id 必须"
+                        "是锁定粒度下的来源 group/row ID，source_refs 只能列出隶属于该实体且本行"
+                        "实际使用的来源 row ID。你只处理 completed_observations 中当前这一轮的全部逻辑实体，"
                         "不要总结整份文件，也不要声称未看到的轮次已完成。"
                         f"分轮信息：{encoded_round}。"
                     )
