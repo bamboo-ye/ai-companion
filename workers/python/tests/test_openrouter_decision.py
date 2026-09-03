@@ -349,6 +349,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("讲演时长", system_prompt)
         user_payload = json.loads(port.requests[0]["messages"][1]["content"])
         self.assertEqual(user_payload["task_contract"]["artifact_types"], ["pptx"])
+        self.assertEqual(port.requests[0]["max_tokens"], 1024)
 
     def test_plan_failure_uses_generic_decoupled_fallback(self) -> None:
         port = StubOpenRouter(
@@ -1258,6 +1259,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             },
         )
         self.assertEqual(manifest["roles"]["composer"]["batch_max_output_tokens"], 6144)
+        self.assertEqual(manifest["roles"]["planner"]["max_output_tokens"], 1024)
         self.assertEqual(manifest["inference"]["planner_reasoning_effort"], "high")
         self.assertEqual(manifest["inference"]["router_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")

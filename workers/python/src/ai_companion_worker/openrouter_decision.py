@@ -457,7 +457,7 @@ class OpenRouterDecisionPort:
             "roles": {
                 "planner": {
                     "models": list(self._config.models_for("planner")),
-                    "max_output_tokens": min(self._config.max_tokens, 512),
+                    "max_output_tokens": min(self._config.max_tokens, 1024),
                 },
                 "router": {
                     "models": list(self._config.models_for("router")),
@@ -600,7 +600,12 @@ class OpenRouterDecisionPort:
                 # produces data for the graph; it cannot select or invoke a
                 # business tool, which keeps planning and execution decoupled.
                 "response_format": {"type": "json_object"},
-                "max_tokens": min(self._config.max_tokens, 512),
+                # The presentation intent adds a small structured object to the
+                # existing plan.  Keep enough headroom for models whose hidden
+                # reasoning is charged against the completion budget; a 512
+                # token cap caused otherwise valid planner fallbacks to end in
+                # truncated JSON.
+                "max_tokens": min(self._config.max_tokens, 1024),
             }
         )
         max_attempts = self._apply_model_allowance(payload, context, "planner")
