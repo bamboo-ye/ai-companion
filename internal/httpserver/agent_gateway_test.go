@@ -216,6 +216,25 @@ func TestResolveVisibleDocumentReferencesRestoresTrustedAttachmentID(t *testing.
 	}
 }
 
+func TestResolveVisibleDocumentReferencesRestoresExplicitInlineFilename(t *testing.T) {
+	server := New(config.Config{
+		HTTPAddr: ":0", ServiceName: "test", Environment: "test",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	documentItem, _, err := server.documents.Upload(
+		context.Background(), "user-1", "Regular PE Course Timetable.pdf", []byte("%PDF-1.4\n%%EOF"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "请使用上一条消息中的 Regular PE Course Timetable.pdf 重新生成完整中文 PPT"
+	visible, ids, err := server.resolveVisibleDocumentReferences(
+		context.Background(), "user-1", content,
+	)
+	if err != nil || visible != content || len(ids) != 1 || ids[0] != documentItem.ID {
+		t.Fatalf("resolveVisibleDocumentReferences() = %q, %#v, %v", visible, ids, err)
+	}
+}
+
 func TestRetryAgentRunRepairsLegacyVisibleAttachment(t *testing.T) {
 	server := New(config.Config{
 		HTTPAddr: ":0", ServiceName: "test", Environment: "test",
@@ -265,6 +284,58 @@ func TestRetryAgentRunRepairsLegacyVisibleAttachment(t *testing.T) {
 	text, _ := retriedInput["text"].(string)
 	if !strings.Contains(text, documentItem.ID) || strings.Contains(text, "📎") {
 		t.Fatalf("repaired retry text = %q", text)
+	}
+}
+
+func TestRetryAgentRunRepairsExplicitInlineFilename(t *testing.T) {
+	server := New(config.Config{
+		HTTPAddr: ":0", ServiceName: "test", Environment: "test",
+		AuthTokenSecret: "agent-inline-retry-secret-with-enough-entropy",
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
+		"email": "agent-inline-retry@example.com", "password": "correct-horse-battery",
+		"display_name": "Agent Retry", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "agent-inline-retry", "name": "Agent Retry", "platform": "web"},
+	})
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(register.Body.Bytes(), &tokens); err != nil {
+		t.Fatal(err)
+	}
+	documentItem, _, err := server.documents.Upload(
+		context.Background(), tokens.User.ID, "courses.pdf", []byte("%PDF-1.4\n%%EOF"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyInput, _ := json.Marshal(map[string]any{
+		"message_id": "message-inline", "text": "请使用上一条消息中的 courses.pdf 重新生成完整中文 PPT",
+	})
+	store := &agentHTTPStore{run: agent.Run{
+		ID: "failed-inline-run", ThreadID: "failed-inline-run", UserID: tokens.User.ID,
+		ConversationID: "conversation-1", CharacterID: "character-1", Module: "work",
+		Status: "failed", Input: legacyInput, Revision: 3,
+	}}
+	server.SetAgentStore(store)
+	request := httptest.NewRequest(http.MethodPost, "/v1/agent-runs/failed-inline-run/retry", nil)
+	request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
+	request.Header.Set("Idempotency-Key", "failed-inline-run:retry")
+	response := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("retry status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var retriedInput map[string]any
+	if err = json.Unmarshal(store.run.Input, &retriedInput); err != nil {
+		t.Fatal(err)
+	}
+	text, _ := retriedInput["text"].(string)
+	if !strings.Contains(text, documentItem.ID) || !strings.Contains(text, "courses.pdf") {
+		t.Fatalf("repaired inline retry text = %q", text)
 	}
 }
 
