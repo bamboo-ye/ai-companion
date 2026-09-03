@@ -221,6 +221,47 @@ class AgentRuntimeTest(unittest.TestCase):
             current,
         )
 
+    def test_chinese_presentation_derives_filename_without_rewriting_rows(self) -> None:
+        state = {
+            "task_contract": {
+                "requested_fields": ["code", "name", "time"],
+                "output_language": "zh-CN",
+            }
+        }
+        arguments = {
+            "title": "体育课课程表",
+            "filename": "PE_Course_Schedule.pptx",
+            "table": {
+                "title": "体育课课程表",
+                "columns": ["课程代码", "课程名称", "上课时间"],
+                "rows": [
+                    {
+                        "entity_id": "g1",
+                        "source_locator": "附件 1 · 第 1 页",
+                        "source_refs": ["r1"],
+                        "cells": ["PED1101", "独木舟", "周三 1000-1150"],
+                    }
+                ],
+            },
+        }
+        normalized = _normalize_presentation_arguments(arguments, state)  # type: ignore[arg-type]
+        self.assertEqual(normalized["filename"], "体育课课程表.pptx")
+        repaired = _presentation_repair_base(
+            normalized,
+            {
+                "violations": [
+                    {
+                        "code": "presentation_visible_language_mismatch",
+                        "affected_fields": ["filename"],
+                        "affected_cells": [],
+                        "affected_rows": [],
+                    }
+                ]
+            },
+        )
+        self.assertEqual(len(repaired["table"]["rows"]), 1)
+        self.assertNotIn("filename", repaired)
+
     def runtime(
         self,
         decision: ModelDecision,

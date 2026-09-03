@@ -433,6 +433,26 @@ def _normalize_presentation_arguments(
             else ""
         )
         chinese = output_language.casefold().startswith("zh")
+        if chinese and isinstance(normalized.get("filename"), str):
+            filename_stem = re.sub(
+                r"\.pptx\s*$", "", str(normalized["filename"]), flags=re.IGNORECASE
+            ).strip()
+            title_for_filename = str(normalized.get("title") or "").strip()
+            filename_has_chinese = re.search(r"[\u3400-\u9fff]", filename_stem) is not None
+            filename_is_identifier = (
+                re.fullmatch(r"[A-Z]{2,8}(?:[- ]?\d{2,8}[A-Z]?)?", filename_stem)
+                is not None
+            )
+            if (
+                filename_stem
+                and not filename_has_chinese
+                and not filename_is_identifier
+                and re.search(r"[A-Za-z]", filename_stem)
+                and re.search(r"[\u3400-\u9fff]", title_for_filename)
+            ):
+                normalized["filename"] = safe_basename(
+                    f"{title_for_filename}.pptx", ".pptx"
+                )
         if requested and isinstance(columns, list) and isinstance(rows, list):
             mapping_modes = _presentation_mapping_modes(normalized.get("mapping_contract"))
             column_fields = [_presentation_column_field(value) for value in columns]
@@ -2072,6 +2092,7 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
     affected: set[int] = set()
     mapping_failure = False
     full_table_rewrite = False
+    drop_table_title = False
     violations = report.get("violations")
     if isinstance(violations, list):
         for violation in violations:
@@ -2090,7 +2111,17 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
             ):
                 base.pop("brief", None)
             if code == "presentation_visible_language_mismatch":
-                full_table_rewrite = True
+                affected_fields = {
+                    str(value)
+                    for value in violation.get("affected_fields", [])
+                    if str(value)
+                }
+                for field in ("title", "filename"):
+                    if field in affected_fields:
+                        base.pop(field, None)
+                drop_table_title = "table.title" in affected_fields
+                if violation.get("affected_cells") or violation.get("affected_rows"):
+                    full_table_rewrite = True
             if code.startswith(
                 (
                     "source_mapping_",
@@ -2110,6 +2141,8 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
     if not isinstance(table, Mapping):
         return base
     table_copy = dict(table)
+    if drop_table_title:
+        table_copy.pop("title", None)
     rows = table_copy.get("rows")
     if mapping_failure:
         base.pop("mapping_contract", None)
