@@ -1316,6 +1316,59 @@ def _source_column_matches_field(label: Any, field: str) -> bool:
     return False
 
 
+_SOURCE_COLUMN_STRONG_TEMPORAL_VALUE = re.compile(
+    r"(?:"
+    r"\b\d{1,2}\s*/\s*\d{1,2}\b|"
+    r"\b(?:[01]\d|2[0-3])[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3])[0-5]\d\b|"
+    r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|"
+    r"(?:星期|周)[一二三四五六日天]"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _source_temporal_column_ids(table: Mapping[str, Any]) -> list[str]:
+    """Return columns whose actual values carry strong date/time evidence.
+
+    PDF table boundaries can drift independently from their header cells. A
+    date column may consequently be labelled ``Column 4`` while the ``Date``
+    heading lands on the narrow weekday continuation column beside it. Content
+    evidence repairs that structural offset without relying on a document-
+    specific column number or course format.
+    """
+
+    evidence: dict[str, int] = {}
+    populated: dict[str, int] = {}
+    for raw_row in table.get("rows", []):
+        if not isinstance(raw_row, Mapping):
+            continue
+        for cell in raw_row.get("cells", []):
+            if not isinstance(cell, Mapping):
+                continue
+            column_id = str(cell.get("column_id") or "").strip()
+            value = re.sub(
+                r"\s+",
+                " ",
+                str(cell.get("text") or cell.get("inherited_text") or ""),
+            ).strip()
+            if not column_id or not value:
+                continue
+            populated[column_id] = populated.get(column_id, 0) + 1
+            if _SOURCE_COLUMN_STRONG_TEMPORAL_VALUE.search(value):
+                evidence[column_id] = evidence.get(column_id, 0) + 1
+    result: list[str] = []
+    for column in table.get("columns", []):
+        if not isinstance(column, Mapping):
+            continue
+        column_id = str(column.get("id") or "").strip()
+        hits = evidence.get(column_id, 0)
+        total = populated.get(column_id, 0)
+        if column_id and hits and (hits >= 2 or hits * 2 >= total):
+            result.append(column_id)
+    return result
+
+
 def _deterministic_presentation_mapping(
     source_ir: Mapping[str, Any], task_contract: Mapping[str, Any]
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -1337,6 +1390,9 @@ def _deterministic_presentation_mapping(
                 and str(column.get("id") or "")
                 and _source_column_matches_field(column.get("label"), target_field)
             ]
+            if target_field == "time":
+                matching.extend(_source_temporal_column_ids(table))
+                matching = list(dict.fromkeys(matching))
             if not matching:
                 missing_tables.append(table_id)
             source_ids.extend(matching)
@@ -1534,7 +1590,11 @@ def _presentation_logical_entities(
             value = (
                 "；".join(values)
                 if field.get("mode") == "aggregate"
-                else (values[0] if values else "")
+                else (
+                    " ".join(values)
+                    if field.get("field") == "name"
+                    else (values[0] if values else "")
+                )
             )
             visible_values.append(
                 localize_presentation_field_value(
@@ -2108,6 +2168,21 @@ def _repair_document_batches(
         )
     ]
     return selected or batches, missing
+
+
+def _presentation_rewrite_base_for_batch(
+    current: Mapping[str, Any],
+    repaired: Mapping[str, Any],
+    processing: Mapping[str, Any],
+    processing_key: str,
+) -> dict[str, Any]:
+    """Initialize a rewrite destructively once, then preserve merged batches."""
+
+    return (
+        dict(repaired)
+        if processing.get("processing_key") != processing_key
+        else dict(current)
+    )
 
 
 def _validate_schema_value(
@@ -3137,8 +3212,9 @@ def build_graph(
             base_arguments["mapping_contract"] = structural_mapping
         selected_batches = all_document_batches
         missing_keys: list[str] = []
+        rewrite_base_arguments: dict[str, Any] | None = None
         if round_processing and rewrite_attempt > 0:
-            base_arguments = _normalize_presentation_arguments(
+            rewrite_base_arguments = _normalize_presentation_arguments(
                 _presentation_repair_base(
                     base_arguments,
                     state.get("artifact_validation", {}),
@@ -3146,10 +3222,10 @@ def build_graph(
                 state,
             )
             if structural_mapping:
-                base_arguments["mapping_contract"] = structural_mapping
+                rewrite_base_arguments["mapping_contract"] = structural_mapping
             selected_batches, missing_keys = _repair_document_batches(
                 all_document_batches,
-                base_arguments,
+                rewrite_base_arguments,
                 state,
             )
         processing_key = (
@@ -3164,6 +3240,17 @@ def build_graph(
             if round_processing
             else ""
         )
+        if rewrite_base_arguments is not None:
+            # Apply the destructive repair base exactly once when a new
+            # rewrite pass starts. Subsequent batches already contain the
+            # repaired rows merged by earlier calls; clearing them again would
+            # leave only the final batch at the quality gate.
+            base_arguments = _presentation_rewrite_base_for_batch(
+                base_arguments,
+                rewrite_base_arguments,
+                processing,
+                processing_key,
+            )
         if round_processing and processing.get("processing_key") != processing_key:
             processing = {
                 "version": "document-processing-v2",
