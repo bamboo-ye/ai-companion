@@ -272,8 +272,8 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     summary_bullets = (
         [
             f"共整理 {len(table['rows'])} 条记录",
-            "完整内容已按可读容量自动分页",
-            "详细信息见前页表格，来源说明见各页页脚",
+            "全部内容均已完整展示",
+            "详情见表格，来源见页脚",
         ]
         if table
         else (
