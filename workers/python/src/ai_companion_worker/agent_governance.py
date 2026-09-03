@@ -92,7 +92,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         kind="model",
         model_role="planner",
         recovery="checkpoint_replay",
-        max_model_calls=1,
+        max_model_calls=2,
         allowed_writes=(
             *_MODEL_CONTROL_WRITES,
             "plan",
