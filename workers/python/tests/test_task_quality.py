@@ -6,7 +6,9 @@ from ai_companion_worker.task_quality import (
     artifact_observation_applicable,
     compile_task_contract,
     localize_presentation_field_value,
+    normalize_presentation_name_translation,
     presentation_source_record_keys,
+    select_presentation_temporal_source_values,
     validate_artifact_observation,
     validate_presentation_arguments,
 )
@@ -24,6 +26,43 @@ class TaskQualityTests(unittest.TestCase):
             "14/9 (周一) 1600-1650；9/9 (周三) 1100-1150；10/9 (周四) 0900-0950",
         )
 
+    def test_temporal_source_values_drop_stale_adjacent_column_noise(self) -> None:
+        self.assertEqual(
+            select_presentation_temporal_source_values(
+                ["9/9, 16/9 (Wed)", "hu)", "0930-1120 10"]
+            ),
+            ["9/9, 16/9 (Wed)", "0930-1120 10"],
+        )
+        self.assertEqual(
+            select_presentation_temporal_source_values(
+                ["11/9, 18/9 (Fri)", "(Thu)", "1600-1750 12"]
+            ),
+            ["11/9, 18/9 (Fri)", "1600-1750 12"],
+        )
+        self.assertEqual(
+            select_presentation_temporal_source_values(
+                ["14/9, 21/9 (Mo", "n)", "1500-1550 14"]
+            ),
+            ["14/9, 21/9 (Mon)", "1500-1550 14"],
+        )
+
+    def test_name_translation_normalizes_source_proficiency_level(self) -> None:
+        self.assertEqual(
+            normalize_presentation_name_translation(
+                "太极拳（24式，小学）",
+                "Tai Chi Chuan (24 styles) - Ele",
+                "zh-CN",
+            ),
+            "太极拳（24式，初级）",
+        )
+        self.assertEqual(
+            normalize_presentation_name_translation(
+                "跑步（提升班）",
+                "Running - Improver",
+                "zh-CN",
+            ),
+            "跑步（提高班）",
+        )
     def test_compile_contract_locks_exhaustive_ppt_fields(self) -> None:
         contract = compile_task_contract(
             "帮我整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示"
@@ -117,6 +156,36 @@ class TaskQualityTests(unittest.TestCase):
             if item["code"] == "presentation_name_language_mismatch"
         )
         self.assertEqual(name_violation["affected_count"], 2)
+
+    def test_chinese_presentation_rejects_orphan_and_conflicting_weekdays(self) -> None:
+        contract = compile_task_contract(
+            "整理所有体育课的名称、上课时间和课程代码，并用中文PPT展示",
+            "work",
+        )
+        violations = validate_presentation_arguments(
+            {
+                "table": {
+                    "columns": ["课程代码", "课程名称", "上课时间"],
+                    "rows": [
+                        {
+                            "cells": ["PED1402", "高尔夫（初级）", "9/9 (周三) hu 0930-1120"],
+                            "source_locator": "page:2",
+                        },
+                        {
+                            "cells": ["PED1406", "木球（初级）", "11/9 (周五) (周四) 1600-1750"],
+                            "source_locator": "page:2",
+                        },
+                    ],
+                }
+            },
+            contract,
+        )
+        time_violation = next(
+            item
+            for item in violations
+            if item["code"] == "presentation_time_language_mismatch"
+        )
+        self.assertEqual(time_violation["affected_rows"], [1, 2])
 
     def test_chinese_presentation_rejects_english_visible_content_without_fields(self) -> None:
         contract = compile_task_contract(

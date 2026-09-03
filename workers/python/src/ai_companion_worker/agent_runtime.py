@@ -28,10 +28,12 @@ from ai_companion_worker.task_quality import (
     clean_presentation_field_fragment,
     compile_task_contract,
     localize_presentation_field_value,
+    normalize_presentation_name_translation,
     normalize_presentation_scope_label,
     normalize_presentation_title,
     presentation_field_fragment_has_evidence,
     presentation_source_record_keys,
+    select_presentation_temporal_source_values,
     task_contract_artifact_satisfied,
     validate_artifact_observation,
     validate_presentation_arguments,
@@ -1597,6 +1599,10 @@ def _presentation_logical_entities(
                         row_values.append(value)
                 if not row_values:
                     continue
+                if str(fields[target_index].get("field") or "") == "time":
+                    row_values = select_presentation_temporal_source_values(row_values)
+                if not row_values:
+                    continue
                 row_value = " ".join(row_values)
                 values = entity["values"][target_index]
                 if row_value.casefold() not in {existing.casefold() for existing in values}:
@@ -1868,6 +1874,12 @@ def _ground_structured_batch_arguments(
             # transformation. Names and other audience text remain Composer's
             # responsibility.
             value = source_value if field in ("code", "time") else (model_value or source_value)
+            if field == "name":
+                value = normalize_presentation_name_translation(
+                    value,
+                    source_value,
+                    output_language,
+                )
             cells.append(localize_presentation_field_value(field, value, output_language))
         rows.append(
             {
@@ -3554,6 +3566,36 @@ def build_graph(
                     else []
                 ),
             }
+            if not compose_more:
+                expected_keys = presentation_source_record_keys(
+                    state.get("observations", []),
+                    state.get("task_contract", {}),
+                )
+                final_rows = (
+                    normalized_arguments.get("table", {}).get("rows", [])
+                    if isinstance(normalized_arguments.get("table"), Mapping)
+                    else []
+                )
+                requested_fields = [
+                    field
+                    for field, _ in _presentation_requested_columns(
+                        state.get("task_contract", {})
+                    )
+                ]
+                code_index = (
+                    requested_fields.index("code") if "code" in requested_fields else -1
+                )
+                observed_keys = {
+                    _canonical_presentation_code(row["cells"][code_index]).casefold()
+                    for row in final_rows
+                    if code_index >= 0
+                    and isinstance(row, Mapping)
+                    and isinstance(row.get("cells"), list)
+                    and code_index < len(row["cells"])
+                }
+                processing_update["missing_record_keys"] = [
+                    key for key in expected_keys if key.casefold() not in observed_keys
+                ]
             trace = model_update.get("node_trace")
             if isinstance(trace, list) and trace and isinstance(trace[-1], dict):
                 details = trace[-1].get("details")
