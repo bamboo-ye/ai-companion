@@ -25,6 +25,7 @@ from ai_companion_worker.agent_runtime import (
     _completed_presentation_continuation,
     _document_source_coverage,
     _deterministic_presentation_mapping,
+    _finalize_narrative_presentation_arguments,
     _latest_document_continuation,
     _merge_presentation_arguments,
     _next_pending_document_extraction,
@@ -1394,6 +1395,46 @@ class AgentRuntimeTest(unittest.TestCase):
                 },
             ],
         )
+
+    def test_narrative_finalizer_repairs_structure_without_dropping_content(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {"artifact_types": ["pptx"]},
+            "plan": {"objective": "生成教学演示"},
+        }
+        long_heading = "这是一个需要缩短但必须完整保留原始语义以及来源的演示文稿页面标题"
+        long_fact = "第一句用于解释核心概念。" + "第二句补充可信证据；" * 12
+        arguments = {
+            "title": "教学演示",
+            "brief": (
+                "## 基础概念\n"
+                "- 第一条事实（来源：第1页）\n"
+                "- 第二条事实（来源：第1页）\n\n"
+                "## 协方差正则化\n"
+                "- 防止协方差矩阵退化（来源：第11页）\n\n"
+                f"## {long_heading}\n"
+                f"- {long_fact}（来源：第12页）\n"
+                "- 另一条结论（来源：第12页）"
+            ),
+            "slide_count": 5,
+        }
+
+        finalized = _finalize_narrative_presentation_arguments(
+            arguments,
+            state,  # type: ignore[arg-type]
+        )
+
+        brief = finalized["brief"]
+        self.assertIn("协方差正则化：防止协方差矩阵退化", brief)
+        self.assertIn(long_heading, brief)
+        self.assertNotIn(f"## {long_heading}", brief)
+        self.assertEqual(finalized["slide_count"], brief.count("## ") + 2)
+        for line in brief.splitlines():
+            if line.startswith("## "):
+                self.assertLessEqual(len(line[3:]), 28)
+            if line.startswith("- "):
+                self.assertLessEqual(len(line[2:]), 100)
+        sections = [block for block in brief.split("\n\n") if block.strip()]
+        self.assertTrue(all(sum(1 for line in block.splitlines() if line.startswith("- ")) >= 2 for block in sections))
 
     def test_presentation_merge_keeps_one_logical_entity_and_cleans_aggregate_noise(
         self,
