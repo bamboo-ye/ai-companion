@@ -1842,12 +1842,32 @@ class AgentRuntimeTest(unittest.TestCase):
             "status": "succeeded",
             "error_status": 0,
         }
+        slow_primary_success = {
+            "role": "composer",
+            "requested_model": "deepseek/deepseek-v4-flash-0731",
+            "status": "succeeded",
+            "error_status": 0,
+        }
         self.assertEqual(
             _composer_circuit_breaker_models({"model_events": [timeout, fallback]}),
             [],
         )
         self.assertEqual(
             _composer_circuit_breaker_models({"model_events": [timeout, timeout, fallback]}),
+            ["deepseek/deepseek-v4-flash-0731"],
+        )
+        self.assertEqual(
+            _composer_circuit_breaker_models(
+                {
+                    "model_events": [
+                        slow_primary_success,
+                        timeout,
+                        fallback,
+                        timeout,
+                        fallback,
+                    ]
+                }
+            ),
             ["deepseek/deepseek-v4-flash-0731"],
         )
 

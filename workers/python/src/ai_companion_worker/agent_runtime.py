@@ -1916,17 +1916,13 @@ def _composer_circuit_breaker_models(state: AgentState) -> list[str]:
         elif int(event.get("error_status") or 0) == 408:
             timeout_counts[model] = timeout_counts.get(model, 0) + 1
     # One slow batch is not enough evidence to evict the primary model for the
-    # rest of a large document. Open the circuit only after two timeouts and a
-    # healthy fallback; smaller later batches can therefore return to the
-    # configured primary while genuinely unhealthy models are still bounded.
-    return (
-        sorted(
-            model
-            for model, count in timeout_counts.items()
-            if count >= 2 and model not in succeeded
-        )
-        if succeeded
-        else []
+    # rest of a large document. Open the circuit after two timeouts only when
+    # another model has already completed a Composer batch. A historical slow
+    # success by the timed-out model must not mask repeated later failures.
+    return sorted(
+        model
+        for model, count in timeout_counts.items()
+        if count >= 2 and any(fallback != model for fallback in succeeded)
     )
 
 
