@@ -15,6 +15,7 @@ from PIL import Image
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
@@ -877,6 +878,57 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertTrue(result["output"]["quality_report"]["passed"])
         self.assertIn("visual", result["output"]["outline"][-1])
         self.assertEqual(len(result["files"]), 1)
+
+    def test_pptx_layout_balances_cover_table_and_summary(self) -> None:
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "智能系统比较",
+                "audience": "技术团队",
+                "style": "简洁表格",
+                "brief": "比较不同系统的工作方式、优势和局限",
+                "slide_count": 4,
+                "visual_mode": "none",
+                "table": {
+                    "title": "三类系统比较",
+                    "columns": ["系统", "工作方式", "优势", "局限"],
+                    "rows": [
+                        {
+                            "cells": ["规则系统", "规则推理", "透明", "维护成本高"],
+                            "source_locator": "用户输入",
+                        },
+                        {
+                            "cells": ["机器学习", "样本学习", "适应复杂数据", "依赖数据"],
+                            "source_locator": "用户输入",
+                        },
+                        {
+                            "cells": ["多智能体", "协作分工", "可并行", "协调复杂"],
+                            "source_locator": "用户输入",
+                        },
+                    ],
+                },
+                "task_contract": {"presentation_capabilities": ["narrative", "table"]},
+            },
+        )
+
+        deck = Presentation(io.BytesIO(base64.b64decode(result["files"][0]["data_base64"])))
+        cover = deck.slides[0]
+        self.assertGreaterEqual(cover.shapes.title.text_frame.paragraphs[0].font.size.pt, 40)
+        self.assertLess(cover.placeholders[1].top, Inches(4.0))
+
+        table_slide = deck.slides[1]
+        self.assertEqual(
+            table_slide.shapes.title.text_frame.paragraphs[0].alignment,
+            PP_ALIGN.LEFT,
+        )
+        table_shape = next(shape for shape in table_slide.shapes if shape.has_table)
+        self.assertLess(table_shape.height, Inches(5.15))
+        for row in table_shape.table.rows:
+            for cell in row.cells:
+                self.assertEqual(cell.vertical_anchor, MSO_ANCHOR.MIDDLE)
+
+        summary = deck.slides[-1]
+        self.assertEqual(summary.placeholders[1].text_frame.vertical_anchor, MSO_ANCHOR.MIDDLE)
 
     def test_pptx_explicit_visual_capability_fails_closed_without_an_image(self) -> None:
         with patch.dict(os.environ, {"MODEL_PRESENTATION_IMAGE_NAME": ""}):
