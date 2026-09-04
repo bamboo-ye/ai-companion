@@ -2254,8 +2254,6 @@ def _validate_narrative_batch_arguments(arguments: Mapping[str, Any]) -> None:
         sections[active] += 1
     if not sections or any(count < 2 for count in sections):
         raise ValueError("arguments.brief sections require at least two bullets")
-    if len(sections) > 2:
-        raise ValueError("arguments.brief batch contains too many sections")
     slide_count = arguments.get("slide_count")
     if (
         isinstance(slide_count, bool)

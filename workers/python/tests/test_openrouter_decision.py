@@ -14,6 +14,7 @@ from ai_companion_worker.openrouter_decision import (
     OpenRouterDecisionPort,
     OpenRouterError,
     _model_visible_presentation_parameters,
+    _validate_narrative_batch_arguments,
     _required_artifact_tool,
     _presentation_batch_parameters,
 )
@@ -1400,6 +1401,17 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertFalse(events[0]["contract_valid"])
         self.assertEqual(events[0]["contract_error"], "model_tool_arguments_invalid")
         self.assertEqual(events[1]["status"], "succeeded")
+
+    def test_narrative_batch_allows_extra_valid_sections_for_final_merge(self) -> None:
+        brief = "\n\n".join(
+            [
+                "## 几何直观\n- 第一条事实\n- 第二条事实",
+                "## 最大间隔\n- 第一条事实\n- 第二条事实",
+                "## 支持向量\n- 第一条事实\n- 第二条事实",
+            ]
+        )
+
+        _validate_narrative_batch_arguments({"brief": brief, "slide_count": 12})
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
