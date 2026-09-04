@@ -7,9 +7,7 @@ from typing import Any, Mapping
 
 TASK_CONTRACT_VERSION = "task-contract-v3"
 
-_PRESENTATION_MODES = frozenset(
-    ("narrative", "structured_table", "illustrated", "composed")
-)
+_PRESENTATION_MODES = frozenset(("narrative", "structured_table", "illustrated", "composed"))
 _PRESENTATION_CAPABILITIES = frozenset(("narrative", "table", "visual"))
 _PRESENTATION_FIELDS = frozenset(("code", "name", "time", "venue"))
 ARTIFACT_QUALITY_POLICY_VERSION = "artifact-quality-v1"
@@ -94,19 +92,13 @@ _PRESENTATION_ZH_TIME_REPLACEMENTS = (
     (re.compile(r"\bpm\b", re.IGNORECASE), "下午"),
     (re.compile(r"\btbd\b|\btbc\b", re.IGNORECASE), "待定"),
 )
-_PRESENTATION_SPLIT_WEEKDAY = re.compile(
-    r"\(\s*([A-Za-z]{1,3})\s+([A-Za-z]{1,8})\s*\)"
-)
+_PRESENTATION_SPLIT_WEEKDAY = re.compile(r"\(\s*([A-Za-z]{1,3})\s+([A-Za-z]{1,8})\s*\)")
 _PRESENTATION_TRAILING_CAPACITY = re.compile(
     r"(\b(?:[01]\d|2[0-3])[0-5]\d\s*[-–—]\s*(?:[01]\d|2[0-3])[0-5]\d)"
     r"\s+\d{1,3}(?=\s*(?:[；;]|$))"
 )
-_PRESENTATION_SPLIT_DATE_SUFFIX = re.compile(
-    r"\b(\d{1,2})\s*/\s*(\d)\s+(\d)\b"
-)
-_PRESENTATION_SPLIT_DATE_PREFIX = re.compile(
-    r"\b(\d)\s+(\d)\s*/\s*(\d{1,2})\b"
-)
+_PRESENTATION_SPLIT_DATE_SUFFIX = re.compile(r"\b(\d{1,2})\s*/\s*(\d)\s+(\d)\b")
+_PRESENTATION_SPLIT_DATE_PREFIX = re.compile(r"\b(\d)\s+(\d)\s*/\s*(\d{1,2})\b")
 _PRESENTATION_PARTIAL_SCOPE_MARKER = (
     r"(?:节选|摘要|摘录|示例|样例|部分|excerpt|summary|sample|partial)"
 )
@@ -124,6 +116,8 @@ _PRESENTATION_AUDIENCE_META = re.compile(
     r"(?:本演示文稿|页面结构|共\s*\d+\s*页|封面\s*[：:]|用于各页|用于(?:对比|展示)页|"
     r"示例摘录|关键事实摘录与翻译|来源覆盖(?:率|与声明)?|结构化抽取|未被截断|"
     r"引用\s*[（(].*?PPT|备注\s*[：:]|如需调整页数|请说明偏好|请告知|"
+    r"可视化建议\s*[（(][^）)]*(?:授课|演示|展示)[^）)]*[）)]|"
+    r"(?:插图|配图)\s*\d+\s*[\uFF1A:]|"
     r"source\s*ir|source_locator|harness|attachment\s*index|document\s*round)",
     re.IGNORECASE,
 )
@@ -294,9 +288,7 @@ _PRESENTATION_TRAILING_ZH_LEVEL = re.compile(
 )
 
 
-def normalize_presentation_name_translation(
-    value: Any, source_value: Any, language: Any
-) -> str:
+def normalize_presentation_name_translation(value: Any, source_value: Any, language: Any) -> str:
     """Normalize source-declared proficiency levels across Composer batches."""
 
     text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -487,9 +479,7 @@ def presentation_table_language_violations(
             and name_column < len(row["cells"])
             and (
                 _PRESENTATION_CJK.search(str(row["cells"][name_column] or "")) is None
-                or _PRESENTATION_LATIN_LETTER.search(
-                    str(row["cells"][name_column] or "")
-                )
+                or _PRESENTATION_LATIN_LETTER.search(str(row["cells"][name_column] or ""))
                 is not None
             )
         ]
@@ -512,15 +502,9 @@ def presentation_table_language_violations(
             and isinstance(row.get("cells"), list)
             and time_column < len(row["cells"])
             and (
-                _PRESENTATION_ENGLISH_WEEKDAY.search(
-                    str(row["cells"][time_column] or "")
-                )
-                or _PRESENTATION_LATIN_LETTER.search(
-                    str(row["cells"][time_column] or "")
-                )
-                or _PRESENTATION_ADJACENT_WEEKDAYS.search(
-                    str(row["cells"][time_column] or "")
-                )
+                _PRESENTATION_ENGLISH_WEEKDAY.search(str(row["cells"][time_column] or ""))
+                or _PRESENTATION_LATIN_LETTER.search(str(row["cells"][time_column] or ""))
+                or _PRESENTATION_ADJACENT_WEEKDAYS.search(str(row["cells"][time_column] or ""))
             )
         ]
         if invalid_time_language:
@@ -587,10 +571,7 @@ def presentation_visible_language_violations(
     }
     if isinstance(table, Mapping) and isinstance(table.get("columns"), list):
         headings.update(
-            {
-                f"table.columns[{index}]": value
-                for index, value in enumerate(table["columns"])
-            }
+            {f"table.columns[{index}]": value for index, value in enumerate(table["columns"])}
         )
     affected_fields = [
         field
@@ -610,9 +591,7 @@ def presentation_visible_language_violations(
                 continue
             for column_index, value in enumerate(cells):
                 if untranslated(value):
-                    affected_cells.append(
-                        {"row": row_index, "column": column_index + 1}
-                    )
+                    affected_cells.append({"row": row_index, "column": column_index + 1})
     if not affected_fields and not affected_cells:
         return []
     affected_rows = list(dict.fromkeys(item["row"] for item in affected_cells))
@@ -699,9 +678,7 @@ def presentation_audience_content_violations(
             }
         )
 
-    long_headings = [
-        section["line"] for section in sections if len(str(section["heading"])) > 28
-    ]
+    long_headings = [section["line"] for section in sections if len(str(section["heading"])) > 28]
     if long_headings:
         violations.append(
             {
@@ -710,9 +687,7 @@ def presentation_audience_content_violations(
                 "affected_lines": long_headings[:20],
             }
         )
-    missing_bullets = [
-        section["line"] for section in sections if len(section["bullets"]) < 2
-    ]
+    missing_bullets = [section["line"] for section in sections if len(section["bullets"]) < 2]
     if missing_bullets:
         violations.append(
             {
@@ -722,10 +697,7 @@ def presentation_audience_content_violations(
             }
         )
     long_bullets = [
-        line
-        for section in sections
-        for line, value in section["bullets"]
-        if len(value) > 100
+        line for section in sections for line, value in section["bullets"] if len(value) > 100
     ]
     if long_bullets:
         violations.append(
@@ -736,7 +708,9 @@ def presentation_audience_content_violations(
             }
         )
 
-    objective = str(task_contract.get("objective") or "") if isinstance(task_contract, Mapping) else ""
+    objective = (
+        str(task_contract.get("objective") or "") if isinstance(task_contract, Mapping) else ""
+    )
     expected_subjects = list(
         dict.fromkeys(
             f"{letters.upper()}{digits.upper()}"
@@ -855,9 +829,7 @@ def apply_planned_task_intent(
         fallback_capabilities.append("visual")
 
     raw_capabilities = (
-        task_intent.get("presentation_capabilities")
-        if isinstance(task_intent, Mapping)
-        else None
+        task_intent.get("presentation_capabilities") if isinstance(task_intent, Mapping) else None
     )
     capabilities = (
         list(
@@ -895,18 +867,13 @@ def apply_planned_task_intent(
     if contract.get("visual_requested") is True and "visual" not in capabilities:
         capabilities.append("visual")
 
-    raw_fields = (
-        task_intent.get("requested_fields")
-        if isinstance(task_intent, Mapping)
-        else None
-    )
+    raw_fields = task_intent.get("requested_fields") if isinstance(task_intent, Mapping) else None
     planned_fields = (
         list(
             dict.fromkeys(
                 str(value).strip().casefold()
                 for value in raw_fields
-                if isinstance(value, str)
-                and str(value).strip().casefold() in _PRESENTATION_FIELDS
+                if isinstance(value, str) and str(value).strip().casefold() in _PRESENTATION_FIELDS
             )
         )
         if isinstance(raw_fields, list)
@@ -954,9 +921,7 @@ def apply_planned_task_intent(
     if confidence in ("low", "medium", "high"):
         contract["intent_confidence"] = confidence
     rationale = (
-        str(task_intent.get("rationale") or "").strip()
-        if isinstance(task_intent, Mapping)
-        else ""
+        str(task_intent.get("rationale") or "").strip() if isinstance(task_intent, Mapping) else ""
     )
     if rationale:
         contract["intent_rationale"] = rationale[:240]
@@ -1079,7 +1044,9 @@ def validate_presentation_arguments(
             ):
                 delimiter_noise_rows.append(index)
         duplicate_entities = {
-            entity_id: positions for entity_id, positions in entity_rows.items() if len(positions) > 1
+            entity_id: positions
+            for entity_id, positions in entity_rows.items()
+            if len(positions) > 1
         }
         if duplicate_entities:
             violations.append(

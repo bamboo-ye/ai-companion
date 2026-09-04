@@ -18,7 +18,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import PurePath
 from statistics import fmean
-from typing import Any
+from typing import Any, Mapping
 
 from docx import Document
 from openpyxl import load_workbook  # type: ignore[import-untyped]
@@ -184,14 +184,17 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         [
             {
                 "title": table["title"] or title,
-                "bullets": [*table["columns"], f"共 {len(table['rows'])} 条记录"],
+                "bullets": [
+                    *table["columns"],
+                    f"共 {len(table['rows'])} 条记录",
+                    *list(
+                        dict.fromkeys(str(row.get("source_locator") or "") for row in table["rows"])
+                    )[:12],
+                ],
             }
         ]
         if table
-        else [
-            {"title": headings[index], "bullets": group}
-            for index, group in enumerate(groups)
-        ]
+        else [{"title": headings[index], "bullets": group} for index, group in enumerate(groups)]
     )
     visual_assignments, visual_report, model_usage = _presentation_visuals(
         payload,
@@ -282,7 +285,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         ]
         if table
         else (
-            [spec["heading"] for spec in section_specs[:5]]
+            _representative_presentation_headings(section_specs, maximum=5)
             if section_specs
             else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
         )
@@ -683,7 +686,9 @@ def _translate_pdf(payload: dict[str, Any]) -> dict[str, Any]:
     source_character_count = sum(len(block.text) for block in layout.blocks)
     if source_character_count > MAX_PDF_TRANSLATION_CHARS:
         raise ValueError("pdf_text_is_too_long_for_translation")
-    output_name = _pdf_output_name(payload.get("output_filename"), source_name, language.output_label)
+    output_name = _pdf_output_name(
+        payload.get("output_filename"), source_name, language.output_label
+    )
     translations, model_usage, translation_round_count = _translate_layout_blocks(
         layout,
         language.model_label,
@@ -742,9 +747,7 @@ def _translate_layout_blocks(
     ) as executor:
         while next_batch < len(batches) or pending:
             while (
-                first_failure is None
-                and next_batch < len(batches)
-                and len(pending) < concurrency
+                first_failure is None and next_batch < len(batches) and len(pending) < concurrency
             ):
                 available_cost = cost_limit - used_cost - reserved_cost
                 open_slots = concurrency - len(pending)
@@ -888,9 +891,7 @@ def _parse_block_translations(
     )
     matches = list(marker_pattern.finditer(translated))
     expected = [block.marker for block in blocks]
-    actual = [
-        f"[[PAGE {int(match.group(1))} BLOCK {int(match.group(2))}]]" for match in matches
-    ]
+    actual = [f"[[PAGE {int(match.group(1))} BLOCK {int(match.group(2))}]]" for match in matches]
     if actual != expected:
         raise ValueError("translation_block_markers_invalid")
     output: dict[str, str] = {}
@@ -1413,6 +1414,17 @@ def _ensure_presentation_units(units: list[str], count: int) -> list[str]:
     return result
 
 
+def _representative_presentation_headings(
+    sections: list[dict[str, Any]], *, maximum: int
+) -> list[str]:
+    """Sample the whole deck for the recap instead of only its opening pages."""
+
+    if len(sections) <= maximum:
+        return [str(section["heading"]) for section in sections]
+    indices = [round(index * (len(sections) - 1) / (maximum - 1)) for index in range(maximum)]
+    return [str(sections[index]["heading"]) for index in dict.fromkeys(indices)]
+
+
 def _balanced_groups(items: list[Any], maximum_groups: int) -> list[list[Any]]:
     if not items:
         return []
@@ -1459,9 +1471,9 @@ def _style_body_placeholder(
 ) -> None:
     """Give narrative text a stable reading column and consistent rhythm."""
 
-    placeholder.left = Inches(0.78)
+    placeholder.left = Inches(0.78 if has_visual else 1.08)
     placeholder.top = Inches(1.42)
-    placeholder.width = Inches(5.45 if has_visual else 11.78)
+    placeholder.width = Inches(5.45 if has_visual else 10.86)
     placeholder.height = Inches(5.28)
     frame = placeholder.text_frame
     frame.word_wrap = True
@@ -1491,6 +1503,29 @@ def _presentation_render_text(value: str) -> str:
     return re.sub(r"《[^》\r\n]{1,30}》", protect, text)
 
 
+def _presentation_topic_source_pages(topic: Mapping[str, Any]) -> set[int]:
+    """Return source PDF pages explicitly cited by one audience topic."""
+
+    text = "\n".join(
+        [
+            str(topic.get("title") or ""),
+            *[str(value or "") for value in topic.get("bullets", [])],
+        ]
+    )
+    pages: set[int] = set()
+    for match in re.finditer(
+        r"第\s*(\d{1,4})\s*(?:页(?:\s*[-–—~～至到]\s*(?:第\s*)?(\d{1,4})\s*页?)?"
+        r"|[-–—~～至到]\s*(?:第\s*)?(\d{1,4})\s*页)",
+        text,
+    ):
+        start = int(match.group(1))
+        end = int(match.group(2) or match.group(3) or start)
+        if start <= 0 or end <= 0 or abs(end - start) > 100:
+            continue
+        pages.update(range(min(start, end), max(start, end) + 1))
+    return pages
+
+
 def _presentation_visuals(
     payload: dict[str, Any],
     topics: list[dict[str, Any]],
@@ -1505,19 +1540,23 @@ def _presentation_visuals(
     model = os.environ.get("MODEL_PRESENTATION_IMAGE_NAME", "").strip()
     empty_usage = _presentation_visual_model_usage([], cost_limit, model)
     if not include_file:
-        return [None] * len(topics), {
-            "policy_version": "presentation-visuals-v1",
-            "mode": "outline",
-            "requested_slot_count": len(topics),
-            "source_document_count": 0,
-            "extracted_visual_count": 0,
-            "generated_visual_count": 0,
-            "placed_visual_count": 0,
-            "source_visual_count": 0,
-            "fallback_text_only_count": 0,
-            "generation_attempt_count": 0,
-            "generation_errors": [],
-        }, empty_usage
+        return (
+            [None] * len(topics),
+            {
+                "policy_version": "presentation-visuals-v1",
+                "mode": "outline",
+                "requested_slot_count": len(topics),
+                "source_document_count": 0,
+                "extracted_visual_count": 0,
+                "generated_visual_count": 0,
+                "placed_visual_count": 0,
+                "source_visual_count": 0,
+                "fallback_text_only_count": 0,
+                "generation_attempt_count": 0,
+                "generation_errors": [],
+            },
+            empty_usage,
+        )
 
     source_documents = _presentation_source_documents(payload.get("source_documents"))
     extracted: list[dict[str, Any]] = []
@@ -1529,8 +1568,19 @@ def _presentation_visuals(
                 break
     extracted = extracted[:MAX_PRESENTATION_SOURCE_VISUALS]
     assignments: list[dict[str, Any] | None] = [None] * len(topics)
-    for index, visual in enumerate(extracted[: len(assignments)]):
-        assignments[index] = visual
+    unused_visuals = list(extracted)
+    for index, topic in enumerate(topics):
+        cited_pages = _presentation_topic_source_pages(topic)
+        matching_index = next(
+            (
+                visual_index
+                for visual_index, visual in enumerate(unused_visuals)
+                if int(visual.get("source_page") or 0) in cited_pages
+            ),
+            None,
+        )
+        if matching_index is not None:
+            assignments[index] = unused_visuals.pop(matching_index)
 
     usages: list[dict[str, Any]] = []
     generation_errors: list[str] = []
@@ -1850,7 +1900,9 @@ def _presentation_visual_model_usage(
         "cost_accounting": (
             "reported"
             if usages and all(item.get("cost_accounting") == "reported" for item in usages)
-            else "reserved_upper_bound" if usages else "none"
+            else "reserved_upper_bound"
+            if usages
+            else "none"
         ),
         "latency_ms": sum(_non_negative_int(item.get("latency_ms")) for item in usages),
         "max_cost_micros": cost_limit,
@@ -1917,10 +1969,13 @@ def _add_presentation_visual_notes(slide: Any, visual: dict[str, Any]) -> None:
 
 
 def _presentation_visual_outline(visual: dict[str, Any]) -> dict[str, Any]:
-    return {
+    outline = {
         "kind": str(visual.get("kind") or ""),
         "source_locator": str(visual.get("source_locator") or ""),
     }
+    if visual.get("kind") == "source":
+        outline["source_page"] = int(visual.get("source_page") or 0)
+    return outline
 
 
 def _presentation_table(value: Any) -> dict[str, Any] | None:
@@ -2051,12 +2106,9 @@ def _presentation_table_pages(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             flush()
             pages.append({"detail": True, "rows": [row]})
             continue
-        if (
-            current
-            and (
-                current_units + units > PRESENTATION_TABLE_PAGE_CAPACITY
-                or len(current) >= PRESENTATION_ROWS_PER_SLIDE
-            )
+        if current and (
+            current_units + units > PRESENTATION_TABLE_PAGE_CAPACITY
+            or len(current) >= PRESENTATION_ROWS_PER_SLIDE
         ):
             flush()
         current.append(row)
@@ -2183,13 +2235,9 @@ def _add_course_detail_slide(
     cells = [str(value or "") for value in row["cells"]]
     detail_index = max(range(len(cells)), key=lambda index: len(cells[index]))
     metadata = "    ".join(
-        f"{columns[index]}：{value}"
-        for index, value in enumerate(cells)
-        if index != detail_index
+        f"{columns[index]}：{value}" for index, value in enumerate(cells) if index != detail_index
     )
-    metadata_box = slide.shapes.add_textbox(
-        Inches(0.55), Inches(1.34), Inches(12.2), Inches(0.48)
-    )
+    metadata_box = slide.shapes.add_textbox(Inches(0.55), Inches(1.34), Inches(12.2), Inches(0.48))
     metadata_frame = metadata_box.text_frame
     metadata_frame.clear()
     metadata_frame.word_wrap = True
@@ -2295,8 +2343,7 @@ def _presentation_quality_report(
     )
     presentation_capabilities = task_contract.get("presentation_capabilities")
     table_required = (
-        isinstance(presentation_capabilities, list)
-        and "table" in presentation_capabilities
+        isinstance(presentation_capabilities, list) and "table" in presentation_capabilities
     )
     if (table_required or "表格" in style) and not table:
         violations.append(
@@ -2312,6 +2359,20 @@ def _presentation_quality_report(
         if len(str(slide.get("title") or "")) > 36:
             violations.append({"code": "slide_title_too_long", "message": "页面标题过长"})
             break
+        visual = slide.get("visual")
+        if isinstance(visual, Mapping) and visual.get("kind") == "source":
+            cited_pages = _presentation_topic_source_pages(slide)
+            source_page = int(visual.get("source_page") or 0)
+            if not cited_pages or source_page not in cited_pages:
+                violations.append(
+                    {
+                        "code": "source_visual_topic_mismatch",
+                        "message": "原文图片与当前主题引用的页码不一致",
+                        "slide": int(slide.get("page") or 0),
+                        "source_page": source_page,
+                    }
+                )
+                break
     if task_contract.get("exhaustive") is True:
         if source_coverage["truncated"] or source_coverage["coverage_ratio"] < 1:
             violations.append({"code": "source_coverage_incomplete", "message": "来源尚未完整处理"})
@@ -2369,7 +2430,9 @@ def _presentation_quality_report(
             ):
                 delimiter_noise_rows.append(index)
         duplicates = {
-            entity_id: positions for entity_id, positions in entity_rows.items() if len(positions) > 1
+            entity_id: positions
+            for entity_id, positions in entity_rows.items()
+            if len(positions) > 1
         }
         if duplicates:
             violations.append(
@@ -2391,7 +2454,9 @@ def _presentation_quality_report(
             index
             for index, row in enumerate(display_rows, start=1)
             if row.get("continuation") is True
-            and any(not str(value or "").strip() or str(value).strip() == "↳" for value in row["cells"])
+            and any(
+                not str(value or "").strip() or str(value).strip() == "↳" for value in row["cells"]
+            )
         ]
         if contextless_rows:
             violations.append(

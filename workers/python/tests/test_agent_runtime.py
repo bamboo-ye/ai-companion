@@ -518,7 +518,8 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("（来源：第1页）", generated["brief"])
         self.assertIn("（来源：第5页）", generated["brief"])
         self.assertNotIn("table", generated)
-        self.assertEqual(generated["slide_count"], len(decisions.composed_batches) + 2)
+        self.assertEqual(generated["slide_count"], generated["brief"].count("## ") + 2)
+        self.assertLess(generated["slide_count"], len(decisions.composed_batches) + 2)
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(
             len(result["document_processing"]["processed_batches"]),
@@ -1437,7 +1438,48 @@ class AgentRuntimeTest(unittest.TestCase):
             if line.startswith("- "):
                 self.assertLessEqual(len(line[2:]), 100)
         sections = [block for block in brief.split("\n\n") if block.strip()]
-        self.assertTrue(all(sum(1 for line in block.splitlines() if line.startswith("- ")) >= 2 for block in sections))
+        self.assertTrue(
+            all(
+                sum(1 for line in block.splitlines() if line.startswith("- ")) >= 2
+                for block in sections
+            )
+        )
+
+    def test_narrative_finalizer_removes_production_notes_and_compacts_same_page(self) -> None:
+        state: dict[str, Any] = {
+            "task_contract": {"artifact_types": ["pptx"], "output_language": "zh-CN"},
+            "plan": {"objective": "生成教学演示"},
+        }
+        arguments = {
+            "title": "教学演示",
+            "brief": (
+                "## 数据集与示例\n"
+                "- 说明数据字段（来源：第17页）\n"
+                "- 展示邮件样本（来源：第17页）\n\n"
+                "## 训练与测试划分\n"
+                "- 随机划分数据（来源：第17页）\n"
+                "- 保留测试集（来源：第17-18页）\n\n"
+                "## 可视化建议（授课时使用）\n"
+                "- 插图1：展示分类流程\n"
+                "- 插图2：放置数据集图片\n\n"
+                "## 评估指标\n"
+                "- 使用准确率衡量结果（来源：第20页）\n"
+                "- 检查混淆矩阵（来源：第20页）"
+            ),
+            "slide_count": 6,
+        }
+
+        finalized = _finalize_narrative_presentation_arguments(
+            arguments,
+            state,  # type: ignore[arg-type]
+        )
+
+        brief = finalized["brief"]
+        self.assertNotIn("可视化建议", brief)
+        self.assertNotIn("插图1", brief)
+        self.assertEqual(brief.count("## "), 2)
+        self.assertIn("训练与测试划分：随机划分数据", brief)
+        self.assertEqual(finalized["slide_count"], 4)
 
     def test_presentation_merge_keeps_one_logical_entity_and_cleans_aggregate_noise(
         self,

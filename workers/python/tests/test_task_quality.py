@@ -40,9 +40,7 @@ class TaskQualityTests(unittest.TestCase):
 
     def test_temporal_source_values_drop_stale_adjacent_column_noise(self) -> None:
         self.assertEqual(
-            select_presentation_temporal_source_values(
-                ["9/9, 16/9 (Wed)", "hu)", "0930-1120 10"]
-            ),
+            select_presentation_temporal_source_values(["9/9, 16/9 (Wed)", "hu)", "0930-1120 10"]),
             ["9/9, 16/9 (Wed)", "0930-1120 10"],
         )
         self.assertEqual(
@@ -52,9 +50,7 @@ class TaskQualityTests(unittest.TestCase):
             ["11/9, 18/9 (Fri)", "1600-1750 12"],
         )
         self.assertEqual(
-            select_presentation_temporal_source_values(
-                ["14/9, 21/9 (Mo", "n)", "1500-1550 14"]
-            ),
+            select_presentation_temporal_source_values(["14/9, 21/9 (Mo", "n)", "1500-1550 14"]),
             ["14/9, 21/9 (Mon)", "1500-1550 14"],
         )
 
@@ -135,7 +131,9 @@ class TaskQualityTests(unittest.TestCase):
         )
         self.assertEqual(refined["presentation_mode"], "composed")
 
-    def test_planner_selects_composable_presentation_capabilities_without_relaxing_hard_facts(self) -> None:
+    def test_planner_selects_composable_presentation_capabilities_without_relaxing_hard_facts(
+        self,
+    ) -> None:
         contract = compile_task_contract(
             "整理所有课程的名称和代码并生成中文 PPT\n📎 courses.pdf",
             "work",
@@ -249,7 +247,7 @@ class TaskQualityTests(unittest.TestCase):
                         {
                             "cells": ["PED1315", "Tabata训练（初级）", "周一 14:00-14:50"],
                             "source_locator": "page:2",
-                        }
+                        },
                     ],
                 }
             },
@@ -259,9 +257,7 @@ class TaskQualityTests(unittest.TestCase):
         self.assertIn("presentation_name_language_mismatch", language_codes)
         self.assertIn("presentation_time_language_mismatch", language_codes)
         name_violation = next(
-            item
-            for item in violations
-            if item["code"] == "presentation_name_language_mismatch"
+            item for item in violations if item["code"] == "presentation_name_language_mismatch"
         )
         self.assertEqual(name_violation["affected_count"], 2)
 
@@ -289,9 +285,7 @@ class TaskQualityTests(unittest.TestCase):
             contract,
         )
         time_violation = next(
-            item
-            for item in violations
-            if item["code"] == "presentation_time_language_mismatch"
+            item for item in violations if item["code"] == "presentation_time_language_mismatch"
         )
         self.assertEqual(time_violation["affected_rows"], [1, 2])
 
@@ -321,9 +315,7 @@ class TaskQualityTests(unittest.TestCase):
 
         self.assertEqual(contract["requested_fields"], [])
         language = next(
-            item
-            for item in violations
-            if item["code"] == "presentation_visible_language_mismatch"
+            item for item in violations if item["code"] == "presentation_visible_language_mismatch"
         )
         self.assertGreaterEqual(language["affected_count"], 4)
         self.assertEqual(language["affected_rows"], [1])
@@ -383,9 +375,7 @@ class TaskQualityTests(unittest.TestCase):
                 "title": "錄取須知與重要注意事項",
                 "filename": "錄取須知與重要注意事項.pptx",
                 "brief": (
-                    "## 接受录取与缴费须知\n"
-                    "- 请在截止日期前确认录取并缴费。\n"
-                    "- 保留付款确认记录。"
+                    "## 接受录取与缴费须知\n- 请在截止日期前确认录取并缴费。\n- 保留付款确认记录。"
                 ),
                 "slide_count": 3,
             },
@@ -393,9 +383,7 @@ class TaskQualityTests(unittest.TestCase):
         )
 
         language = next(
-            item
-            for item in violations
-            if item["code"] == "presentation_visible_language_mismatch"
+            item for item in violations if item["code"] == "presentation_visible_language_mismatch"
         )
         self.assertEqual(language["affected_fields"], ["title", "filename"])
 
@@ -424,6 +412,28 @@ class TaskQualityTests(unittest.TestCase):
         self.assertIn("presentation_audience_meta_content", codes)
         self.assertIn("presentation_brief_structure_invalid", codes)
         self.assertIn("presentation_source_subject_missing", codes)
+
+    def test_non_table_presentation_rejects_visual_production_notes(self) -> None:
+        contract = compile_task_contract("请将附件制作成中文 PPT", "work")
+        violations = validate_presentation_arguments(
+            {
+                "title": "机器学习课程",
+                "audience": "学生",
+                "style": "简洁",
+                "brief": (
+                    "## 可视化建议（授课时使用）\n"
+                    "- 插图1：展示贝叶斯分类流程\n"
+                    "- 插图2：放置数据集示意图"
+                ),
+                "slide_count": 3,
+            },
+            contract,
+        )
+
+        self.assertIn(
+            "presentation_audience_meta_content",
+            {item["code"] for item in violations},
+        )
 
     def test_non_table_presentation_accepts_canonical_audience_sections(self) -> None:
         contract = compile_task_contract(
@@ -632,9 +642,7 @@ class TaskQualityTests(unittest.TestCase):
             contract,
         )
         mismatch = next(
-            item
-            for item in violations
-            if item["code"] == "presentation_field_semantic_mismatch"
+            item for item in violations if item["code"] == "presentation_field_semantic_mismatch"
         )
         self.assertEqual(mismatch["field"], "time")
         self.assertEqual(mismatch["affected_rows"], [1])
