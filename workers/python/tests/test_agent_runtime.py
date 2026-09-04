@@ -290,11 +290,234 @@ class AgentRuntimeTest(unittest.TestCase):
         result = AgentRuntime(graph).start(payload)
         self.assertEqual(decisions.calls[:3], ["plan", "decide", "compose"])
         self.assertEqual(result["task_contract"]["presentation_mode"], "narrative")
-        self.assertEqual(
-            result["task_contract"]["presentation_capabilities"], ["narrative"]
-        )
+        self.assertEqual(result["task_contract"]["presentation_capabilities"], ["narrative"])
         self.assertEqual(result["task_contract"]["requested_fields"], [])
         self.assertEqual(result["outcome"], "completed")
+
+    def test_source_backed_narrative_ppt_batches_and_merges_every_round(self) -> None:
+        # Mirrors the failed Lecture2b run: five extraction rounds of roughly
+        # 3,700 estimated tokens each. A monolithic Composer request contained
+        # about 58K source characters and only received one model attempt.
+        round_bodies = [
+            "\n".join(
+                f"第{round_no}轮知识点{i:04d}：感知、推理、执行与教学应用。" for i in range(430)
+            )
+            for round_no in range(1, 6)
+        ]
+        document_text = "\n".join(
+            f"[[DOCUMENT ROUND {index}]]\n[[PAGE {index}]]\n{body}"
+            for index, body in enumerate(round_bodies, start=1)
+        )
+
+        class NarrativeRoundDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(ModelDecision(intent="unused"))
+                self.composed_batches: list[str] = []
+                self.observation_sizes: list[int] = []
+                self.source_pages: list[list[int]] = []
+
+            def plan(self, **values: Any) -> AgentPlan:
+                return AgentPlan(
+                    objective=str(values["message"]),
+                    steps=("读取附件", "逐轮提取重点", "合并并生成演示文稿"),
+                    success_criteria="生成基于完整来源的中文图文 PPT",
+                    task_intent={
+                        "presentation_capabilities": ["narrative", "visual"],
+                        "requested_fields": [],
+                        "confidence": "high",
+                    },
+                )
+
+            def decide(self, **values: Any) -> ModelDecision:
+                observations = values["context"].get("observations", [])
+                if not observations:
+                    return ModelDecision(
+                        intent="work_extract_attached_document",
+                        tool_name="work_extract_attached_document",
+                        tool_arguments={"attachment_index": 1, "round_start": 1},
+                    )
+                return ModelDecision(
+                    intent="work_generate_pptx",
+                    tool_name="work_generate_pptx",
+                    requires_argument_composition=True,
+                )
+
+            def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
+                context = values["context"]
+                document_round = context["document_processing_round"]
+                batch_id = str(document_round["batch_id"])
+                self.composed_batches.append(batch_id)
+                observations = context["observations"]
+                self.assert_single_observation(observations)
+                output = observations[0]["data"]["output"]
+                text = str(output["text"])
+                self.observation_sizes.append(len(text))
+                pages = list(output.get("source_pages") or [])
+                self.source_pages.append(pages)
+                sequence = len(self.composed_batches)
+                page = pages[0] if pages else 0
+                return {
+                    "title": "智能系统课程重点",
+                    "audience": "学生",
+                    "style": "简洁图文",
+                    "brief": (
+                        f"## 课程重点{sequence}\n"
+                        f"- 第{sequence}批包含感知、推理与执行知识（来源：第{page}页）\n"
+                        f"- 第{sequence}批内容来自对应课程材料（来源：第{page}页）"
+                    ),
+                    "slide_count": 3,
+                }
+
+            @staticmethod
+            def assert_single_observation(observations: Any) -> None:
+                if not isinstance(observations, list) or len(observations) != 1:
+                    raise AssertionError("Composer must receive exactly one bounded round")
+
+        class NarrativeRoundTools(FakeTools):
+            def prepare(self, **values: Any) -> ToolPreparation:
+                self.prepared.append(dict(values))
+                if values["tool_name"] == "work_extract_attached_document":
+                    return ToolPreparation(
+                        status="completed",
+                        tool_name="work_extract_attached_document",
+                        response="附件已分两轮完整读取。",
+                        data={
+                            "output": {
+                                "source_filename": "Lecture2b.pdf",
+                                "text": document_text,
+                                "rounds": [
+                                    {"round_no": index, "token_count": 3_700}
+                                    for index in range(1, 6)
+                                ],
+                                "completed_rounds": 5,
+                                "round_count": 5,
+                                "round_start": 1,
+                                "next_round": 6,
+                                "has_more": False,
+                                "truncated": False,
+                                "coverage_ratio": 1.0,
+                            }
+                        },
+                    )
+                return ToolPreparation(
+                    status="completed",
+                    tool_name="work_generate_pptx",
+                    response="PPT 已生成。",
+                    data={
+                        "kind": "skill_run",
+                        "id": "narrative-round-pptx",
+                        "skill_name": "office.pptx_generate",
+                        "status": "succeeded",
+                        "output": {
+                            "quality_report": {"passed": True, "violations": []},
+                            "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+                            "source_overwritten": False,
+                        },
+                        "files": [{"name": "智能系统课程重点.pptx"}],
+                    },
+                )
+
+        decisions = NarrativeRoundDecisions()
+        tools = NarrativeRoundTools(ToolPreparation(status="completed", tool_name=""))
+        payload = agent_input("run-narrative-document-rounds", "work")
+        payload["user_message"] = (
+            "提取主要内容，生成上课PPT，点重点并适当插图，显示内容出自原PDF的位置"
+            "\n<!--ai-document:doc-lecture|Lecture2b.pdf-->"
+        )
+        payload["context"]["tools"] = [
+            {
+                "name": "work_extract_attached_document",
+                "description": "分轮提取附件",
+                "parameters": {
+                    "type": "object",
+                    "required": ["attachment_index"],
+                    "properties": {
+                        "attachment_index": {"type": "integer"},
+                        "round_start": {"type": "integer"},
+                    },
+                    "additionalProperties": False,
+                },
+                "repeatable": True,
+                "identity_fields": ["attachment_index", "round_start"],
+            },
+            {
+                "name": "work_generate_pptx",
+                "description": "生成叙事型 PPTX",
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "required": ["title", "audience", "style", "brief", "slide_count"],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                        "task_contract": {"type": "object"},
+                        "source_coverage": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        ]
+        incidental_structured_batch = {
+            "batch_id": "logical-entities:b1",
+            "attachment_index": 1,
+            "round_no": 1,
+            "segment_no": 1,
+            "segment_count": 1,
+            "processing_text": "[[COMPACT LOGICAL ENTITY IR]]",
+            "token_count": 10,
+            "source_ir": {"version": "presentation-logical-entity-ir-v1"},
+            "source_pages": [1],
+            "structured": True,
+            "grounded_rows": [],
+        }
+        with (
+            patch(
+                "ai_companion_worker.agent_runtime.validate_artifact_observation",
+                return_value={
+                    "policy_version": "test",
+                    "applicable": True,
+                    "passed": True,
+                    "violations": [],
+                },
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._presentation_structured_batches",
+                return_value=[incidental_structured_batch],
+            ) as structured_batches,
+        ):
+            result = AgentRuntime(
+                build_graph(
+                    checkpointer=InMemorySaver(),
+                    decisions=decisions,
+                    tools=tools,
+                )
+            ).start(payload)
+
+        self.assertEqual(result["outcome"], "completed")
+        structured_batches.assert_not_called()
+        self.assertGreater(len(decisions.composed_batches), 5)
+        self.assertTrue(decisions.composed_batches[0].startswith("a1:r1:s"))
+        self.assertTrue(decisions.composed_batches[-1].startswith("a1:r5:s"))
+        self.assertTrue(all(size <= 10_200 for size in decisions.observation_sizes))
+        self.assertTrue(all(pages for pages in decisions.source_pages))
+        generated = next(
+            item["arguments"]
+            for item in tools.prepared
+            if item["tool_name"] == "work_generate_pptx"
+        )
+        self.assertIn("## 课程重点1", generated["brief"])
+        self.assertIn(f"## 课程重点{len(decisions.composed_batches)}", generated["brief"])
+        self.assertIn("（来源：第1页）", generated["brief"])
+        self.assertIn("（来源：第5页）", generated["brief"])
+        self.assertEqual(generated["slide_count"], len(decisions.composed_batches) + 2)
+        self.assertTrue(result["document_processing"]["complete"])
+        self.assertEqual(
+            len(result["document_processing"]["processed_batches"]),
+            len(decisions.composed_batches),
+        )
 
     def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
         current = {"table": {"rows": [{"entity_id": "g1"}]}}
@@ -629,12 +852,8 @@ class AgentRuntimeTest(unittest.TestCase):
                     )
                 )
                 sequential_started = time.perf_counter()
-                sequential_runtime.start(
-                    {**payload, "run_id": "run-composer-sequential-baseline"}
-                )
-                sequential_elapsed_ms = (
-                    time.perf_counter() - sequential_started
-                ) * 1000
+                sequential_runtime.start({**payload, "run_id": "run-composer-sequential-baseline"})
+                sequential_elapsed_ms = (time.perf_counter() - sequential_started) * 1000
             decisions.peak_active = 0
             decisions.composed_batches.clear()
             tools.prepared.clear()
@@ -737,9 +956,7 @@ class AgentRuntimeTest(unittest.TestCase):
                 )
 
             def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
-                batch_id = str(
-                    values["context"]["document_processing_round"]["batch_id"]
-                )
+                batch_id = str(values["context"]["document_processing_round"]["batch_id"])
                 failed = batch_id.endswith("b2")
                 self.local.events = [
                     {
@@ -1543,7 +1760,10 @@ class AgentRuntimeTest(unittest.TestCase):
                                                 "page": 2,
                                                 "cells": [
                                                     {"column_id": "c1", "text": "PED 1317"},
-                                                    {"column_id": "c2", "text": "High Intensity Interval"},
+                                                    {
+                                                        "column_id": "c2",
+                                                        "text": "High Intensity Interval",
+                                                    },
                                                     {"column_id": "c3", "text": "T01"},
                                                     {"column_id": "c4", "text": "14/9, 21/9 (Mo"},
                                                     {"column_id": "c5", "text": "n)"},
@@ -1585,9 +1805,7 @@ class AgentRuntimeTest(unittest.TestCase):
                                                 ],
                                             },
                                         ],
-                                        "row_groups": [
-                                            {"id": "g1", "row_ids": ["r1", "r2", "r3"]}
-                                        ],
+                                        "row_groups": [{"id": "g1", "row_ids": ["r1", "r2", "r3"]}],
                                     }
                                 ],
                             }
@@ -1624,9 +1842,7 @@ class AgentRuntimeTest(unittest.TestCase):
             [],
         )
         self.assertEqual(
-            _composer_circuit_breaker_models(
-                {"model_events": [timeout, timeout, fallback]}
-            ),
+            _composer_circuit_breaker_models({"model_events": [timeout, timeout, fallback]}),
             ["deepseek/deepseek-v4-flash-0731"],
         )
 
@@ -1712,8 +1928,7 @@ class AgentRuntimeTest(unittest.TestCase):
 
     def test_focused_heading_page_is_compacted_without_losing_its_tail(self) -> None:
         events = "\n".join(
-            f"2026-08-{1 + index % 28:02d} Event number {index}"
-            for index in range(180)
+            f"2026-08-{1 + index % 28:02d} Event number {index}" for index in range(180)
         )
         state: dict[str, Any] = {
             "task_contract": {"objective": "提取文件中的Important Dates信息"},

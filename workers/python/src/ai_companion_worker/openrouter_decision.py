@@ -41,9 +41,7 @@ _PRESENTATION_TOOLS = frozenset(
     )
 )
 _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
-_PRESENTATION_SUBTOOLS = frozenset(
-    ("work_generate_table_pptx", "work_generate_visual_pptx")
-)
+_PRESENTATION_SUBTOOLS = frozenset(("work_generate_table_pptx", "work_generate_visual_pptx"))
 
 
 def _presentation_capabilities(context: Mapping[str, Any]) -> tuple[str, ...]:
@@ -74,9 +72,7 @@ def _presentation_capabilities(context: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(capabilities)
 
 
-def _uses_structured_presentation_capability(
-    tool_name: str, context: Mapping[str, Any]
-) -> bool:
+def _uses_structured_presentation_capability(tool_name: str, context: Mapping[str, Any]) -> bool:
     if tool_name in _STRUCTURED_PRESENTATION_TOOLS:
         return True
     if tool_name != "work_generate_pptx":
@@ -256,9 +252,7 @@ class OpenRouterConfig:
             ),
             max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
             composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(
-                os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "6144")
-            ),
+            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "6144")),
             repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
             data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
             zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
@@ -617,9 +611,7 @@ class OpenRouterDecisionPort:
                                     "steps": ["1-8 non-empty strings"],
                                     "success_criteria": "string",
                                     "task_intent": {
-                                        "presentation_capabilities": [
-                                            "narrative|table|visual"
-                                        ],
+                                        "presentation_capabilities": ["narrative|table|visual"],
                                         "requested_fields": ["code|name|time|venue"],
                                         "confidence": "low|medium|high",
                                         "rationale": "short string",
@@ -691,9 +683,7 @@ class OpenRouterDecisionPort:
         # the public PPT orchestrator. They remain in the immutable catalog for
         # schema projection and legacy checkpoint replay, but are never offered
         # to the router as top-level actions on fresh runs.
-        definitions = [
-            item for item in definitions if item["name"] not in _PRESENTATION_SUBTOOLS
-        ]
+        definitions = [item for item in definitions if item["name"] not in _PRESENTATION_SUBTOOLS]
         actionable = [item for item in definitions if not _is_no_tool(item["name"])]
         no_tool_definitions = [item for item in definitions if _is_no_tool(item["name"])]
         artifact_pending = _artifact_goal_pending(context)
@@ -930,8 +920,10 @@ class OpenRouterDecisionPort:
             system_prompt += (
                 "当前是演示文稿专用编排：必须逐项满足 task_contract 中的硬要求。"
                 "若来源观察的 truncated 为 true 或 coverage_ratio 小于 1，不得声称内容完整；"
-                "应保留来源覆盖信息。不得把 Harness 的轮次、附件索引、Source IR、来源定位器"
-                "或质量门术语写入标题、表头或可见内容。"
+                "应保留来源覆盖信息。不得把 Harness 的轮次、附件索引、Source IR 或质量门"
+                "术语写入标题、表头或可见内容。只有用户明确要求显示原文件位置时，才在"
+                "对应要点末尾使用‘（来源：第N页）’，页码必须来自当前来源片段的 PAGE 标记"
+                "或可信 source_pages/source_locator。"
                 "输出语言由 task_contract.output_language 锁定。若为 zh-CN，所有面向读者的"
                 "标题、表头、正文、事件说明、名称和时间说明必须使用简体中文；英文来源"
                 "中的普通词句必须翻译，不能只照抄英文，也不得以英文摘要代替中文内容。"
@@ -1010,12 +1002,23 @@ class OpenRouterDecisionPort:
                         "相关记录，不要总结整份文件，也不要声称未看到的轮次已完成。"
                         f"分轮信息：{encoded_round}。"
                     )
-                system_prompt += (
-                    "本轮工具 schema 是 Harness 提供的紧凑中间格式：只返回 title、audience、"
-                    "style、可选 filename 与当前轮次 table；不要返回 brief、slide_count、"
-                    "mapping_contract、task_contract 或 source_coverage。Harness 会在全部轮次"
-                    "完成后确定性合并记录、注入锁定映射并补齐最终 PPT 参数。"
-                )
+                if structured_round:
+                    system_prompt += (
+                        "本轮工具 schema 是 Harness 提供的紧凑中间格式（表格）：只返回 title、"
+                        "audience、style、可选 filename 与当前轮次 table；不要返回 brief、"
+                        "slide_count、mapping_contract、task_contract 或 source_coverage。Harness "
+                        "会在全部轮次完成后确定性合并记录、注入锁定映射并补齐最终 PPT 参数。"
+                    )
+                else:
+                    system_prompt += (
+                        "本轮只生成当前来源片段对应的非表格演示章节。返回 title、audience、"
+                        "style、可选 filename、brief 和 slide_count，禁止返回 table 或 "
+                        "mapping_contract。brief 必须继续使用固定 Markdown 中间格式，只写本轮"
+                        "能够直接支持的页面章节；每个章节至少两条事实，不得复述上一轮上下文"
+                        "重叠区。每轮默认生成一个紧凑章节；只有当前片段包含两个无法合理合并"
+                        "的主题时才可生成两个。slide_count 必须等于本轮章节数加2。Harness 会在"
+                        "全部轮次完成后按来源顺序去重合并章节并重新计算最终页数。"
+                    )
                 locked_mapping = context.get("locked_mapping_contract")
                 if structured_round and isinstance(locked_mapping, Mapping) and locked_mapping:
                     encoded_mapping = json.dumps(
@@ -1056,9 +1059,7 @@ class OpenRouterDecisionPort:
         ):
             composer_parameters = _presentation_batch_parameters(
                 composer_parameters,
-                harness_injects_provenance=(
-                    document_round.get("compact_entity_ir") is True
-                ),
+                harness_injects_provenance=(document_round.get("compact_entity_ir") is True),
             )
         if tool_name in _PRESENTATION_TOOLS:
             composer_parameters = _model_visible_presentation_parameters(
@@ -1486,9 +1487,7 @@ class OpenRouterDecisionPort:
                 content = message.get("content")
                 if isinstance(content, str) and content.strip():
                     if _looks_like_embedded_tool_call(content, tool_names):
-                        raise OpenRouterError(
-                            "OpenRouter embedded a tool call in response content"
-                        )
+                        raise OpenRouterError("OpenRouter embedded a tool call in response content")
                     if not allow_direct:
                         raise OpenRouterError(
                             "direct response is forbidden for a project-data request"
@@ -2133,9 +2132,7 @@ def _presentation_batch_parameters(
     if not isinstance(parameters, Mapping):
         return {"type": "object", "properties": {}, "additionalProperties": False}
     properties = parameters.get("properties")
-    if not isinstance(properties, Mapping) or not isinstance(
-        properties.get("table"), Mapping
-    ):
+    if not isinstance(properties, Mapping) or not isinstance(properties.get("table"), Mapping):
         return dict(parameters)
     selected = {
         key: dict(properties[key])
@@ -2156,9 +2153,7 @@ def _presentation_batch_parameters(
         table_properties["rows"] = rows
         table["properties"] = table_properties
         selected["table"] = table
-    required = [
-        key for key in ("title", "audience", "style", "table") if key in selected
-    ]
+    required = [key for key in ("title", "audience", "style", "table") if key in selected]
     return {
         "type": "object",
         "required": required,
@@ -2181,18 +2176,10 @@ def _model_visible_presentation_parameters(
     hidden = {"task_contract", "source_coverage"}
     if not structured:
         hidden.update(("table", "mapping_contract"))
-    visible["properties"] = {
-        key: value
-        for key, value in properties.items()
-        if key not in hidden
-    }
+    visible["properties"] = {key: value for key, value in properties.items() if key not in hidden}
     required = visible.get("required")
     if isinstance(required, list):
-        visible["required"] = [
-            value
-            for value in required
-            if value not in hidden
-        ]
+        visible["required"] = [value for value in required if value not in hidden]
     return visible
 
 
