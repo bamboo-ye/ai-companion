@@ -264,7 +264,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             _style_body_placeholder(slide.placeholders[1], bullets, has_visual=visual is not None)
             _style_slide(slide, title_color=PRESENTATION_ACCENT_COLOR)
             if visual is not None:
-                _add_presentation_visual(slide, slide.placeholders[1], visual)
+                _add_presentation_visual(slide, visual)
             outline_item: dict[str, Any] = {
                 "page": len(outline) + 1,
                 "title": heading,
@@ -304,7 +304,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     )
     _style_slide(summary_slide, title_color=PRESENTATION_TITLE_COLOR)
     if summary_visual is not None:
-        _add_presentation_visual(summary_slide, summary_slide.placeholders[1], summary_visual)
+        _add_presentation_visual(summary_slide, summary_visual)
     summary_outline: dict[str, Any] = {
         "page": len(outline) + 1,
         "title": summary_title,
@@ -1483,7 +1483,9 @@ def _style_body_placeholder(
     frame.margin_bottom = Inches(0.06)
     total_characters = sum(len(value) for value in bullets)
     frame.vertical_anchor = (
-        MSO_ANCHOR.MIDDLE if len(bullets) <= 4 and total_characters <= 260 else MSO_ANCHOR.TOP
+        MSO_ANCHOR.MIDDLE
+        if not has_visual and len(bullets) <= 3 and total_characters <= 260
+        else MSO_ANCHOR.TOP
     )
     paragraph_spacing = 16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8
     for paragraph in frame.paragraphs:
@@ -1498,7 +1500,16 @@ def _presentation_render_text(value: str) -> str:
     def protect(match: re.Match[str]) -> str:
         return "\u2060".join(match.group(0))
 
-    text = re.sub(r"\b[A-Za-z]{2,8}\d{2,8}[A-Za-z]?\b", protect, value)
+    text = re.sub(
+        r"第\s*\d{1,4}\s*(?:页(?:\s*[-–—~～至到]\s*(?:第\s*)?\d{1,4}\s*页?)?"
+        r"|[-–—~～至到]\s*(?:第\s*)?\d{1,4}\s*页)",
+        protect,
+        value,
+    )
+    text = re.sub(r"\b[A-Za-z]{2,12}\+[A-Za-z]{2,12}\b", protect, text)
+    text = re.sub(r"\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\b", protect, text)
+    text = re.sub(r"\b(?:[A-Z][a-z0-9]+){2,}\b", protect, text)
+    text = re.sub(r"\b[A-Za-z]{2,8}\d{2,8}[A-Za-z]?\b", protect, text)
     text = re.sub(r"(?<![\d.])\d+(?:\.\d+)?%", protect, text)
     return re.sub(r"《[^》\r\n]{1,30}》", protect, text)
 
@@ -1912,14 +1923,8 @@ def _presentation_visual_model_usage(
 
 def _add_presentation_visual(
     slide: Any,
-    text_placeholder: Any,
     visual: dict[str, Any],
 ) -> None:
-    text_placeholder.left = Inches(0.78)
-    text_placeholder.top = Inches(1.42)
-    text_placeholder.width = Inches(5.45)
-    text_placeholder.height = Inches(5.28)
-    text_placeholder.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
     frame_left = int(Inches(6.63))
     frame_top = int(Inches(1.38))
     frame_width = int(Inches(6.08))

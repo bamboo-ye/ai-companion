@@ -265,15 +265,20 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertFalse(rows[0]["continuation"])
 
     def test_presentation_render_text_protects_codes_and_percentages(self) -> None:
-        rendered = _presentation_render_text("CS5491《AI 安全专题》平时70%、考试30%")
-
-        self.assertEqual(
-            rendered.replace("\u2060", ""),
-            "CS5491《AI 安全专题》平时70%、考试30%",
+        source = (
+            "CS5491《AI 安全专题》平时70%、考试30%；"
+            "plot_ccd；imshow+contour；StratifiedShuffleSplit；第19页"
         )
+        rendered = _presentation_render_text(source)
+
+        self.assertEqual(rendered.replace("\u2060", ""), source)
         self.assertIn("C\u2060S\u20605\u20604\u20609\u20601", rendered)
         self.assertIn("《\u2060A\u2060I\u2060 \u2060安\u2060全\u2060专\u2060题\u2060》", rendered)
         self.assertIn("7\u20600\u2060%", rendered)
+        self.assertIn("\u2060".join("plot_ccd"), rendered)
+        self.assertIn("\u2060".join("imshow+contour"), rendered)
+        self.assertIn("\u2060".join("StratifiedShuffleSplit"), rendered)
+        self.assertIn("\u2060".join("第19页"), rendered)
 
     def test_pptx_quality_rejects_english_visible_content_for_chinese_deck(self) -> None:
         result = execute(
@@ -963,6 +968,11 @@ class OfficeToolsTest(unittest.TestCase):
             "课程原文.pdf · 第 1 页",
         )
         generated = base64.b64decode(result["files"][0]["data_base64"])
+        deck = Presentation(io.BytesIO(generated))
+        self.assertEqual(
+            deck.slides[1].placeholders[1].text_frame.vertical_anchor,
+            MSO_ANCHOR.TOP,
+        )
         with ZipFile(io.BytesIO(generated)) as archive:
             self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
 
