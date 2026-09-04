@@ -316,6 +316,9 @@ class AgentRuntimeTest(unittest.TestCase):
                 self.composed_batches: list[str] = []
                 self.observation_sizes: list[int] = []
                 self.source_pages: list[list[int]] = []
+                self.active = 0
+                self.peak_active = 0
+                self.lock = threading.Lock()
 
             def plan(self, **values: Any) -> AgentPlan:
                 return AgentPlan(
@@ -347,31 +350,44 @@ class AgentRuntimeTest(unittest.TestCase):
                 context = values["context"]
                 document_round = context["document_processing_round"]
                 batch_id = str(document_round["batch_id"])
-                self.composed_batches.append(batch_id)
-                observations = context["observations"]
-                self.assert_single_observation(observations)
-                output = observations[0]["data"]["output"]
-                text = str(output["text"])
-                self.observation_sizes.append(len(text))
-                pages = list(output.get("source_pages") or [])
-                self.source_pages.append(pages)
-                sequence = len(self.composed_batches)
-                page = pages[0] if pages else 0
-                return {
-                    "title": "智能系统课程重点",
-                    "audience": "学生",
-                    "style": "简洁图文",
-                    "brief": (
-                        f"## 课程重点{sequence}\n"
-                        f"- 第{sequence}批包含感知、推理与执行知识（来源：第{page}页）\n"
-                        f"- 第{sequence}批内容来自对应课程材料（来源：第{page}页）"
-                    ),
-                    "slide_count": 3,
-                    # A sibling table capability may bias the model to emit
-                    # this harmless but unsupported top-level field. Harness
-                    # must project it out instead of replaying every batch.
-                    "table": {"title": "不应进入叙事型工具", "columns": [], "rows": []},
-                }
+                with self.lock:
+                    self.active += 1
+                    self.peak_active = max(self.peak_active, self.active)
+                    self.composed_batches.append(batch_id)
+                try:
+                    observations = context["observations"]
+                    self.assert_single_observation(observations)
+                    output = observations[0]["data"]["output"]
+                    text = str(output["text"])
+                    pages = list(output.get("source_pages") or [])
+                    with self.lock:
+                        self.observation_sizes.append(len(text))
+                        self.source_pages.append(pages)
+                    time.sleep(0.02)
+                    sequence = int(document_round["round_number"])
+                    page = pages[0] if pages else 0
+                    return {
+                        "title": "智能系统课程重点",
+                        "audience": "学生",
+                        "style": "简洁图文",
+                        "brief": (
+                            f"## 课程重点{sequence}\n"
+                            f"- 第{sequence}批包含感知、推理与执行知识（来源：第{page}页）\n"
+                            f"- 第{sequence}批内容来自对应课程材料（来源：第{page}页）"
+                        ),
+                        "slide_count": 3,
+                        # A sibling table capability may bias the model to emit
+                        # this harmless but unsupported top-level field. Harness
+                        # must project it out instead of replaying every batch.
+                        "table": {
+                            "title": "不应进入叙事型工具",
+                            "columns": [],
+                            "rows": [],
+                        },
+                    }
+                finally:
+                    with self.lock:
+                        self.active -= 1
 
             @staticmethod
             def assert_single_observation(observations: Any) -> None:
@@ -493,19 +509,47 @@ class AgentRuntimeTest(unittest.TestCase):
                 return_value=[incidental_structured_batch],
             ) as structured_batches,
         ):
-            result = AgentRuntime(
-                build_graph(
-                    checkpointer=InMemorySaver(),
-                    decisions=decisions,
-                    tools=tools,
-                )
-            ).start(payload)
+            serial_decisions = NarrativeRoundDecisions()
+            serial_tools = NarrativeRoundTools(ToolPreparation(status="completed", tool_name=""))
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "1"}):
+                serial_started = time.perf_counter()
+                serial_result = AgentRuntime(
+                    build_graph(
+                        checkpointer=InMemorySaver(),
+                        decisions=serial_decisions,
+                        tools=serial_tools,
+                    )
+                ).start({**payload, "run_id": "run-narrative-document-rounds-serial"})
+                serial_elapsed = time.perf_counter() - serial_started
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "2"}):
+                parallel_started = time.perf_counter()
+                result = AgentRuntime(
+                    build_graph(
+                        checkpointer=InMemorySaver(),
+                        decisions=decisions,
+                        tools=tools,
+                    )
+                ).start(payload)
+                parallel_elapsed = time.perf_counter() - parallel_started
 
         self.assertEqual(result["outcome"], "completed")
+        self.assertEqual(serial_result["outcome"], "completed")
+        self.assertEqual(serial_decisions.peak_active, 1)
+        self.assertEqual(
+            serial_result["document_processing"]["parallel_eligibility"],
+            {
+                "eligible": False,
+                "reason": "concurrency_disabled",
+                "mode": "",
+                "batch_count": 0,
+            },
+        )
         structured_batches.assert_not_called()
+        self.assertEqual(decisions.peak_active, 2)
+        self.assertLess(parallel_elapsed, serial_elapsed * 0.8)
         self.assertGreater(len(decisions.composed_batches), 5)
-        self.assertTrue(decisions.composed_batches[0].startswith("a1:r1:s"))
-        self.assertTrue(decisions.composed_batches[-1].startswith("a1:r5:s"))
+        self.assertTrue(any(value.startswith("a1:r1:s") for value in decisions.composed_batches))
+        self.assertTrue(any(value.startswith("a1:r5:s") for value in decisions.composed_batches))
         self.assertTrue(all(size <= 10_200 for size in decisions.observation_sizes))
         self.assertTrue(all(pages for pages in decisions.source_pages))
         generated = next(
@@ -521,10 +565,25 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(generated["slide_count"], generated["brief"].count("## ") + 2)
         self.assertLess(generated["slide_count"], len(decisions.composed_batches) + 2)
         self.assertTrue(result["document_processing"]["complete"])
+        self.assertTrue(result["document_processing"]["parallel"])
+        self.assertEqual(result["document_processing"]["parallel_mode"], "narrative")
+        self.assertEqual(result["document_processing"]["concurrency"], 2)
+        self.assertEqual(
+            result["document_processing"]["parallel_eligibility"],
+            {
+                "eligible": True,
+                "reason": "independent_batches",
+                "mode": "narrative",
+                "batch_count": len(decisions.composed_batches),
+            },
+        )
         self.assertEqual(
             len(result["document_processing"]["processed_batches"]),
             len(decisions.composed_batches),
         )
+        trace_nodes = [event["node"] for event in result["node_trace"]]
+        self.assertIn("fanout_composition", trace_nodes)
+        self.assertIn("join_composition", trace_nodes)
 
     def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
         current = {"table": {"rows": [{"entity_id": "g1"}]}}
@@ -894,6 +953,7 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertTrue(result["document_processing"]["parallel"])
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(result["document_processing"]["concurrency"], 2)
+        self.assertEqual(result["document_processing"]["parallel_mode"], "structured")
         self.assertLess(
             result["document_processing"]["wall_latency_ms"],
             result["document_processing"]["provider_latency_ms"],

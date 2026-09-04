@@ -3614,35 +3614,118 @@ def build_graph(
             return state["module"]
         return after_decision(state)
 
-    def parallel_composition_spec(state: AgentState) -> dict[str, Any] | None:
+    def parallel_composition_assessment(state: AgentState) -> dict[str, Any]:
+        def ineligible(
+            reason: str,
+            *,
+            mode: str = "",
+            batch_count: int = 0,
+        ) -> dict[str, Any]:
+            return {
+                "eligible": False,
+                "reason": reason,
+                "mode": mode,
+                "batch_count": max(0, batch_count),
+            }
+
         if _model_fanout_concurrency() <= 1:
-            return None
+            return ineligible("concurrency_disabled")
         proposed = state.get("proposed_tool", {})
         tool_name = proposed.get("name")
-        if (
-            not isinstance(tool_name, str)
-            or tool_name not in _PRESENTATION_TOOLS
-            or proposed.get("compose_arguments") is not True
-            or not _uses_structured_presentation_capability(state, tool_name)
-        ):
-            return None
+        if not isinstance(tool_name, str) or tool_name not in _PRESENTATION_TOOLS:
+            return ineligible("tool_not_supported")
+        if proposed.get("compose_arguments") is not True:
+            return ineligible("composition_not_required")
+        definition = _trusted_tool_definition(state, tool_name)
+        if definition is None:
+            return ineligible("trusted_tool_definition_missing")
         task_contract = state.get("task_contract", {})
-        candidate_batches = _presentation_document_batches(state)
-        batches = (
-            candidate_batches
-            if isinstance(task_contract, Mapping)
-            and (
-                (
-                    task_contract.get("exhaustive") is True
-                    and bool(_presentation_requested_columns(task_contract))
+        structured = _uses_structured_presentation_capability(state, tool_name)
+        mode = "structured" if structured else "narrative"
+        rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
+        structural_mapping: dict[str, Any] = {}
+        structural_violations: list[dict[str, Any]] = []
+        if structured:
+            candidate_batches = _presentation_document_batches(state)
+            batches = (
+                candidate_batches
+                if isinstance(task_contract, Mapping)
+                and (
+                    (
+                        task_contract.get("exhaustive") is True
+                        and bool(_presentation_requested_columns(task_contract))
+                    )
+                    or any(batch.get("focused") is True for batch in candidate_batches)
                 )
-                or any(batch.get("focused") is True for batch in candidate_batches)
+                else []
             )
-            else []
-        )
+            source_ir = _presentation_source_ir(state)
+            structural_mapping, structural_violations = _deterministic_presentation_mapping(
+                source_ir,
+                task_contract if isinstance(task_contract, Mapping) else {},
+            )
+            if structural_violations:
+                return ineligible(
+                    "structural_mapping_unavailable",
+                    mode=mode,
+                    batch_count=len(batches),
+                )
+            if any(batch.get("structured") is not True for batch in batches):
+                return ineligible(
+                    "structured_batches_not_independent",
+                    mode=mode,
+                    batch_count=len(batches),
+                )
+        else:
+            # Narrative and visual decks already merge Markdown slide sections
+            # deterministically in source order. Each bounded source batch is
+            # therefore independent as long as it is not a repair pass and the
+            # trusted tool contract explicitly accepts the Markdown ``brief``.
+            # Repairs retain the serial path because they depend on the fully
+            # merged artifact and its validation report.
+            if tool_name != "work_generate_pptx":
+                return ineligible("narrative_tool_not_supported", mode=mode)
+            if rewrite_attempt > 0:
+                return ineligible("rewrite_requires_serial_state", mode=mode)
+            parameters = definition.get("parameters")
+            properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
+            brief_schema = properties.get("brief") if isinstance(properties, Mapping) else None
+            if not isinstance(brief_schema, Mapping) or brief_schema.get("type") != "string":
+                return ineligible("narrative_brief_schema_missing", mode=mode)
+            batches = _presentation_focused_document_batches(
+                state
+            ) or _presentation_text_document_batches(state)
+            if any(batch.get("structured") is True for batch in batches):
+                return ineligible(
+                    "narrative_batch_shape_invalid",
+                    mode=mode,
+                    batch_count=len(batches),
+                )
+            mode = (
+                "focused_narrative"
+                if any(batch.get("focused") is True for batch in batches)
+                else "narrative"
+            )
+        if len(batches) < 2:
+            return ineligible(
+                "insufficient_independent_batches",
+                mode=mode,
+                batch_count=len(batches),
+            )
+        batch_ids = [str(batch.get("batch_id") or "") for batch in batches]
+        if (
+            any(not batch_id for batch_id in batch_ids)
+            or len(set(batch_ids)) != len(batch_ids)
+            or any(not str(batch.get("processing_text") or "").strip() for batch in batches)
+        ):
+            return ineligible(
+                "batch_identity_or_payload_invalid",
+                mode=mode,
+                batch_count=len(batches),
+            )
         raw_base_arguments = proposed.get("arguments")
         base_arguments = dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
-        rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
+        base_arguments = _project_arguments_to_trusted_schema(base_arguments, definition)
         missing_keys: list[str] = []
         if rewrite_attempt > 0:
             base_arguments = _normalize_presentation_arguments(
@@ -3657,31 +3740,28 @@ def build_graph(
                 base_arguments,
                 state,
             )
-        source_ir = _presentation_source_ir(state)
-        structural_mapping, structural_violations = _deterministic_presentation_mapping(
-            source_ir,
-            task_contract if isinstance(task_contract, Mapping) else {},
-        )
-        # Only compact logical-entity batches are independent of previously
-        # merged output. Focused/free-text batches retain the established
-        # checkpointed serial Composer path.
-        if (
-            len(batches) < 2
-            or structural_violations
-            or any(batch.get("structured") is not True for batch in batches)
-        ):
-            return None
-        base_arguments["mapping_contract"] = structural_mapping
+        if len(batches) < 2:
+            return ineligible(
+                "insufficient_repair_batches",
+                mode=mode,
+                batch_count=len(batches),
+            )
+        if structural_mapping:
+            base_arguments["mapping_contract"] = structural_mapping
         processing_key = canonical_arguments_hash(
             {
-                "version": "document-processing-fanout-v1",
+                "version": "document-processing-fanout-v2",
                 "tool_name": tool_name,
+                "mode": mode,
                 "rewrite_attempt": rewrite_attempt,
                 "batches": [batch.get("batch_id") for batch in batches],
             }
         )
         return {
-            "version": "composer-fanout-v1",
+            "eligible": True,
+            "reason": "independent_batches",
+            "mode": mode,
+            "version": "composer-fanout-v2",
             "processing_key": processing_key,
             "tool_name": tool_name,
             "rewrite_attempt": rewrite_attempt,
@@ -3691,6 +3771,10 @@ def build_graph(
             "structural_mapping": structural_mapping,
             "missing_record_keys": missing_keys,
         }
+
+    def parallel_composition_spec(state: AgentState) -> dict[str, Any] | None:
+        assessment = parallel_composition_assessment(state)
+        return assessment if assessment.get("eligible") is True else None
 
     def composition_route(state: AgentState) -> str:
         return (
@@ -3751,9 +3835,10 @@ def build_graph(
             "composition_plan": plan,
             "composition_results": [{"reset": True}],
             "document_processing": {
-                "version": "document-processing-fanout-v1",
+                "version": "document-processing-fanout-v2",
                 "processing_key": spec["processing_key"],
                 "tool_name": spec["tool_name"],
+                "parallel_mode": spec["mode"],
                 "rewrite_attempt": spec["rewrite_attempt"],
                 "batch_count": batch_count,
                 "processed_batches": [],
@@ -3761,6 +3846,12 @@ def build_graph(
                 "complete": False,
                 "parallel": True,
                 "concurrency": concurrency,
+                "parallel_eligibility": {
+                    "eligible": True,
+                    "reason": spec["reason"],
+                    "mode": spec["mode"],
+                    "batch_count": batch_count,
+                },
             },
             "node_trace": [
                 *state.get("node_trace", []),
@@ -3770,6 +3861,7 @@ def build_graph(
                     details={
                         "batch_count": batch_count,
                         "concurrency": concurrency,
+                        "parallel_mode": spec["mode"],
                         "budget_reserved": True,
                     },
                 ),
@@ -3799,7 +3891,7 @@ def build_graph(
         context["previous_merged_record_count"] = 0
         context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
         structural_mapping = spec.get("structural_mapping")
-        if isinstance(structural_mapping, Mapping):
+        if isinstance(structural_mapping, Mapping) and structural_mapping:
             context["locked_mapping_contract"] = dict(structural_mapping)
         source_ir = _presentation_source_ir(state)
         source_tables = _relevant_source_tables(
@@ -3825,7 +3917,7 @@ def build_graph(
             ],
         }
         context["document_processing_round"] = {
-            "version": "document-processing-fanout-v1",
+            "version": "document-processing-fanout-v2",
             "batch_id": batch.get("batch_id"),
             "round_number": batch_index + 1,
             "round_count": int(spec["batch_count"]),
@@ -3836,10 +3928,14 @@ def build_graph(
             "rewrite_attempt": int(spec.get("rewrite_attempt") or 0),
             "timeout_retry_attempt": 0,
             "missing_record_keys": list(spec.get("missing_record_keys") or []),
-            "structured": True,
-            "focused": False,
-            "compact_entity_ir": True,
-            "focus_phrases": [],
+            "structured": batch.get("structured") is True,
+            "focused": batch.get("focused") is True,
+            "compact_entity_ir": (
+                isinstance(batch.get("source_ir"), Mapping)
+                and batch.get("source_ir", {}).get("version") == "presentation-logical-entity-ir-v1"
+            ),
+            "focus_phrases": list(batch.get("focus_phrases") or []),
+            "parallel_mode": spec["mode"],
         }
         return context
 
@@ -3850,7 +3946,12 @@ def build_graph(
         spec = parallel_composition_spec(state)
         if spec is None or plan.get("processing_key") != spec.get("processing_key"):
             raise ValueError("parallel Composer plan changed before dispatch")
-        batches = _presentation_document_batches(state)
+        if spec.get("mode") in ("narrative", "focused_narrative"):
+            batches = _presentation_focused_document_batches(
+                state
+            ) or _presentation_text_document_batches(state)
+        else:
+            batches = _presentation_document_batches(state)
         if int(spec.get("rewrite_attempt") or 0) > 0:
             batches, _ = _repair_document_batches(
                 batches,
@@ -3873,7 +3974,7 @@ def build_graph(
                     "compose_document_batch",
                     {
                         "composition_job": {
-                            "version": "composer-fanout-job-v1",
+                            "version": "composer-fanout-job-v2",
                             "processing_key": plan["processing_key"],
                             "batch_index": index,
                             "batch_count": len(batch_ids),
@@ -3932,7 +4033,7 @@ def build_graph(
 
     def compose_document_batch(state: AgentState) -> dict[str, Any]:
         job = state.get("composition_job", {})
-        if job.get("version") != "composer-fanout-job-v1":
+        if job.get("version") != "composer-fanout-job-v2":
             raise ValueError("parallel Composer job version is invalid")
         composer = getattr(decisions, "compose_arguments", None)
         if not callable(composer):
@@ -3982,7 +4083,7 @@ def build_graph(
         return {
             "composition_results": [
                 {
-                    "version": "composer-fanout-result-v1",
+                    "version": "composer-fanout-result-v2",
                     "processing_key": job["processing_key"],
                     "batch_index": int(job["batch_index"]),
                     "batch_id": batch_id,
@@ -4130,22 +4231,36 @@ def build_graph(
                     "status": "failed",
                 },
             }
-        batches = _presentation_document_batches(state)
+        if plan.get("mode") in ("narrative", "focused_narrative"):
+            batches = _presentation_focused_document_batches(
+                state
+            ) or _presentation_text_document_batches(state)
+        else:
+            batches = _presentation_document_batches(state)
         by_id = {str(batch.get("batch_id") or ""): batch for batch in batches}
         merged_arguments = dict(plan.get("base_arguments", {}))
         processed: list[dict[str, Any]] = []
+        definition = _trusted_tool_definition(state, str(plan["tool_name"]))
+        if definition is None:
+            raise ValueError("argument composition requires a trusted tool definition")
+        structured_mode = plan.get("mode") == "structured"
         for result in results:
             batch = by_id.get(str(result["batch_id"]))
             if batch is None:
                 raise ValueError("parallel Composer source batch is unavailable at join")
-            normalized = _normalize_presentation_arguments(
+            projected = _project_arguments_to_trusted_schema(
                 cast(Mapping[str, Any], result["arguments"]),
+                definition,
+            )
+            normalized = _normalize_presentation_arguments(
+                projected,
                 state,
             )
-            normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
-            normalized = _ground_structured_batch_arguments(normalized, batch, state)
-            normalized = _normalize_presentation_arguments(normalized, state)
-            normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
+            if structured_mode:
+                normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
+                normalized = _ground_structured_batch_arguments(normalized, batch, state)
+                normalized = _normalize_presentation_arguments(normalized, state)
+                normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
             merged_arguments = _merge_presentation_arguments(
                 merged_arguments,
                 normalized,
@@ -4164,11 +4279,18 @@ def build_graph(
                     "record_count": len(
                         table.get("rows", []) if isinstance(table, Mapping) else []
                     ),
+                    "section_count": len(_presentation_brief_blocks(normalized.get("brief"))),
                 }
             )
-        definition = _trusted_tool_definition(state, str(plan["tool_name"]))
-        if definition is None:
-            raise ValueError("argument composition requires a trusted tool definition")
+        if not structured_mode:
+            merged_arguments = _finalize_narrative_presentation_arguments(
+                merged_arguments,
+                state,
+            )
+            merged_arguments = _project_arguments_to_trusted_schema(
+                merged_arguments,
+                definition,
+            )
         parameters = definition.get("parameters")
         properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
         if isinstance(properties, Mapping) and "task_contract" in properties:
@@ -4177,11 +4299,13 @@ def build_graph(
             merged_arguments["source_coverage"] = _document_source_coverage(state)
         final_table = merged_arguments.get("table")
         final_rows = final_table.get("rows", []) if isinstance(final_table, Mapping) else []
-        expected_keys = presentation_source_record_keys(
-            state.get("observations", []),
-            state.get("task_contract", {}),
-        )
-        missing_keys = _missing_presentation_record_keys(merged_arguments, expected_keys)
+        missing_keys: list[str] = []
+        if structured_mode:
+            expected_keys = presentation_source_record_keys(
+                state.get("observations", []),
+                state.get("task_contract", {}),
+            )
+            missing_keys = _missing_presentation_record_keys(merged_arguments, expected_keys)
         wall_latency_ms = max(
             0,
             int(time.time() * 1000) - int(plan.get("started_at_ms") or 0),
@@ -4201,6 +4325,9 @@ def build_graph(
                 "complete": True,
                 "status": "completed",
                 "merged_record_count": len(final_rows),
+                "merged_section_count": len(
+                    _presentation_brief_blocks(merged_arguments.get("brief"))
+                ),
                 "provider_latency_ms": sum(int(event.get("latency_ms") or 0) for event in events),
                 "wall_latency_ms": wall_latency_ms,
             },
@@ -4212,7 +4339,11 @@ def build_graph(
                     details={
                         "batch_count": len(results),
                         "concurrency": plan.get("concurrency"),
+                        "parallel_mode": plan.get("mode"),
                         "merged_record_count": len(final_rows),
+                        "merged_section_count": len(
+                            _presentation_brief_blocks(merged_arguments.get("brief"))
+                        ),
                         "provider_latency_ms": sum(
                             int(event.get("latency_ms") or 0) for event in events
                         ),
@@ -4243,6 +4374,22 @@ def build_graph(
         definition = _trusted_tool_definition(state, normalized_tool_name)
         if definition is None:
             raise ValueError("argument composition requires a trusted tool definition")
+        parallel_assessment = (
+            parallel_composition_assessment(state)
+            if presentation_tool
+            else {
+                "eligible": False,
+                "reason": "tool_not_supported",
+                "mode": "",
+                "batch_count": 0,
+            }
+        )
+        parallel_eligibility = {
+            "eligible": parallel_assessment.get("eligible") is True,
+            "reason": str(parallel_assessment.get("reason") or ""),
+            "mode": str(parallel_assessment.get("mode") or ""),
+            "batch_count": int(parallel_assessment.get("batch_count") or 0),
+        }
         task_contract = state.get("task_contract", {})
         source_ir = _presentation_source_ir(state) if presentation_tool else {}
         structural_mapping: dict[str, Any] = {}
@@ -4409,6 +4556,7 @@ def build_graph(
                 "missing_record_keys": missing_keys,
                 "active_batch_timeout_retries": 0,
                 "timeout_retry_total": 0,
+                "parallel_eligibility": parallel_eligibility,
                 "complete": False,
             }
         batch: dict[str, Any] | None = None
@@ -4714,6 +4862,7 @@ def build_graph(
                             "batch_number": next_batch_index,
                             "batch_count": len(selected_batches),
                             "merged_record_count": processing_update["merged_record_count"],
+                            "parallel_eligibility": parallel_eligibility,
                         }
                     )
         return {
