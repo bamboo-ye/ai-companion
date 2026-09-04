@@ -1464,7 +1464,8 @@ class AgentRuntimeTest(unittest.TestCase):
                 "- 插图2：放置数据集图片\n\n"
                 "## 评估指标\n"
                 "- 使用准确率衡量结果（来源：第20页）\n"
-                "- 检查混淆矩阵（来源：第20页）"
+                "- 检查混淆矩阵（来源：第20页）\n"
+                "- 可在PPT中配图：展示混淆矩阵（来源：第20页）"
             ),
             "slide_count": 6,
         }
@@ -1477,6 +1478,7 @@ class AgentRuntimeTest(unittest.TestCase):
         brief = finalized["brief"]
         self.assertNotIn("可视化建议", brief)
         self.assertNotIn("插图1", brief)
+        self.assertNotIn("可在PPT中配图", brief)
         self.assertEqual(brief.count("## "), 2)
         self.assertIn("训练与测试划分：随机划分数据", brief)
         self.assertEqual(finalized["slide_count"], 4)

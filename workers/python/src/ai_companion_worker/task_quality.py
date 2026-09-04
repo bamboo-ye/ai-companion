@@ -117,6 +117,8 @@ _PRESENTATION_AUDIENCE_META = re.compile(
     r"示例摘录|关键事实摘录与翻译|来源覆盖(?:率|与声明)?|结构化抽取|未被截断|"
     r"引用\s*[（(].*?PPT|备注\s*[：:]|如需调整页数|请说明偏好|请告知|"
     r"可视化建议\s*[（(][^）)]*(?:授课|演示|展示)[^）)]*[）)]|"
+    r"(?:可视化|插图|配图)(?:设计)?建议\s*[:：].*(?:每页|配图|展示|放置|使用)|"
+    r"可在\s*PPT\s*中(?:配图|展示|放置)|"
     r"(?:插图|配图)\s*\d+\s*[\uFF1A:]|"
     r"source\s*ir|source_locator|harness|attachment\s*index|document\s*round)",
     re.IGNORECASE,

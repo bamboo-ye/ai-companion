@@ -421,9 +421,10 @@ class TaskQualityTests(unittest.TestCase):
                 "audience": "学生",
                 "style": "简洁",
                 "brief": (
-                    "## 可视化建议（授课时使用）\n"
-                    "- 插图1：展示贝叶斯分类流程\n"
-                    "- 插图2：放置数据集示意图"
+                    "## 模型平滑\n"
+                    "- 平滑可避免零概率\n"
+                    "- 可视化建议：每页配图展示分类流程\n"
+                    "- 可在PPT中配图：放置数据集示意图"
                 ),
                 "slide_count": 3,
             },

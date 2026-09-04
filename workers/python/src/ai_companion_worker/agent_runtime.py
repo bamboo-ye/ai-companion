@@ -2235,7 +2235,9 @@ _PRESENTATION_PRODUCTION_HEADING = re.compile(
     re.I,
 )
 _PRESENTATION_PRODUCTION_BULLET = re.compile(
-    r"^(?:(?:插图|配图|图片|图示)\s*\d*\s*[:：]|"
+    r"^(?:(?:可视化|插图|配图)(?:设计)?建议\s*[:：].*(?:每页|配图|展示|放置|使用)|"
+    r"可在\s*PPT\s*中(?:配图|展示|放置)|"
+    r"(?:插图|配图|图片|图示)\s*\d*\s*[:：]|"
     r"(?:建议|可|请)(?:绘制|展示|使用|生成|放置))",
     re.I,
 )
@@ -2336,9 +2338,16 @@ def _finalize_narrative_presentation_arguments(
             return _normalize_presentation_arguments(finalized, state)
         current["bullets"].extend(_split_presentation_bullet(bullet_match.group(1).strip()))
 
-    audience_sections = [
-        section for section in sections if not _is_presentation_production_section(section)
-    ]
+    audience_sections = []
+    for section in sections:
+        if _is_presentation_production_section(section):
+            continue
+        section["bullets"] = [
+            bullet
+            for bullet in section["bullets"]
+            if not _PRESENTATION_PRODUCTION_BULLET.match(str(bullet).strip())
+        ]
+        audience_sections.append(section)
     if audience_sections:
         sections = audience_sections
 
