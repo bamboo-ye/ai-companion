@@ -1,7 +1,7 @@
 {
   "schema_version": "agent-eval-baseline-v1",
   "version": "pr.v1",
-  "graph_version": "3.60.0",
+  "graph_version": "3.62.0",
   "minimum_cases": 7,
   "minimum": {
     "hard_pass_rate": 1.0

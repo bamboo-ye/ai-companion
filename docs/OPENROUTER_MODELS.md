@@ -85,7 +85,7 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.60.0` makes presentation capability selection a planner-owned
+Graph version `3.62.0` makes presentation capability selection a planner-owned
 semantic decision. Work-module PPT requests now enter `plan` before routing. The
 planner returns a composable capability set containing `narrative` and, only
 when required, `table` and/or `visual`; the Harness then refines the task
@@ -104,7 +104,12 @@ visuals are placed only on topics that cite the same page; the artifact quality
 gate independently rejects any source-image/topic page mismatch. Image-backed
 or dense text columns stay top-aligned and use width-aware font sizing and
 paragraph spacing; a rendered-line capacity estimate fails the artifact gate
-before wrapped body text can escape its placeholder. Source-page markers and
+before wrapped body text can escape its placeholder. Narrative lists write an
+explicit native bullet character with stable left and hanging indents. Wrapped
+CJK list items use a paired native-marker and editable-text layout so renderers
+cannot move the marker onto an otherwise empty line while the item text starts
+below it. This keeps the marker and first line on the same baseline so the
+layout remains stable across renderers. Source-page markers and
 code-like identifiers are kept on one rendered line.
 
 Every branch receives

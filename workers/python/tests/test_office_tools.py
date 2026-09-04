@@ -25,6 +25,7 @@ from reportlab.pdfgen import canvas
 from ai_companion_worker.office_tools import (
     CJK_FONT_CANDIDATES,
     ModelBackedOperationError,
+    PRESENTATION_BODY_FONT_FAMILY,
     _openrouter_translate,
     _presentation_body_text_overflow_risk,
     _translate_layout_blocks,
@@ -1019,9 +1020,61 @@ class OfficeToolsTest(unittest.TestCase):
         generated = base64.b64decode(result["files"][0]["data_base64"])
         deck = Presentation(io.BytesIO(generated))
         body = deck.slides[1].placeholders[1]
-        self.assertEqual({paragraph.font.size.pt for paragraph in body.text_frame.paragraphs}, {15})
-        self.assertEqual({paragraph.space_after.pt for paragraph in body.text_frame.paragraphs}, {4})
-        self.assertFalse(_presentation_body_text_overflow_risk(body))
+        bullet_markers = [
+            shape
+            for shape in deck.slides[1].shapes
+            if shape.name.startswith("Native Bullet Marker ")
+        ]
+        bullet_texts = [
+            shape
+            for shape in deck.slides[1].shapes
+            if shape.name.startswith("Bullet Text ")
+        ]
+        self.assertEqual(len(bullet_markers), 5)
+        self.assertEqual(len(bullet_texts), 5)
+        self.assertEqual(
+            {shape.text_frame.paragraphs[0].font.size.pt for shape in bullet_markers},
+            {15},
+        )
+        self.assertEqual(
+            {shape.text_frame.paragraphs[0].space_after.pt for shape in bullet_markers},
+            {0},
+        )
+        for current, following in zip(bullet_markers, bullet_markers[1:]):
+            self.assertLessEqual(current.top + current.height, following.top)
+        for marker, text_shape, expected_text in zip(
+            bullet_markers,
+            bullet_texts,
+            bullets,
+            strict=True,
+        ):
+            self.assertEqual(marker.top, text_shape.top)
+            self.assertEqual(marker.height, text_shape.height)
+            self.assertEqual(marker.left + marker.width, text_shape.left)
+            self.assertEqual(text_shape.text.replace("\u2060", ""), expected_text)
+            self.assertEqual(text_shape.text_frame.margin_left, 0)
+            self.assertEqual(text_shape.text_frame.paragraphs[0].font.size.pt, 15)
+            self.assertFalse(_presentation_body_text_overflow_risk(text_shape))
+        for shape in bullet_markers:
+            self.assertEqual(len(shape.text_frame.paragraphs), 1)
+            paragraph = shape.text_frame.paragraphs[0]
+            self.assertEqual(paragraph.text, "\u2060")
+            properties = paragraph._p.pPr
+            self.assertEqual(properties.get("marL"), str(int(Pt(18))))
+            self.assertEqual(properties.get("indent"), str(-int(Pt(9))))
+            bullet_elements = {
+                child.tag.rsplit("}", 1)[-1]: child
+                for child in properties
+                if "}bu" in child.tag
+            }
+            self.assertEqual(bullet_elements["buChar"].get("char"), "•")
+            self.assertEqual(bullet_elements["buSzPct"].get("val"), "100000")
+            self.assertEqual(
+                bullet_elements["buFont"].get("typeface"),
+                PRESENTATION_BODY_FONT_FAMILY,
+            )
+            self.assertFalse(_presentation_body_text_overflow_risk(shape))
+        self.assertEqual(body.text_frame.vertical_anchor, MSO_ANCHOR.TOP)
 
     def test_presentation_gate_detects_wrapped_body_overflow_risk(self) -> None:
         deck = Presentation()
