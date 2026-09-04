@@ -1234,6 +1234,8 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("按来源顺序去重合并章节", system_prompt)
         self.assertNotIn("当前轮次 table", system_prompt)
         self.assertIn("（来源：第N页）", system_prompt)
+        self.assertIn("禁止为了简化而代数改写、重新缩放", system_prompt)
+        self.assertIn("不得自行补出公式", system_prompt)
 
     def test_bounded_narrative_round_preserves_composer_fallback_attempt(self) -> None:
         arguments = {
