@@ -285,6 +285,10 @@ class ModelBudgetExceeded(RuntimeError):
     """Raised before dispatch when no safe model allowance remains."""
 
 
+class ComposerBranchContractError(ValueError):
+    """Raised when one fan-out Composer result violates its branch contract."""
+
+
 @dataclass(frozen=True)
 class ToolPreparation:
     status: ToolStatus
@@ -512,6 +516,15 @@ def _validate_tool_arguments(
     schema = definition.get("parameters")
     if not isinstance(schema, Mapping):
         raise ValueError("trusted tool parameter schema must be an object")
+    validate_arguments_against_schema(arguments, schema)
+
+
+def validate_arguments_against_schema(
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any],
+) -> None:
+    """Validate model-produced arguments with the trusted runtime subset."""
+
     _validate_schema_value(dict(arguments), schema, path="arguments", depth=0)
 
 
@@ -868,6 +881,9 @@ _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
+_PARALLEL_NARRATIVE_BATCH_MAX_CHARS = 8_800
+_PARALLEL_NARRATIVE_MAX_BATCHES = 8
+_PARALLEL_COMPOSITION_MAX_RETRY_ROUNDS = 1
 _STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 10_000
 _STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 12
 _FOCUSED_PAGE_MAX_CHARS = 5_000
@@ -1240,6 +1256,97 @@ def _presentation_text_document_batches(state: AgentState) -> list[dict[str, Any
         if int(batch.get("segment_count") or 1) > 1:
             batch["batch_id"] += f":s{batch['segment_no']}"
     return ordered
+
+
+def _coalesce_parallel_narrative_batches(
+    batches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine adjacent narrative shards into fewer bounded fan-out jobs."""
+
+    grouped: list[list[dict[str, Any]]] = []
+    active: list[dict[str, Any]] = []
+    active_characters = 0
+    active_source: tuple[int, str] | None = None
+    for raw_batch in batches:
+        batch = dict(raw_batch)
+        text = str(batch.get("text") or "").strip()
+        if not text:
+            continue
+        source = (
+            int(batch.get("attachment_index") or 1),
+            str(batch.get("source_filename") or ""),
+        )
+        joined_characters = active_characters + (2 if active else 0) + len(text)
+        if active and (
+            source != active_source or joined_characters > _PARALLEL_NARRATIVE_BATCH_MAX_CHARS
+        ):
+            grouped.append(active)
+            active = []
+            active_characters = 0
+        if not active:
+            active_source = source
+        active.append(batch)
+        active_characters += (2 if active_characters else 0) + len(text)
+    if active:
+        grouped.append(active)
+
+    coalesced: list[dict[str, Any]] = []
+    for members in grouped:
+        first = members[0]
+        last = members[-1]
+        source_batch_ids = [str(item.get("batch_id") or "") for item in members]
+        source_batch_ids = [value for value in source_batch_ids if value]
+        batch_id = source_batch_ids[0] if source_batch_ids else ""
+        if len(source_batch_ids) > 1:
+            batch_id += f"..{source_batch_ids[-1]}"
+        source_pages = list(
+            dict.fromkeys(
+                int(page)
+                for item in members
+                for page in item.get("source_pages", [])
+                if isinstance(page, int) and not isinstance(page, bool) and page > 0
+            )
+        )
+        coalesced.append(
+            {
+                **first,
+                "batch_id": batch_id,
+                "source_batch_ids": source_batch_ids,
+                "text": "\n\n".join(str(item.get("text") or "").strip() for item in members),
+                "token_count": sum(int(item.get("token_count") or 0) for item in members),
+                "source_pages": source_pages,
+                "source_round_end": int(last.get("round_no") or first.get("round_no") or 1),
+                "source_segment_end": int(last.get("segment_no") or 1),
+                "focused": any(item.get("focused") is True for item in members),
+                "focus_phrases": list(
+                    dict.fromkeys(
+                        str(phrase)
+                        for item in members
+                        for phrase in item.get("focus_phrases", [])
+                        if str(phrase).strip()
+                    )
+                ),
+                "structured": False,
+            }
+        )
+
+    previous_tail = ""
+    previous_source: tuple[int, str] | None = None
+    overlap_prefix = "[[PREVIOUS ROUND OVERLAP — CONTEXT ONLY]]\n"
+    current_prefix = "\n[[CURRENT ROUND]]\n"
+    for batch in coalesced:
+        current = str(batch["text"])
+        source = (
+            int(batch.get("attachment_index") or 1),
+            str(batch.get("source_filename") or ""),
+        )
+        if previous_tail and source == previous_source:
+            batch["processing_text"] = overlap_prefix + previous_tail + current_prefix + current
+        else:
+            batch["processing_text"] = current
+        previous_tail = current[-_DOCUMENT_PROCESSING_OVERLAP_CHARS:]
+        previous_source = source
+    return coalesced
 
 
 def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
@@ -2223,6 +2330,56 @@ def _presentation_brief_blocks(value: Any) -> list[str]:
         if block:
             blocks.append(block)
     return blocks
+
+
+def _validate_parallel_composition_arguments(
+    arguments: Mapping[str, Any],
+    job: Mapping[str, Any],
+) -> None:
+    """Enforce the deterministic contract shared by every Composer branch."""
+
+    for key in ("title", "audience", "style"):
+        value = arguments.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ComposerBranchContractError(f"Composer branch {key} must be non-empty")
+    context = job.get("context")
+    processing_round = (
+        context.get("document_processing_round") if isinstance(context, Mapping) else None
+    )
+    mode = (
+        str(processing_round.get("parallel_mode") or "")
+        if isinstance(processing_round, Mapping)
+        else ""
+    )
+    if mode == "structured":
+        if not isinstance(arguments.get("table"), Mapping):
+            raise ComposerBranchContractError("structured Composer branch requires table")
+        return
+    if mode not in ("narrative", "focused_narrative"):
+        raise ComposerBranchContractError("Composer branch parallel mode is invalid")
+    brief = arguments.get("brief")
+    if not isinstance(brief, str) or not brief.strip():
+        raise ComposerBranchContractError("narrative Composer branch requires brief")
+    blocks = _presentation_brief_blocks(brief)
+    if not 1 <= len(blocks) <= 2:
+        raise ComposerBranchContractError(
+            "narrative Composer branch must contain one or two sections"
+        )
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines or re.fullmatch(r"##\s+\S.*", lines[0]) is None:
+            raise ComposerBranchContractError(
+                "narrative Composer section requires a Markdown heading"
+            )
+        if len(lines) < 3 or any(re.fullmatch(r"-\s+\S.*", line) is None for line in lines[1:]):
+            raise ComposerBranchContractError(
+                "narrative Composer section requires at least two Markdown bullets"
+            )
+    slide_count = arguments.get("slide_count")
+    if slide_count != len(blocks) + 2:
+        raise ComposerBranchContractError(
+            "narrative Composer slide_count must equal section count plus two"
+        )
 
 
 _PRESENTATION_BULLET_SOURCE_SUFFIX = re.compile(
@@ -3614,6 +3771,14 @@ def build_graph(
             return state["module"]
         return after_decision(state)
 
+    def parallel_source_batches(state: AgentState, mode: str) -> list[dict[str, Any]]:
+        if mode in ("narrative", "focused_narrative"):
+            narrative = _presentation_focused_document_batches(
+                state
+            ) or _presentation_text_document_batches(state)
+            return _coalesce_parallel_narrative_batches(narrative)
+        return _presentation_document_batches(state)
+
     def parallel_composition_assessment(state: AgentState) -> dict[str, Any]:
         def ineligible(
             reason: str,
@@ -3692,9 +3857,7 @@ def build_graph(
             brief_schema = properties.get("brief") if isinstance(properties, Mapping) else None
             if not isinstance(brief_schema, Mapping) or brief_schema.get("type") != "string":
                 return ineligible("narrative_brief_schema_missing", mode=mode)
-            batches = _presentation_focused_document_batches(
-                state
-            ) or _presentation_text_document_batches(state)
+            batches = parallel_source_batches(state, mode)
             if any(batch.get("structured") is True for batch in batches):
                 return ineligible(
                     "narrative_batch_shape_invalid",
@@ -3706,6 +3869,12 @@ def build_graph(
                 if any(batch.get("focused") is True for batch in batches)
                 else "narrative"
             )
+            if len(batches) > _PARALLEL_NARRATIVE_MAX_BATCHES:
+                return ineligible(
+                    "narrative_batch_count_exceeds_limit",
+                    mode=mode,
+                    batch_count=len(batches),
+                )
         if len(batches) < 2:
             return ineligible(
                 "insufficient_independent_batches",
@@ -3750,7 +3919,7 @@ def build_graph(
             base_arguments["mapping_contract"] = structural_mapping
         processing_key = canonical_arguments_hash(
             {
-                "version": "document-processing-fanout-v2",
+                "version": "document-processing-fanout-v3",
                 "tool_name": tool_name,
                 "mode": mode,
                 "rewrite_attempt": rewrite_attempt,
@@ -3761,7 +3930,7 @@ def build_graph(
             "eligible": True,
             "reason": "independent_batches",
             "mode": mode,
-            "version": "composer-fanout-v2",
+            "version": "composer-fanout-v3",
             "processing_key": processing_key,
             "tool_name": tool_name,
             "rewrite_attempt": rewrite_attempt,
@@ -3830,12 +3999,15 @@ def build_graph(
             "allocations": allocations,
             "concurrency": concurrency,
             "started_at_ms": int(time.time() * 1000),
+            "all_batch_ids": list(spec["batch_ids"]),
+            "completed_results": [],
+            "retry_round": 0,
         }
         return {
             "composition_plan": plan,
             "composition_results": [{"reset": True}],
             "document_processing": {
-                "version": "document-processing-fanout-v2",
+                "version": "document-processing-fanout-v3",
                 "processing_key": spec["processing_key"],
                 "tool_name": spec["tool_name"],
                 "parallel_mode": spec["mode"],
@@ -3846,6 +4018,7 @@ def build_graph(
                 "complete": False,
                 "parallel": True,
                 "concurrency": concurrency,
+                "retry_round": 0,
                 "parallel_eligibility": {
                     "eligible": True,
                     "reason": spec["reason"],
@@ -3863,6 +4036,40 @@ def build_graph(
                         "concurrency": concurrency,
                         "parallel_mode": spec["mode"],
                         "budget_reserved": True,
+                    },
+                ),
+            ],
+            "steps": state.get("steps", 0) + 1,
+        }
+
+    def retry_composition(state: AgentState) -> dict[str, Any]:
+        node = "retry_composition"
+        plan = state.get("composition_plan", {})
+        batch_ids = [str(value) for value in plan.get("batch_ids", [])]
+        retry_round = int(plan.get("retry_round") or 0)
+        if (
+            retry_round <= 0
+            or retry_round > _PARALLEL_COMPOSITION_MAX_RETRY_ROUNDS
+            or not batch_ids
+            or state.get("document_processing", {}).get("status") != "retry_pending"
+        ):
+            raise ValueError("parallel Composer retry checkpoint is invalid")
+        reason = model_access_reason(state, "compose_document_batch")
+        if reason:
+            return model_terminal_update(state, node=node, reason=reason)
+        return {
+            "document_processing": {
+                **state.get("document_processing", {}),
+                "status": "retrying",
+            },
+            "node_trace": [
+                *state.get("node_trace", []),
+                _trace_event(
+                    node,
+                    "succeeded",
+                    details={
+                        "retry_round": retry_round,
+                        "batch_ids": batch_ids,
                     },
                 ),
             ],
@@ -3917,8 +4124,9 @@ def build_graph(
             ],
         }
         context["document_processing_round"] = {
-            "version": "document-processing-fanout-v2",
+            "version": "document-processing-fanout-v3",
             "batch_id": batch.get("batch_id"),
+            "source_batch_ids": list(batch.get("source_batch_ids") or []),
             "round_number": batch_index + 1,
             "round_count": int(spec["batch_count"]),
             "source_round": int(batch.get("round_no") or 1),
@@ -3927,6 +4135,7 @@ def build_graph(
             "attachment_index": int(batch.get("attachment_index") or 1),
             "rewrite_attempt": int(spec.get("rewrite_attempt") or 0),
             "timeout_retry_attempt": 0,
+            "branch_retry_attempt": int(spec.get("retry_round") or 0),
             "missing_record_keys": list(spec.get("missing_record_keys") or []),
             "structured": batch.get("structured") is True,
             "focused": batch.get("focused") is True,
@@ -3946,12 +4155,7 @@ def build_graph(
         spec = parallel_composition_spec(state)
         if spec is None or plan.get("processing_key") != spec.get("processing_key"):
             raise ValueError("parallel Composer plan changed before dispatch")
-        if spec.get("mode") in ("narrative", "focused_narrative"):
-            batches = _presentation_focused_document_batches(
-                state
-            ) or _presentation_text_document_batches(state)
-        else:
-            batches = _presentation_document_batches(state)
+        batches = parallel_source_batches(state, str(spec.get("mode") or ""))
         if int(spec.get("rewrite_attempt") or 0) > 0:
             batches, _ = _repair_document_batches(
                 batches,
@@ -3974,11 +4178,12 @@ def build_graph(
                     "compose_document_batch",
                     {
                         "composition_job": {
-                            "version": "composer-fanout-job-v2",
+                            "version": "composer-fanout-job-v3",
                             "processing_key": plan["processing_key"],
                             "batch_index": index,
                             "batch_count": len(batch_ids),
                             "batch_id": batch_id,
+                            "retry_round": int(plan.get("retry_round") or 0),
                             "module": state["module"],
                             "message": state["user_message"],
                             "tool_name": plan["tool_name"],
@@ -4001,6 +4206,8 @@ def build_graph(
         started_ns: int,
         succeeded: bool,
         batch_id: str,
+        processing_key: str,
+        retry_round: int,
     ) -> list[dict[str, Any]]:
         consumer = getattr(decisions, "consume_observability", None)
         raw_events = consumer() if callable(consumer) else []
@@ -4029,11 +4236,13 @@ def build_graph(
         for event in events:
             event["graph_node"] = "compose_document_batch"
             event["batch_id"] = batch_id
+            event["processing_key"] = processing_key
+            event["branch_retry_attempt"] = retry_round
         return events
 
     def compose_document_batch(state: AgentState) -> dict[str, Any]:
         job = state.get("composition_job", {})
-        if job.get("version") != "composer-fanout-job-v2":
+        if job.get("version") != "composer-fanout-job-v3":
             raise ValueError("parallel Composer job version is invalid")
         composer = getattr(decisions, "compose_arguments", None)
         if not callable(composer):
@@ -4052,14 +4261,30 @@ def build_graph(
             if not isinstance(composed, Mapping):
                 raise ValueError("composed tool arguments must be an object")
             arguments = dict(composed)
+            _validate_parallel_composition_arguments(arguments, job)
         except ModelBudgetExceeded as exc:
             events = consume_composition_events(
                 started_ns=started_ns,
                 succeeded=False,
                 batch_id=batch_id,
+                processing_key=str(job.get("processing_key") or ""),
+                retry_round=int(job.get("retry_round") or 0),
             )
             error = {
                 "kind": "budget",
+                "type": type(exc).__name__,
+                "message": str(exc).strip()[:240],
+            }
+        except ComposerBranchContractError as exc:
+            events = consume_composition_events(
+                started_ns=started_ns,
+                succeeded=False,
+                batch_id=batch_id,
+                processing_key=str(job.get("processing_key") or ""),
+                retry_round=int(job.get("retry_round") or 0),
+            )
+            error = {
+                "kind": "model_contract",
                 "type": type(exc).__name__,
                 "message": str(exc).strip()[:240],
             }
@@ -4068,6 +4293,8 @@ def build_graph(
                 started_ns=started_ns,
                 succeeded=False,
                 batch_id=batch_id,
+                processing_key=str(job.get("processing_key") or ""),
+                retry_round=int(job.get("retry_round") or 0),
             )
             error = {
                 "kind": "model" if events else "runtime_contract",
@@ -4079,14 +4306,17 @@ def build_graph(
                 started_ns=started_ns,
                 succeeded=True,
                 batch_id=batch_id,
+                processing_key=str(job.get("processing_key") or ""),
+                retry_round=int(job.get("retry_round") or 0),
             )
         return {
             "composition_results": [
                 {
-                    "version": "composer-fanout-result-v2",
+                    "version": "composer-fanout-result-v3",
                     "processing_key": job["processing_key"],
                     "batch_index": int(job["batch_index"]),
                     "batch_id": batch_id,
+                    "retry_round": int(job.get("retry_round") or 0),
                     "arguments": arguments,
                     "events": events,
                     "allocation": dict(job.get("allocation", {})),
@@ -4100,7 +4330,7 @@ def build_graph(
         node = "join_composition"
         plan = state.get("composition_plan", {})
         processing_key = str(plan.get("processing_key") or "")
-        results = sorted(
+        current_results = sorted(
             (
                 dict(result)
                 for result in state.get("composition_results", [])
@@ -4110,14 +4340,15 @@ def build_graph(
         )
         batch_ids = [str(value) for value in plan.get("batch_ids", [])]
         if (
-            len(results) != len(batch_ids)
-            or [result.get("batch_id") for result in results] != batch_ids
-            or [result.get("batch_index") for result in results] != list(range(len(batch_ids)))
+            len(current_results) != len(batch_ids)
+            or [result.get("batch_id") for result in current_results] != batch_ids
+            or [result.get("batch_index") for result in current_results]
+            != list(range(len(batch_ids)))
         ):
             raise ValueError("parallel Composer results are incomplete or out of contract")
         events = [
             dict(event)
-            for result in results
+            for result in current_results
             for event in result.get("events", [])
             if isinstance(event, Mapping)
         ]
@@ -4133,7 +4364,8 @@ def build_graph(
                 details={
                     "batch_id": result["batch_id"],
                     "batch_number": int(result["batch_index"]) + 1,
-                    "batch_count": len(results),
+                    "batch_count": len(current_results),
+                    "retry_round": int(plan.get("retry_round") or 0),
                     "model_calls": sum(
                         1
                         for event in result.get("events", [])
@@ -4143,10 +4375,10 @@ def build_graph(
                     "error": dict(result.get("error", {})),
                 },
             )
-            for result in results
+            for result in current_results
         ]
         budget_violation = False
-        for result in results:
+        for result in current_results:
             allocation = result.get("allocation", {})
             result_events = [
                 event
@@ -4169,26 +4401,30 @@ def build_graph(
                 observed[key] > int(allocation.get(key) or 0) for key in observed
             ):
                 budget_violation = True
-        first_error = next(
-            (
-                dict(result["error"])
-                for result in results
-                if isinstance(result.get("error"), Mapping) and result["error"]
-            ),
-            {},
-        )
+        failed_results = [
+            result
+            for result in current_results
+            if isinstance(result.get("error"), Mapping) and result["error"]
+        ]
+        first_error = dict(failed_results[0]["error"]) if failed_results else {}
+        error_kinds = {
+            str(result["error"].get("kind") or "")
+            for result in failed_results
+            if isinstance(result.get("error"), Mapping)
+        }
         joined_node_trace = [*state.get("node_trace", []), *branch_traces]
+        all_model_events = [*state.get("model_events", []), *events]
         common: dict[str, Any] = {
             "budget_usage": usage,
-            "model_events": [*state.get("model_events", []), *events],
-            "composition_plan": {},
+            "model_events": all_model_events,
             "composition_results": [{"reset": True}],
             "node_trace": joined_node_trace,
-            "steps": state.get("steps", 0) + len(results) + 1,
+            "steps": state.get("steps", 0) + len(current_results) + 1,
         }
-        if budget_violation or first_error.get("kind") == "budget":
+        if budget_violation or "budget" in error_kinds:
             return {
                 **common,
+                "composition_plan": {},
                 "outcome": "model_budget_exhausted",
                 "response": "任务已安全停止：并行 Composer 分支超出预留模型预算。",
                 "needs_response": False,
@@ -4199,24 +4435,121 @@ def build_graph(
                 },
             }
         if first_error:
-            if first_error.get("kind") == "runtime_contract":
-                raise ValueError(str(first_error.get("message") or "Composer branch failed"))
+            runtime_error = next(
+                (
+                    cast(Mapping[str, Any], result["error"])
+                    for result in failed_results
+                    if result["error"].get("kind") == "runtime_contract"
+                ),
+                None,
+            )
+            if runtime_error is not None:
+                raise ValueError(str(runtime_error.get("message") or "Composer branch failed"))
             statuses = {
                 int(event.get("error_status") or 0)
-                for event in events
+                for event in all_model_events
+                if event.get("processing_key") == processing_key
                 if int(event.get("error_status") or 0) > 0
             }
             authentication_error = bool(statuses.intersection((401, 403)))
+            retry_round = int(plan.get("retry_round") or 0)
+            if not authentication_error and retry_round < _PARALLEL_COMPOSITION_MAX_RETRY_ROUNDS:
+                retry_state = cast(AgentState, {**state, "budget_usage": usage})
+                allowance = with_model_allowance(
+                    retry_state,
+                    {},
+                    node="compose_document_batch",
+                )["model_allowance"]
+                retry_count = len(failed_results)
+                if all(
+                    int(allowance.get(key, 0)) >= retry_count
+                    for key in (
+                        "remaining_calls",
+                        "remaining_prompt_tokens",
+                        "remaining_completion_tokens",
+                        "remaining_cost_micros",
+                    )
+                ):
+                    allocations = [
+                        {
+                            key: split_allowance(int(allowance[key]), retry_count, index)
+                            for key in (
+                                "remaining_calls",
+                                "remaining_prompt_tokens",
+                                "remaining_completion_tokens",
+                                "remaining_cost_micros",
+                            )
+                        }
+                        for index in range(retry_count)
+                    ]
+                    completed_results = [
+                        dict(result)
+                        for result in plan.get("completed_results", [])
+                        if isinstance(result, Mapping)
+                    ]
+                    completed_results.extend(
+                        dict(result) for result in current_results if not result.get("error")
+                    )
+                    retry_batch_ids = [str(result["batch_id"]) for result in failed_results]
+                    return {
+                        **common,
+                        "composition_plan": {
+                            **plan,
+                            "batch_ids": retry_batch_ids,
+                            "allocations": allocations,
+                            "completed_results": completed_results,
+                            "retry_round": retry_round + 1,
+                            "concurrency": min(
+                                _model_fanout_concurrency(),
+                                retry_count,
+                            ),
+                        },
+                        "document_processing": {
+                            **state.get("document_processing", {}),
+                            "complete": False,
+                            "status": "retry_pending",
+                            "retry_round": retry_round + 1,
+                            "retry_batch_ids": retry_batch_ids,
+                        },
+                        "node_trace": [
+                            *joined_node_trace,
+                            _trace_event(
+                                node,
+                                "retry_scheduled",
+                                details={
+                                    "retry_round": retry_round + 1,
+                                    "retry_batch_ids": retry_batch_ids,
+                                    "retained_batch_count": len(completed_results),
+                                },
+                            ),
+                        ],
+                    }
+                return {
+                    **common,
+                    "composition_plan": {},
+                    "outcome": "model_budget_exhausted",
+                    "response": "任务已安全停止：剩余模型预算不足以重试失败的 Composer 分支。",
+                    "needs_response": False,
+                    "document_processing": {
+                        **state.get("document_processing", {}),
+                        "complete": False,
+                        "status": "failed",
+                    },
+                }
+            contract_failure = error_kinds == {"model_contract"}
             provider_error = bool(statuses) or any(
-                event.get("status") == "error" for event in events
+                event.get("status") == "error" and not event.get("contract_error")
+                for event in all_model_events
+                if event.get("processing_key") == processing_key
             )
             return {
                 **common,
+                "composition_plan": {},
                 "outcome": (
                     "model_authentication_error"
                     if authentication_error
                     else "model_unavailable"
-                    if provider_error
+                    if provider_error and not contract_failure
                     else "model_invalid_response"
                 ),
                 "response": (
@@ -4231,12 +4564,24 @@ def build_graph(
                     "status": "failed",
                 },
             }
-        if plan.get("mode") in ("narrative", "focused_narrative"):
-            batches = _presentation_focused_document_batches(
-                state
-            ) or _presentation_text_document_batches(state)
-        else:
-            batches = _presentation_document_batches(state)
+        completed_results = [
+            dict(result)
+            for result in plan.get("completed_results", [])
+            if isinstance(result, Mapping)
+        ]
+        result_by_id = {
+            str(result.get("batch_id") or ""): result
+            for result in [*completed_results, *current_results]
+        }
+        all_batch_ids = [str(value) for value in plan.get("all_batch_ids", batch_ids)]
+        if (
+            len(result_by_id) != len(all_batch_ids)
+            or set(result_by_id) != set(all_batch_ids)
+            or any(result_by_id[batch_id].get("error") for batch_id in all_batch_ids)
+        ):
+            raise ValueError("parallel Composer retained results are incomplete or out of contract")
+        results = [result_by_id[batch_id] for batch_id in all_batch_ids]
+        batches = parallel_source_batches(state, str(plan.get("mode") or ""))
         by_id = {str(batch.get("batch_id") or ""): batch for batch in batches}
         merged_arguments = dict(plan.get("base_arguments", {}))
         processed: list[dict[str, Any]] = []
@@ -4270,6 +4615,7 @@ def build_graph(
             processed.append(
                 {
                     "batch_id": result["batch_id"],
+                    "source_batch_ids": list(batch.get("source_batch_ids") or []),
                     "attachment_index": batch.get("attachment_index"),
                     "source_round": batch.get("round_no"),
                     "source_segment": batch.get("segment_no", 1),
@@ -4310,8 +4656,14 @@ def build_graph(
             0,
             int(time.time() * 1000) - int(plan.get("started_at_ms") or 0),
         )
+        provider_latency_ms = sum(
+            int(event.get("latency_ms") or 0)
+            for event in all_model_events
+            if event.get("processing_key") == processing_key
+        )
         return {
             **common,
+            "composition_plan": {},
             "proposed_tool": {
                 "name": plan["tool_name"],
                 "arguments": merged_arguments,
@@ -4328,7 +4680,7 @@ def build_graph(
                 "merged_section_count": len(
                     _presentation_brief_blocks(merged_arguments.get("brief"))
                 ),
-                "provider_latency_ms": sum(int(event.get("latency_ms") or 0) for event in events),
+                "provider_latency_ms": provider_latency_ms,
                 "wall_latency_ms": wall_latency_ms,
             },
             "node_trace": [
@@ -4344,9 +4696,7 @@ def build_graph(
                         "merged_section_count": len(
                             _presentation_brief_blocks(merged_arguments.get("brief"))
                         ),
-                        "provider_latency_ms": sum(
-                            int(event.get("latency_ms") or 0) for event in events
-                        ),
+                        "provider_latency_ms": provider_latency_ms,
                         "wall_latency_ms": wall_latency_ms,
                     },
                 ),
@@ -4877,6 +5227,10 @@ def build_graph(
         }
 
     def after_composition(state: AgentState) -> str:
+        if state.get("document_processing", {}).get("status") == "retry_pending" and state.get(
+            "composition_plan", {}
+        ).get("batch_ids"):
+            return "retry_composition"
         if state.get("outcome") == "artifact_quality_failed":
             return "finalize"
         if state.get("outcome") in (
@@ -6501,6 +6855,7 @@ def build_graph(
     register("life", decide)
     register("work", decide)
     register("fanout_composition", fanout_composition)
+    register("retry_composition", retry_composition)
     register("compose_document_batch", compose_document_batch)
     register("join_composition", join_composition)
     register("compose_arguments", compose_arguments)
@@ -6572,11 +6927,17 @@ def build_graph(
         dispatch_composition_batches,
         ["compose_document_batch", "finalize"],
     )
+    builder.add_conditional_edges(
+        "retry_composition",
+        dispatch_composition_batches,
+        ["compose_document_batch", "finalize"],
+    )
     builder.add_edge("compose_document_batch", "join_composition")
     builder.add_conditional_edges(
         "join_composition",
         after_composition,
         {
+            "retry_composition": "retry_composition",
             "compose_arguments": "compose_arguments",
             "email_quality_gate": "email_quality_gate",
             "finalize": "finalize",
