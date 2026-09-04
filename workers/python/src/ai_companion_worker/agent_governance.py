@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.63.0"
+GRAPH_VERSION = "3.64.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -140,7 +140,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
     ),
     "fanout_composition": NodeContract(
         responsibility=(
-            "Prepare independent structured Composer batches and reserve one disjoint "
+            "Prepare independent Composer batches and reserve one disjoint "
             "model allowance for each branch."
         ),
         kind="deterministic",
@@ -152,9 +152,18 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "document_processing",
         ),
     ),
+    "retry_composition": NodeContract(
+        responsibility=(
+            "Validate a retained fan-out checkpoint and redispatch only failed Composer "
+            "branches within the remaining model allowance."
+        ),
+        kind="deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(*_MODEL_CONTROL_WRITES, "document_processing"),
+    ),
     "compose_document_batch": NodeContract(
         responsibility=(
-            "Compose one independent structured document batch without mutating shared state."
+            "Compose and contract-check one independent document batch without mutating shared state."
         ),
         kind="model",
         model_role="composer",

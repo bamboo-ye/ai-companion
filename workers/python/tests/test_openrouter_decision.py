@@ -1163,11 +1163,12 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                                                     "title": "重要日期",
                                                     "audience": "新生",
                                                     "style": "简洁表格",
-                                                    "table": {
-                                                        "title": "A学期重要日期",
-                                                        "columns": ["日期", "事项"],
-                                                        "rows": [],
-                                                    },
+                                                    "brief": (
+                                                        "## A学期重要日期\n"
+                                                        "- 开学日期以第4页为准\n"
+                                                        "- 注册截止日期以第4页为准"
+                                                    ),
+                                                    "slide_count": 3,
                                                 },
                                                 ensure_ascii=False,
                                             ),
@@ -1188,12 +1189,15 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                     "compose_arguments": True,
                     "parameters": {
                         "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
                         "properties": {
                             "title": {"type": "string"},
                             "audience": {"type": "string"},
                             "style": {"type": "string"},
-                            "table": {"type": "object"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
                         },
+                        "additionalProperties": False,
                     },
                 }
             ],
@@ -1330,6 +1334,70 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         events = port.consume_observability()
         self.assertEqual([event["status"] for event in events], ["error", "succeeded"])
+
+    def test_composer_falls_back_when_first_tool_arguments_violate_contract(self) -> None:
+        valid = {
+            "title": "课程重点",
+            "audience": "学生",
+            "style": "简洁图文",
+            "brief": "## 核心概念\n- 感知连接输入与系统\n- 推理支持后续决策",
+            "slide_count": 3,
+        }
+        port = StubOpenRouter(
+            [
+                tool_response("work_generate_pptx", '{"audience":"学生"}'),
+                tool_response(
+                    "work_generate_pptx",
+                    json.dumps(valid, ensure_ascii=False),
+                ),
+            ]
+        )
+        context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成叙事型 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
+                        },
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+            "task_contract": {
+                "artifact_types": ["pptx"],
+                "presentation_capabilities": ["narrative"],
+            },
+            "document_processing_round": {
+                "batch_id": "a1:r1",
+                "round_number": 1,
+                "round_count": 2,
+                "structured": False,
+            },
+            "observations": [],
+        }
+
+        composed = port.compose_arguments(
+            module="work",
+            message="生成课程 PPT",
+            tool_name="work_generate_pptx",
+            context=context,
+        )
+
+        self.assertEqual(composed, valid)
+        self.assertEqual(len(port.requests), 2)
+        events = port.consume_observability()
+        self.assertFalse(events[0]["contract_valid"])
+        self.assertEqual(events[0]["contract_error"], "model_tool_arguments_invalid")
+        self.assertEqual(events[1]["status"], "succeeded")
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(

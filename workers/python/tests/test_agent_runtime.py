@@ -15,6 +15,7 @@ from ai_companion_worker.agent_runtime import (
     AgentAssessment,
     AgentPlan,
     AgentRuntime,
+    ComposerBranchContractError,
     ModelDecision,
     ModuleKey,
     RepairDecision,
@@ -23,6 +24,7 @@ from ai_companion_worker.agent_runtime import (
     _composer_circuit_breaker_models,
     _composer_previous_arguments,
     _completed_presentation_continuation,
+    _coalesce_parallel_narrative_batches,
     _document_source_coverage,
     _deterministic_presentation_mapping,
     _finalize_narrative_presentation_arguments,
@@ -37,6 +39,7 @@ from ai_companion_worker.agent_runtime import (
     _presentation_rewrite_base_for_batch,
     _presentation_structured_batches,
     _validate_checkpoint_identity,
+    _validate_parallel_composition_arguments,
     _validate_tool_arguments,
     build_graph,
     interrupt_payloads,
@@ -548,6 +551,7 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertEqual(decisions.peak_active, 2)
         self.assertLess(parallel_elapsed, serial_elapsed * 0.8)
         self.assertGreater(len(decisions.composed_batches), 5)
+        self.assertLessEqual(len(decisions.composed_batches), 8)
         self.assertTrue(any(value.startswith("a1:r1:s") for value in decisions.composed_batches))
         self.assertTrue(any(value.startswith("a1:r5:s") for value in decisions.composed_batches))
         self.assertTrue(all(size <= 10_200 for size in decisions.observation_sizes))
@@ -558,7 +562,7 @@ class AgentRuntimeTest(unittest.TestCase):
             if item["tool_name"] == "work_generate_pptx"
         )
         self.assertIn("## 课程重点1", generated["brief"])
-        self.assertIn(f"## 课程重点{len(decisions.composed_batches)}", generated["brief"])
+        self.assertIn(f"课程重点{len(decisions.composed_batches)}", generated["brief"])
         self.assertIn("（来源：第1页）", generated["brief"])
         self.assertIn("（来源：第5页）", generated["brief"])
         self.assertNotIn("table", generated)
@@ -584,6 +588,58 @@ class AgentRuntimeTest(unittest.TestCase):
         trace_nodes = [event["node"] for event in result["node_trace"]]
         self.assertIn("fanout_composition", trace_nodes)
         self.assertIn("join_composition", trace_nodes)
+
+    def test_parallel_narrative_batches_coalesce_small_tail_in_source_order(self) -> None:
+        source_batches = [
+            {
+                "batch_id": f"a1:r{index}:s1",
+                "attachment_index": 1,
+                "round_no": index,
+                "segment_no": 1,
+                "segment_count": 1,
+                "text": f"[[PAGE {index}]]\n" + (str(index % 10) * 2_900),
+                "processing_text": "unused",
+                "token_count": 900,
+                "source_filename": "lecture.pdf",
+                "source_pages": [index],
+                "structured": False,
+            }
+            for index in range(1, 21)
+        ]
+
+        batches = _coalesce_parallel_narrative_batches(source_batches)
+
+        self.assertGreater(len(batches), 1)
+        self.assertLessEqual(len(batches), 8)
+        self.assertEqual(
+            [value for batch in batches for value in batch["source_batch_ids"]],
+            [batch["batch_id"] for batch in source_batches],
+        )
+        self.assertIn("a1:r20:s1", batches[-1]["source_batch_ids"])
+        self.assertTrue(all(len(batch["processing_text"]) <= 10_200 for batch in batches))
+
+    def test_narrative_branch_contract_rejects_incomplete_model_output(self) -> None:
+        job = {
+            "context": {
+                "document_processing_round": {
+                    "parallel_mode": "narrative",
+                }
+            }
+        }
+
+        with self.assertRaisesRegex(ComposerBranchContractError, "title"):
+            _validate_parallel_composition_arguments({"audience": "学生"}, job)
+        with self.assertRaisesRegex(ComposerBranchContractError, "at least two"):
+            _validate_parallel_composition_arguments(
+                {
+                    "title": "课程重点",
+                    "audience": "学生",
+                    "style": "简洁图文",
+                    "brief": "## 核心概念\n- 只有一条",
+                    "slide_count": 3,
+                },
+                job,
+            )
 
     def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
         current = {"table": {"rows": [{"entity_id": "g1"}]}}
@@ -1121,8 +1177,8 @@ class AgentRuntimeTest(unittest.TestCase):
             ).start(payload)
 
         self.assertEqual(result["outcome"], "model_unavailable")
-        self.assertEqual(result["budget_usage"]["model_calls_by_node"]["compose_document_batch"], 2)
-        self.assertEqual(result["budget_usage"]["cost_micros"], 300)
+        self.assertEqual(result["budget_usage"]["model_calls_by_node"]["compose_document_batch"], 3)
+        self.assertEqual(result["budget_usage"]["cost_micros"], 400)
         branch_events = [
             event
             for event in result["model_events"]
@@ -1130,7 +1186,11 @@ class AgentRuntimeTest(unittest.TestCase):
         ]
         self.assertEqual(
             sorted(event["batch_id"] for event in branch_events),
-            ["logical-entities:b1", "logical-entities:b2"],
+            ["logical-entities:b1", "logical-entities:b2", "logical-entities:b2"],
+        )
+        self.assertIn(
+            "retry_composition",
+            [event["node"] for event in result["node_trace"]],
         )
         self.assertEqual(result["document_processing"]["status"], "failed")
         self.assertFalse(result["document_processing"]["complete"])

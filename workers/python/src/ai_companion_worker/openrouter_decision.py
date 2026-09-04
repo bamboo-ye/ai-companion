@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -21,6 +22,7 @@ from ai_companion_worker.agent_runtime import (
     ModelDecision,
     ModuleKey,
     RepairDecision,
+    validate_arguments_against_schema,
 )
 
 _MAX_RESPONSE_BYTES = 4 << 20
@@ -1148,6 +1150,16 @@ class OpenRouterDecisionPort:
             role="composer",
             max_attempts=max_attempts,
             model_order=model_order,
+            argument_contract=lambda value: _validated_composer_arguments(
+                tool_name,
+                value,
+                (
+                    composer_parameters
+                    if isinstance(document_round, Mapping)
+                    else cast(Mapping[str, Any], selected["parameters"])
+                ),
+                context,
+            ),
         )
         return _constrain_identity_arguments(selected, arguments)
 
@@ -1517,6 +1529,7 @@ class OpenRouterDecisionPort:
         role: str,
         max_attempts: int,
         model_order: tuple[str, ...] | None = None,
+        argument_contract: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         last_error: OpenRouterError | None = None
         for attempt_index, model, request_timeout in self._fallback_attempts(
@@ -1531,7 +1544,7 @@ class OpenRouterDecisionPort:
                 attempt_index=attempt_index,
             )
             try:
-                return _selected_tool(
+                name, arguments = _selected_tool(
                     self._observed_request(
                         attempt,
                         role=role,
@@ -1540,6 +1553,9 @@ class OpenRouterDecisionPort:
                     ),
                     tool_names,
                 )
+                if argument_contract is not None:
+                    arguments = argument_contract(arguments)
+                return name, arguments
             except OpenRouterError as exc:
                 self._annotate_latest_contract_error(exc)
                 last_error = exc
@@ -2185,6 +2201,64 @@ def _model_visible_presentation_parameters(
     if isinstance(required, list):
         visible["required"] = [value for value in required if value not in hidden]
     return visible
+
+
+def _validated_composer_arguments(
+    tool_name: str,
+    arguments: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate each candidate before accepting a Composer fallback attempt."""
+
+    validated = dict(arguments)
+    properties = schema.get("properties")
+    if (
+        tool_name in _PRESENTATION_TOOLS
+        and schema.get("additionalProperties") is False
+        and isinstance(properties, Mapping)
+    ):
+        # A sibling presentation capability can leak one harmless top-level
+        # field. Keep the existing least-privilege projection, then validate
+        # every field that remains instead of accepting an incomplete object.
+        validated = {key: value for key, value in validated.items() if key in properties}
+    try:
+        validate_arguments_against_schema(validated, schema)
+        if (
+            tool_name in _PRESENTATION_TOOLS
+            and isinstance(context.get("document_processing_round"), Mapping)
+            and not _uses_structured_presentation_capability(tool_name, context)
+        ):
+            _validate_narrative_batch_arguments(validated)
+    except ValueError as exc:
+        raise OpenRouterError(f"OpenRouter tool arguments failed schema validation: {exc}") from exc
+    return validated
+
+
+def _validate_narrative_batch_arguments(arguments: Mapping[str, Any]) -> None:
+    brief = arguments.get("brief")
+    if not isinstance(brief, str) or not brief.strip():
+        raise ValueError("arguments.brief must be a non-empty string")
+    sections: list[int] = []
+    active = -1
+    for raw_line in brief.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.fullmatch(r"##\s+\S.*", line):
+            sections.append(0)
+            active += 1
+            continue
+        if active < 0 or re.fullmatch(r"-\s+\S.*", line) is None:
+            raise ValueError("arguments.brief must use only Markdown headings and bullets")
+        sections[active] += 1
+    if not sections or any(count < 2 for count in sections):
+        raise ValueError("arguments.brief sections require at least two bullets")
+    if len(sections) > 2:
+        raise ValueError("arguments.brief batch contains too many sections")
+    slide_count = arguments.get("slide_count")
+    if slide_count != len(sections) + 2:
+        raise ValueError("arguments.slide_count must equal section count plus two")
 
 
 def _routing_message(message: str, context: Mapping[str, Any]) -> str:
