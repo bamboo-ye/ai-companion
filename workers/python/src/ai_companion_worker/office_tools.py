@@ -24,6 +24,7 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 import pymupdf  # type: ignore[import-untyped]
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 from PIL import Image
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
@@ -68,6 +69,11 @@ PRESENTATION_ROWS_PER_SLIDE = 6
 PRESENTATION_TABLE_PAGE_CAPACITY = 12
 PRESENTATION_DETAIL_CELL_THRESHOLD = 320
 PRESENTATION_DETAIL_MAX_CHARS = 2_200
+PRESENTATION_BACKGROUND = RGBColor(247, 249, 255)
+PRESENTATION_TITLE_COLOR = RGBColor(43, 63, 117)
+PRESENTATION_ACCENT_COLOR = RGBColor(72, 104, 183)
+PRESENTATION_TEXT_COLOR = RGBColor(31, 41, 55)
+PRESENTATION_MUTED_COLOR = RGBColor(91, 100, 116)
 CJK_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -204,10 +210,7 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
     title_slide.shapes.title.text = title
     subtitle = title_slide.placeholders[1]
     subtitle.text = f"面向：{audience}"
-    _style_slide(
-        title_slide,
-        title_color=RGBColor(43, 63, 117),  # type: ignore[no-untyped-call]
-    )
+    _style_title_slide(title_slide, title, subtitle)
     outline.append({"page": 1, "title": title, "bullets": [f"面向：{audience}"]})
 
     if table:
@@ -253,8 +256,9 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
                 paragraph.text = _presentation_render_text(bullet)
                 paragraph.level = 0
                 paragraph.font.size = Pt(bullet_font_size)
-            _style_slide(slide, title_color=RGBColor(72, 104, 183))
             visual = visual_assignments[index - 1] if index - 1 < len(visual_assignments) else None
+            _style_body_placeholder(slide.placeholders[1], bullets, has_visual=visual is not None)
+            _style_slide(slide, title_color=PRESENTATION_ACCENT_COLOR)
             if visual is not None:
                 _add_presentation_visual(slide, slide.placeholders[1], visual)
             outline_item: dict[str, Any] = {
@@ -288,8 +292,13 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         paragraph = summary_frame.paragraphs[0] if index == 0 else summary_frame.add_paragraph()
         paragraph.text = bullet
         paragraph.font.size = Pt(22)
-    _style_slide(summary_slide, title_color=RGBColor(43, 63, 117))
     summary_visual = visual_assignments[0] if table and visual_assignments else None
+    _style_body_placeholder(
+        summary_slide.placeholders[1],
+        summary_bullets,
+        has_visual=summary_visual is not None,
+    )
+    _style_slide(summary_slide, title_color=PRESENTATION_TITLE_COLOR)
     if summary_visual is not None:
         _add_presentation_visual(summary_slide, summary_slide.placeholders[1], summary_visual)
     summary_outline: dict[str, Any] = {
@@ -1349,8 +1358,39 @@ def _presentation_bullet_font_size(bullets: list[str]) -> int:
     if longest > 34 and len(bullets) >= 3:
         return 17
     if len(bullets) >= 3:
-        return 18
+        return 22
+    if longest <= 48:
+        return 24
     return 20
+
+
+def _style_body_placeholder(
+    placeholder: Any,
+    bullets: list[str],
+    *,
+    has_visual: bool,
+) -> None:
+    """Give narrative text a stable reading column and consistent rhythm."""
+
+    placeholder.left = Inches(0.78)
+    placeholder.top = Inches(1.42)
+    placeholder.width = Inches(5.45 if has_visual else 11.78)
+    placeholder.height = Inches(5.28)
+    frame = placeholder.text_frame
+    frame.word_wrap = True
+    frame.margin_left = Inches(0.04)
+    frame.margin_right = Inches(0.08)
+    frame.margin_top = Inches(0.06)
+    frame.margin_bottom = Inches(0.06)
+    total_characters = sum(len(value) for value in bullets)
+    frame.vertical_anchor = (
+        MSO_ANCHOR.MIDDLE if len(bullets) <= 4 and total_characters <= 260 else MSO_ANCHOR.TOP
+    )
+    paragraph_spacing = 16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8
+    for paragraph in frame.paragraphs:
+        paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
+        paragraph.space_after = Pt(paragraph_spacing)
+        paragraph.line_spacing = 1.1
 
 
 def _presentation_render_text(value: str) -> str:
@@ -1736,14 +1776,15 @@ def _add_presentation_visual(
     text_placeholder: Any,
     visual: dict[str, Any],
 ) -> None:
-    text_placeholder.left = Inches(0.68)
+    text_placeholder.left = Inches(0.78)
     text_placeholder.top = Inches(1.42)
-    text_placeholder.width = Inches(6.05)
-    text_placeholder.height = Inches(5.25)
-    frame_left = int(Inches(7.15))
-    frame_top = int(Inches(1.58))
-    frame_width = int(Inches(5.55))
-    frame_height = int(Inches(4.72))
+    text_placeholder.width = Inches(5.45)
+    text_placeholder.height = Inches(5.28)
+    text_placeholder.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+    frame_left = int(Inches(6.63))
+    frame_top = int(Inches(1.38))
+    frame_width = int(Inches(6.08))
+    frame_height = int(Inches(5.08))
     image_width = max(1, int(visual.get("width") or 1))
     image_height = max(1, int(visual.get("height") or 1))
     image_ratio = image_width / image_height
@@ -1763,14 +1804,13 @@ def _add_presentation_visual(
         width=picture_width,
         height=picture_height,
     )
-    caption = slide.shapes.add_textbox(
-        Inches(7.15), Inches(6.42), Inches(5.55), Inches(0.28)
-    )
+    caption = slide.shapes.add_textbox(Inches(6.63), Inches(6.58), Inches(6.08), Inches(0.28))
     caption_frame = caption.text_frame
     caption_frame.clear()
     caption_frame.paragraphs[0].text = str(visual.get("source_locator") or "")[:100]
-    caption_frame.paragraphs[0].font.size = Pt(9)
-    caption_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+    caption_frame.paragraphs[0].font.size = Pt(10)
+    caption_frame.paragraphs[0].font.color.rgb = PRESENTATION_MUTED_COLOR
+    caption_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
     _add_presentation_visual_notes(slide, visual)
 
 
@@ -1969,13 +2009,20 @@ def _audience_source_locators(values: list[str]) -> list[str]:
 
 
 def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]]) -> None:
+    row_units = [_presentation_row_units(row) for row in rows]
+    header_height = 0.56
+    minimum_body_height = min(4.59, 0.9 * len(rows) + 0.45)
+    ideal_body_height = sum(0.78 + 0.28 * (units - 1) for units in row_units)
+    body_height = min(4.59, max(minimum_body_height, ideal_body_height))
+    table_height = header_height + body_height
+    table_top = 1.42 + (5.15 - table_height) * 0.22
     shape = slide.shapes.add_table(
         len(rows) + 1,
         len(columns),
         Inches(0.45),
-        Inches(1.45),
+        Inches(table_top),
         Inches(12.43),
-        Inches(5.15),
+        Inches(table_height),
     )
     table = shape.table
     weights = []
@@ -1988,35 +2035,46 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
     total_weight = sum(weights)
     for column_index, weight in enumerate(weights):
         table.columns[column_index].width = Inches(12.43 * weight / total_weight)
-    table.rows[0].height = Inches(0.52)
-    row_units = [_presentation_row_units(row) for row in rows]
-    total_units = max(1, sum(row_units))
-    for row_index, units in enumerate(row_units, start=1):
-        table.rows[row_index].height = Inches(4.63 * units / total_units)
+    table.rows[0].height = Inches(header_height)
+    row_height_weights = [0.78 + 0.28 * (units - 1) for units in row_units]
+    total_height_weight = max(1.0, sum(row_height_weights))
+    for row_index, height_weight in enumerate(row_height_weights, start=1):
+        table.rows[row_index].height = Inches(body_height * height_weight / total_height_weight)
     for column_index, column in enumerate(columns):
         cell = table.cell(0, column_index)
         cell.text = column
+        cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+        cell.margin_left = Inches(0.08)
+        cell.margin_right = Inches(0.08)
+        cell.margin_top = Inches(0.03)
+        cell.margin_bottom = Inches(0.03)
         cell.fill.solid()
-        cell.fill.fore_color.rgb = RGBColor(43, 63, 117)
+        cell.fill.fore_color.rgb = PRESENTATION_TITLE_COLOR
         for paragraph in cell.text_frame.paragraphs:
             paragraph.font.bold = True
             paragraph.font.color.rgb = RGBColor(255, 255, 255)
-            paragraph.font.size = Pt(16)
+            paragraph.font.size = Pt(17 if len(columns) <= 4 else 15)
+            paragraph.line_spacing = 1.0
     for row_index, row in enumerate(rows, start=1):
         for column_index, value in enumerate(row["cells"]):
             cell = table.cell(row_index, column_index)
             cell.text = value
-            cell.margin_left = Inches(0.06)
-            cell.margin_right = Inches(0.06)
-            cell.margin_top = Inches(0.04)
-            cell.margin_bottom = Inches(0.04)
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            cell.margin_left = Inches(0.08)
+            cell.margin_right = Inches(0.08)
+            cell.margin_top = Inches(0.05)
+            cell.margin_bottom = Inches(0.05)
             cell.fill.solid()
             cell.fill.fore_color.rgb = (
                 RGBColor(238, 243, 255) if row_index % 2 == 0 else RGBColor(255, 255, 255)
             )
+            base_font_size = 16 if len(columns) <= 4 and len(rows) <= 4 else 15
+            if row_units[row_index - 1] > 3:
+                base_font_size = 14
             for paragraph in cell.text_frame.paragraphs:
-                paragraph.font.size = Pt(16 if row_units[row_index - 1] <= 3 else 14)
-                paragraph.font.color.rgb = RGBColor(31, 41, 55)
+                paragraph.font.size = Pt(base_font_size)
+                paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
+                paragraph.line_spacing = 1.0
     source_locators = _audience_source_locators(
         list(dict.fromkeys(row["source_locator"] for row in rows))
     )
@@ -2024,8 +2082,8 @@ def _add_table_slide(slide: Any, columns: list[str], rows: list[dict[str, Any]])
     footer_frame = footer.text_frame
     footer_frame.clear()
     footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:160]
-    footer_frame.paragraphs[0].font.size = Pt(9)
-    footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+    footer_frame.paragraphs[0].font.size = Pt(10)
+    footer_frame.paragraphs[0].font.color.rgb = PRESENTATION_MUTED_COLOR
 
 
 def _add_course_detail_slide(
@@ -2047,10 +2105,12 @@ def _add_course_detail_slide(
     )
     metadata_frame = metadata_box.text_frame
     metadata_frame.clear()
+    metadata_frame.word_wrap = True
+    metadata_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
     metadata_frame.paragraphs[0].text = metadata
     metadata_frame.paragraphs[0].font.size = Pt(17)
     metadata_frame.paragraphs[0].font.bold = True
-    metadata_frame.paragraphs[0].font.color.rgb = RGBColor(43, 63, 117)
+    metadata_frame.paragraphs[0].font.color.rgb = PRESENTATION_TITLE_COLOR
 
     shape = slide.shapes.add_table(
         1,
@@ -2066,8 +2126,9 @@ def _add_course_detail_slide(
     cell.margin_right = Inches(0.16)
     cell.margin_top = Inches(0.12)
     cell.margin_bottom = Inches(0.12)
+    cell.vertical_anchor = MSO_ANCHOR.TOP
     cell.fill.solid()
-    cell.fill.fore_color.rgb = RGBColor(247, 249, 255)
+    cell.fill.fore_color.rgb = PRESENTATION_BACKGROUND
     detail_length = len(cells[detail_index])
     if detail_length <= 900:
         font_size = 16
@@ -2083,11 +2144,11 @@ def _add_course_detail_slide(
     label_paragraph.text = columns[detail_index]
     label_paragraph.font.size = Pt(17)
     label_paragraph.font.bold = True
-    label_paragraph.font.color.rgb = RGBColor(43, 63, 117)
+    label_paragraph.font.color.rgb = PRESENTATION_TITLE_COLOR
     value_paragraph = detail_frame.add_paragraph()
     value_paragraph.text = cells[detail_index]
     value_paragraph.font.size = Pt(font_size)
-    value_paragraph.font.color.rgb = RGBColor(31, 41, 55)
+    value_paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
     value_paragraph.line_spacing = 1.0
 
     source_locators = _audience_source_locators([row["source_locator"]])
@@ -2095,8 +2156,8 @@ def _add_course_detail_slide(
     footer_frame = footer.text_frame
     footer_frame.clear()
     footer_frame.paragraphs[0].text = ("来源：" + "；".join(source_locators))[:160]
-    footer_frame.paragraphs[0].font.size = Pt(9)
-    footer_frame.paragraphs[0].font.color.rgb = RGBColor(91, 100, 116)
+    footer_frame.paragraphs[0].font.size = Pt(10)
+    footer_frame.paragraphs[0].font.color.rgb = PRESENTATION_MUTED_COLOR
 
 
 def _presentation_quality_report(
@@ -2374,16 +2435,52 @@ def _presentation_layout_violations(presentation: Presentation) -> list[dict[str
 def _style_slide(slide: Any, title_color: RGBColor) -> None:
     background = slide.background.fill
     background.solid()
-    background.fore_color.rgb = RGBColor(247, 249, 255)  # type: ignore[no-untyped-call]
+    background.fore_color.rgb = PRESENTATION_BACKGROUND  # type: ignore[no-untyped-call]
     if slide.shapes.title is not None:
-        slide.shapes.title.left = Inches(0.55)
-        slide.shapes.title.top = Inches(0.28)
-        slide.shapes.title.width = Inches(12.2)
-        slide.shapes.title.height = Inches(0.75)
+        slide.shapes.title.left = Inches(0.62)
+        slide.shapes.title.top = Inches(0.32)
+        slide.shapes.title.width = Inches(12.05)
+        slide.shapes.title.height = Inches(0.78)
+        slide.shapes.title.text_frame.word_wrap = True
+        title_length = len(slide.shapes.title.text)
+        title_size = 28 if title_length <= 24 else 26 if title_length <= 36 else 24
         for paragraph in slide.shapes.title.text_frame.paragraphs:
             paragraph.font.bold = True
             paragraph.font.color.rgb = title_color
-            paragraph.font.size = Pt(24)
+            paragraph.font.size = Pt(title_size)
+            paragraph.alignment = PP_ALIGN.LEFT
+
+
+def _style_title_slide(slide: Any, title: str, subtitle: Any) -> None:
+    """Keep the cover minimal while grouping its title and audience clearly."""
+
+    background = slide.background.fill
+    background.solid()
+    background.fore_color.rgb = PRESENTATION_BACKGROUND
+    title_shape = slide.shapes.title
+    title_shape.left = Inches(0.88)
+    title_shape.top = Inches(2.18)
+    title_shape.width = Inches(11.55)
+    title_shape.height = Inches(1.38)
+    title_shape.text_frame.word_wrap = True
+    title_length = len(title)
+    title_size = (
+        40 if title_length <= 22 else 35 if title_length <= 40 else 30 if title_length <= 68 else 26
+    )
+    for paragraph in title_shape.text_frame.paragraphs:
+        paragraph.font.bold = True
+        paragraph.font.color.rgb = PRESENTATION_TITLE_COLOR
+        paragraph.font.size = Pt(title_size)
+        paragraph.alignment = PP_ALIGN.LEFT
+    subtitle.left = Inches(0.91)
+    subtitle.top = Inches(3.72)
+    subtitle.width = Inches(11.1)
+    subtitle.height = Inches(0.58)
+    subtitle.text_frame.word_wrap = True
+    for paragraph in subtitle.text_frame.paragraphs:
+        paragraph.font.size = Pt(18)
+        paragraph.font.color.rgb = PRESENTATION_MUTED_COLOR
+        paragraph.alignment = PP_ALIGN.LEFT
 
 
 def _file(name: str, media_type: str, data: bytes) -> dict[str, str]:
