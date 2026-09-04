@@ -90,7 +90,11 @@ def _uses_structured_presentation_capability(tool_name: str, context: Mapping[st
         and bool(requested_fields)
     ):
         return True
-    return isinstance(context.get("document_processing_round"), Mapping)
+    # Both structured and narrative presentations use bounded document rounds.
+    # Round presence is therefore not evidence of table intent; only the
+    # planner-owned capability contract or an explicit table subtool may select
+    # the table Composer schema.
+    return False
 
 
 class OpenRouterError(RuntimeError):
