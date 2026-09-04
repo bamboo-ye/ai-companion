@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import zipfile
@@ -25,6 +26,7 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 import pymupdf  # type: ignore[import-untyped]
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 from PIL import Image
@@ -250,17 +252,20 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
         for index, group in enumerate(groups, start=1):
             heading = headings[index - 1]
             bullets = [value[:100] for value in group[:5]]
+            visual = visual_assignments[index - 1] if index - 1 < len(visual_assignments) else None
             slide = presentation.slides.add_slide(presentation.slide_layouts[1])
             slide.shapes.title.text = heading
             frame = slide.placeholders[1].text_frame
             frame.clear()
-            bullet_font_size = _presentation_bullet_font_size(bullets)
+            bullet_font_size = _presentation_bullet_font_size(
+                bullets,
+                has_visual=visual is not None,
+            )
             for bullet_index, bullet in enumerate(bullets):
                 paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
                 paragraph.text = _presentation_render_text(bullet)
                 paragraph.level = 0
                 paragraph.font.size = Pt(bullet_font_size)
-            visual = visual_assignments[index - 1] if index - 1 < len(visual_assignments) else None
             _style_body_placeholder(slide.placeholders[1], bullets, has_visual=visual is not None)
             _style_slide(slide, title_color=PRESENTATION_ACCENT_COLOR)
             if visual is not None:
@@ -1446,21 +1451,37 @@ def _presentation_heading(value: str, index: int) -> str:
     return cleaned[:28]
 
 
-def _presentation_bullet_font_size(bullets: list[str]) -> int:
+def _presentation_bullet_font_size(
+    bullets: list[str],
+    *,
+    has_visual: bool = False,
+) -> int:
     """Choose a readable size while avoiding punctuation-only orphan lines."""
 
     longest = max((len(value) for value in bullets), default=0)
+    total_characters = sum(len(value) for value in bullets)
     if longest > 82 or len(bullets) >= 4:
-        return 17
-    if longest > 62:
-        return 18
-    if longest > 34 and len(bullets) >= 3:
-        return 17
-    if len(bullets) >= 3:
-        return 22
-    if longest <= 48:
-        return 24
-    return 20
+        size = 17
+    elif longest > 62:
+        size = 18
+    elif longest > 34 and len(bullets) >= 3:
+        size = 17
+    elif len(bullets) >= 3:
+        size = 22
+    elif longest <= 48:
+        size = 24
+    else:
+        size = 20
+    if not has_visual:
+        return size
+    # An image halves the available reading width. Five source-grounded
+    # paragraphs can fit the placeholder rectangle while their wrapped lines
+    # still spill below it, so reserve a stable dense-page size.
+    if len(bullets) >= 5 or total_characters > 260 or longest > 88:
+        return min(size, 15)
+    if len(bullets) >= 4 or total_characters > 210 or longest > 68:
+        return min(size, 16)
+    return min(size, 18)
 
 
 def _style_body_placeholder(
@@ -1487,11 +1508,16 @@ def _style_body_placeholder(
         if not has_visual and len(bullets) <= 3 and total_characters <= 260
         else MSO_ANCHOR.TOP
     )
-    paragraph_spacing = 16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8
+    if has_visual:
+        paragraph_spacing = 4 if len(bullets) >= 5 or total_characters > 260 else 6
+        line_spacing = 1.0 if len(bullets) >= 4 or total_characters > 210 else 1.05
+    else:
+        paragraph_spacing = 16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8
+        line_spacing = 1.1
     for paragraph in frame.paragraphs:
         paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
         paragraph.space_after = Pt(paragraph_spacing)
-        paragraph.line_spacing = 1.1
+        paragraph.line_spacing = line_spacing
 
 
 def _presentation_render_text(value: str) -> str:
@@ -2586,7 +2612,55 @@ def _presentation_layout_violations(presentation: Presentation) -> list[dict[str
                     }
                 )
                 break
+            if _presentation_body_text_overflow_risk(shape):
+                violations.append(
+                    {
+                        "code": "body_text_overflow_risk",
+                        "message": "正文按实际文本宽度估算将超出占位区域",
+                        "slide": slide_index,
+                    }
+                )
+                break
     return violations
+
+
+def _presentation_body_text_overflow_risk(shape: Any) -> bool:
+    """Conservatively detect wrapped body text that cannot fit its box.
+
+    OOXML records the placeholder rectangle but not the final rendered text
+    extent. Estimate wide-character line usage so the hard quality gate sees
+    the same overflow class as an independent slide renderer.
+    """
+
+    if (
+        not getattr(shape, "is_placeholder", False)
+        or shape.placeholder_format.type != PP_PLACEHOLDER.OBJECT
+        or not getattr(shape, "has_text_frame", False)
+    ):
+        return False
+    frame = shape.text_frame
+    usable_width = (
+        float(shape.width - frame.margin_left - frame.margin_right) / 12_700.0 - 36.0
+    )
+    usable_height = float(shape.height - frame.margin_top - frame.margin_bottom) / 12_700.0
+    if usable_width <= 0 or usable_height <= 0:
+        return True
+    required_height = 0.0
+    for paragraph in frame.paragraphs:
+        if not paragraph.text.strip():
+            continue
+        font_size = paragraph.font.size.pt if paragraph.font.size is not None else 18.0
+        display_units = sum(
+            1.0 if unicodedata.east_asian_width(character) in {"W", "F"} else 0.55
+            for character in paragraph.text
+        )
+        characters_per_line = max(8.0, usable_width / max(font_size, 1.0))
+        line_count = max(1, math.ceil(display_units / characters_per_line))
+        line_spacing = paragraph.line_spacing
+        spacing_multiple = float(line_spacing) if isinstance(line_spacing, float) else 1.0
+        spacing_after = paragraph.space_after.pt if paragraph.space_after is not None else 0.0
+        required_height += (line_count + 0.6) * font_size * spacing_multiple + spacing_after
+    return required_height > usable_height
 
 
 def _style_slide(slide: Any, title_color: RGBColor) -> None:
