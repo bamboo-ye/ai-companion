@@ -2229,6 +2229,41 @@ _PRESENTATION_BULLET_SOURCE_SUFFIX = re.compile(
     r"\s*([（(]来源\s*[:：][^）)]+[）)])\s*$",
     re.I,
 )
+_PRESENTATION_PRODUCTION_HEADING = re.compile(
+    r"^(?:可视化|插图|配图)(?:设计)?建议"
+    r"(?:\s*[（(][^）)]*(?:授课|演示|展示)[^）)]*[）)])?$",
+    re.I,
+)
+_PRESENTATION_PRODUCTION_BULLET = re.compile(
+    r"^(?:(?:插图|配图|图片|图示)\s*\d*\s*[:：]|"
+    r"(?:建议|可|请)(?:绘制|展示|使用|生成|放置))",
+    re.I,
+)
+
+
+def _presentation_section_source_pages(section: Mapping[str, Any]) -> set[int]:
+    text = "\n".join(str(value or "") for value in section.get("bullets", []))
+    pages: set[int] = set()
+    for match in re.finditer(
+        r"第\s*(\d{1,4})\s*(?:页(?:\s*[-–—~～至到]\s*(?:第\s*)?(\d{1,4})\s*页?)?"
+        r"|[-–—~～至到]\s*(?:第\s*)?(\d{1,4})\s*页)",
+        text,
+    ):
+        start = int(match.group(1))
+        end = int(match.group(2) or match.group(3) or start)
+        if start <= 0 or end <= 0 or abs(end - start) > 100:
+            continue
+        pages.update(range(min(start, end), max(start, end) + 1))
+    return pages
+
+
+def _is_presentation_production_section(section: Mapping[str, Any]) -> bool:
+    bullets = [str(value or "").strip() for value in section.get("bullets", [])]
+    return bool(
+        _PRESENTATION_PRODUCTION_HEADING.fullmatch(str(section.get("heading") or "").strip())
+        and bullets
+        and all(_PRESENTATION_PRODUCTION_BULLET.match(value) for value in bullets)
+    )
 
 
 def _split_presentation_bullet(value: str, *, limit: int = 100) -> list[str]:
@@ -2241,11 +2276,7 @@ def _split_presentation_bullet(value: str, *, limit: int = 100) -> list[str]:
     source_suffix = source_match.group(1) if source_match else ""
     body = text[: source_match.start()].strip() if source_match else text
     available = max(24, limit - len(source_suffix) - (1 if source_suffix else 0))
-    clauses = [
-        clause.strip()
-        for clause in re.split(r"(?<=[。；;！？!?])", body)
-        if clause.strip()
-    ]
+    clauses = [clause.strip() for clause in re.split(r"(?<=[。；;！？!?])", body) if clause.strip()]
     pieces: list[str] = []
     current = ""
     for clause in clauses or [body]:
@@ -2268,9 +2299,7 @@ def _split_presentation_bullet(value: str, *, limit: int = 100) -> list[str]:
     if current:
         pieces.append(current)
     return [
-        f"{piece} {source_suffix}".strip() if source_suffix else piece
-        for piece in pieces
-        if piece
+        f"{piece} {source_suffix}".strip() if source_suffix else piece for piece in pieces if piece
     ]
 
 
@@ -2305,9 +2334,13 @@ def _finalize_narrative_presentation_arguments(
         bullet_match = re.fullmatch(r"-\s+(.+)", line)
         if bullet_match is None or current is None:
             return _normalize_presentation_arguments(finalized, state)
-        current["bullets"].extend(
-            _split_presentation_bullet(bullet_match.group(1).strip())
-        )
+        current["bullets"].extend(_split_presentation_bullet(bullet_match.group(1).strip()))
+
+    audience_sections = [
+        section for section in sections if not _is_presentation_production_section(section)
+    ]
+    if audience_sections:
+        sections = audience_sections
 
     for section in sections:
         full_heading = section["heading"]
@@ -2351,6 +2384,30 @@ def _finalize_narrative_presentation_arguments(
         del sections[index]
         if index:
             index -= 1
+
+    index = 0
+    while index + 1 < len(sections):
+        current_section = sections[index]
+        next_section = sections[index + 1]
+        current_pages = _presentation_section_source_pages(current_section)
+        next_pages = _presentation_section_source_pages(next_section)
+        prefixed_next = [
+            split
+            for bullet in next_section["bullets"]
+            for split in _split_presentation_bullet(f"{next_section['heading']}：{bullet}")
+        ]
+        combined = [*current_section["bullets"], *prefixed_next]
+        if (
+            len(current_section["bullets"]) == 2
+            and len(next_section["bullets"]) == 2
+            and current_pages
+            and bool(current_pages & next_pages)
+            and len(combined) <= 5
+        ):
+            current_section["bullets"] = combined
+            del sections[index + 1]
+            continue
+        index += 1
 
     if sections:
         finalized["brief"] = "\n\n".join(

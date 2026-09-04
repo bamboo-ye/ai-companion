@@ -30,6 +30,7 @@ from ai_companion_worker.office_tools import (
     _translation_batches,
     _presentation_display_rows,
     _presentation_render_text,
+    _presentation_topic_source_pages,
     _presentation_visuals,
     _translated_content,
     execute,
@@ -61,6 +62,44 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(assignments, [])
         self.assertEqual(report["generation_attempt_count"], 0)
         self.assertEqual(usage["cost_micros"], 0)
+
+    def test_presentation_source_visuals_follow_cited_pages_not_extraction_order(self) -> None:
+        extracted = [
+            {"kind": "source", "source_page": 1, "source_locator": "source.pdf · 第 1 页"},
+            {"kind": "source", "source_page": 2, "source_locator": "source.pdf · 第 2 页"},
+        ]
+        payload = {
+            "visual_mode": "source_only",
+            "source_documents": [
+                {
+                    "filename": "source.pdf",
+                    "media_type": "application/pdf",
+                    "data_base64": base64.b64encode(b"pdf-placeholder").decode(),
+                }
+            ],
+        }
+        topics = [
+            {"title": "第二主题", "bullets": ["结论（来源：第2页）"]},
+            {"title": "第一主题", "bullets": ["事实（来源：第1页）"]},
+        ]
+
+        with patch(
+            "ai_companion_worker.office_tools._extract_pdf_presentation_visuals",
+            return_value=extracted,
+        ):
+            assignments, report, _ = _presentation_visuals(
+                payload,
+                topics,
+                include_file=True,
+                allow_generated=False,
+            )
+
+        self.assertEqual([item["source_page"] for item in assignments if item], [2, 1])
+        self.assertEqual(report["source_visual_count"], 2)
+        self.assertEqual(
+            _presentation_topic_source_pages({"bullets": ["区间证据（来源：第17-18页）"]}),
+            {17, 18},
+        )
 
     def test_translation_normalization_removes_unrenderable_inline_bullets(self) -> None:
         normalized = _normalize_translation("• 第一项 •\n• 第二项")
@@ -900,7 +939,7 @@ class OfficeToolsTest(unittest.TestCase):
                 "title": "多模态课程介绍",
                 "audience": "选课学生",
                 "style": "图文简洁",
-                "brief": "## 课程重点\n- 理解核心内容\n- 识别学习目标\n## 选课建议\n- 结合个人方向选择",
+                "brief": "## 课程重点\n- 理解核心内容（来源：第1页）\n- 识别学习目标（来源：第1页）\n## 选课建议\n- 结合个人方向选择（来源：第1页）\n- 对照课程要求评估（来源：第1页）",
                 "slide_count": 4,
                 "visual_mode": "source_only",
                 "source_documents": [
@@ -928,9 +967,7 @@ class OfficeToolsTest(unittest.TestCase):
             self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
 
     @patch("urllib.request.urlopen", side_effect=OSError("network unavailable"))
-    def test_pptx_image_generation_failure_safely_falls_back_to_text(
-        self, urlopen: Mock
-    ) -> None:
+    def test_pptx_image_generation_failure_safely_falls_back_to_text(self, urlopen: Mock) -> None:
         with patch.dict(
             os.environ,
             {
@@ -1323,8 +1360,7 @@ class OfficeToolsTest(unittest.TestCase):
 
     def test_pptx_long_schedule_uses_one_unsplit_detail_cell(self) -> None:
         schedule = "；".join(
-            f"2026年{1 + index // 28}月{1 + index % 28}日 周一 09:00-09:50"
-            for index in range(72)
+            f"2026年{1 + index // 28}月{1 + index % 28}日 周一 09:00-09:50" for index in range(72)
         )
         result = execute(
             "pptx_generate",
