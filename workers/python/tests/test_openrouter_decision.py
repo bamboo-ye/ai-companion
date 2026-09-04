@@ -1341,7 +1341,9 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             "audience": "学生",
             "style": "简洁图文",
             "brief": "## 核心概念\n- 感知连接输入与系统\n- 推理支持后续决策",
-            "slide_count": 3,
+            # A batch can repeat the requested final deck size. The Harness
+            # recomputes the merged slide count after all sections are joined.
+            "slide_count": 5,
         }
         port = StubOpenRouter(
             [

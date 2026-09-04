@@ -2376,9 +2376,13 @@ def _validate_parallel_composition_arguments(
                 "narrative Composer section requires at least two Markdown bullets"
             )
     slide_count = arguments.get("slide_count")
-    if slide_count != len(blocks) + 2:
+    if (
+        isinstance(slide_count, bool)
+        or not isinstance(slide_count, int)
+        or not 3 <= slide_count <= 60
+    ):
         raise ComposerBranchContractError(
-            "narrative Composer slide_count must equal section count plus two"
+            "narrative Composer slide_count must be an integer between 3 and 60"
         )
 
 

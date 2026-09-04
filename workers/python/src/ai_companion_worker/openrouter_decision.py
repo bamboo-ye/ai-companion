@@ -2257,8 +2257,12 @@ def _validate_narrative_batch_arguments(arguments: Mapping[str, Any]) -> None:
     if len(sections) > 2:
         raise ValueError("arguments.brief batch contains too many sections")
     slide_count = arguments.get("slide_count")
-    if slide_count != len(sections) + 2:
-        raise ValueError("arguments.slide_count must equal section count plus two")
+    if (
+        isinstance(slide_count, bool)
+        or not isinstance(slide_count, int)
+        or not 3 <= slide_count <= 60
+    ):
+        raise ValueError("arguments.slide_count must be an integer between 3 and 60")
 
 
 def _routing_message(message: str, context: Mapping[str, Any]) -> str:

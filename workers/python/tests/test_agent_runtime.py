@@ -640,6 +640,16 @@ class AgentRuntimeTest(unittest.TestCase):
                 },
                 job,
             )
+        _validate_parallel_composition_arguments(
+            {
+                "title": "课程重点",
+                "audience": "学生",
+                "style": "简洁图文",
+                "brief": "## 核心概念\n- 第一条事实\n- 第二条事实",
+                "slide_count": 5,
+            },
+            job,
+        )
 
     def test_presentation_rewrite_clears_rows_only_at_pass_start(self) -> None:
         current = {"table": {"rows": [{"entity_id": "g1"}]}}
