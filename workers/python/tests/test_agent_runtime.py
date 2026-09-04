@@ -366,6 +366,10 @@ class AgentRuntimeTest(unittest.TestCase):
                         f"- 第{sequence}批内容来自对应课程材料（来源：第{page}页）"
                     ),
                     "slide_count": 3,
+                    # A sibling table capability may bias the model to emit
+                    # this harmless but unsupported top-level field. Harness
+                    # must project it out instead of replaying every batch.
+                    "table": {"title": "不应进入叙事型工具", "columns": [], "rows": []},
                 }
 
             @staticmethod
@@ -512,6 +516,7 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn(f"## 课程重点{len(decisions.composed_batches)}", generated["brief"])
         self.assertIn("（来源：第1页）", generated["brief"])
         self.assertIn("（来源：第5页）", generated["brief"])
+        self.assertNotIn("table", generated)
         self.assertEqual(generated["slide_count"], len(decisions.composed_batches) + 2)
         self.assertTrue(result["document_processing"]["complete"])
         self.assertEqual(

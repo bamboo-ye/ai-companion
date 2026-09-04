@@ -515,6 +515,29 @@ def _validate_tool_arguments(
     _validate_schema_value(dict(arguments), schema, path="arguments", depth=0)
 
 
+def _project_arguments_to_trusted_schema(
+    arguments: Mapping[str, Any],
+    definition: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Drop only top-level fields the trusted tool explicitly forbids.
+
+    Composer output is still validated recursively. This projection is a
+    least-privilege boundary for harmless model over-generation: an optional
+    field supported by a sibling presentation capability (for example
+    ``table``) must not force a complete source-document rewrite when the
+    selected tool schema does not expose it.
+    """
+
+    projected = dict(arguments)
+    parameters = definition.get("parameters")
+    if not isinstance(parameters, Mapping) or parameters.get("additionalProperties") is not False:
+        return projected
+    properties = parameters.get("properties")
+    if not isinstance(properties, Mapping):
+        return projected
+    return {key: value for key, value in projected.items() if key in properties}
+
+
 def _normalize_presentation_arguments(
     arguments: Mapping[str, Any],
     state: AgentState,
@@ -4017,6 +4040,9 @@ def build_graph(
             raise ValueError("decision port must implement compose_arguments for marked tools")
         normalized_tool_name = tool_name.strip()
         presentation_tool = normalized_tool_name in _PRESENTATION_TOOLS
+        definition = _trusted_tool_definition(state, normalized_tool_name)
+        if definition is None:
+            raise ValueError("argument composition requires a trusted tool definition")
         task_contract = state.get("task_contract", {})
         source_ir = _presentation_source_ir(state) if presentation_tool else {}
         structural_mapping: dict[str, Any] = {}
@@ -4126,6 +4152,8 @@ def build_graph(
         processing = dict(raw_processing) if isinstance(raw_processing, Mapping) else {}
         raw_base_arguments = proposed.get("arguments")
         base_arguments = dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
+        if presentation_tool:
+            base_arguments = _project_arguments_to_trusted_schema(base_arguments, definition)
         if structural_mapping:
             base_arguments["mapping_contract"] = structural_mapping
         selected_batches = all_document_batches
@@ -4292,10 +4320,11 @@ def build_graph(
             if not isinstance(arguments, Mapping):
                 raise ValueError("composed tool arguments must be an object")
             normalized_arguments = dict(arguments)
-            definition = _trusted_tool_definition(state, normalized_tool_name)
-            if definition is None:
-                raise ValueError("argument composition requires a trusted tool definition")
             if presentation_tool:
+                normalized_arguments = _project_arguments_to_trusted_schema(
+                    normalized_arguments,
+                    definition,
+                )
                 normalized_arguments = _normalize_presentation_arguments(
                     normalized_arguments,
                     state,
@@ -4319,6 +4348,10 @@ def build_graph(
                         base_arguments,
                         normalized_arguments,
                         state,
+                    )
+                    normalized_arguments = _project_arguments_to_trusted_schema(
+                        normalized_arguments,
+                        definition,
                     )
                 parameters = definition.get("parameters")
                 properties = (
