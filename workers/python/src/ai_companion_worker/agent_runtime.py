@@ -163,8 +163,7 @@ def _sanitize_plan_task_intent(value: Mapping[str, Any]) -> dict[str, Any]:
             dict.fromkeys(
                 str(item).strip().casefold()
                 for item in fields
-                if isinstance(item, str)
-                and str(item).strip().casefold() in allowed_fields
+                if isinstance(item, str) and str(item).strip().casefold() in allowed_fields
             )
         )
     confidence = str(value.get("confidence") or "").strip().casefold()
@@ -176,9 +175,7 @@ def _sanitize_plan_task_intent(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _uses_structured_presentation_capability(
-    state: Mapping[str, Any], tool_name: str
-) -> bool:
+def _uses_structured_presentation_capability(state: Mapping[str, Any], tool_name: str) -> bool:
     if tool_name in _STRUCTURED_PRESENTATION_TOOLS:
         return True
     if tool_name != "work_generate_pptx":
@@ -553,10 +550,7 @@ def _normalize_presentation_arguments(
         )
 
     task_contract = state.get("task_contract", {})
-    exhaustive = (
-        isinstance(task_contract, Mapping)
-        and task_contract.get("exhaustive") is True
-    )
+    exhaustive = isinstance(task_contract, Mapping) and task_contract.get("exhaustive") is True
     normalized["title"] = normalize_presentation_title(
         normalize_presentation_scope_label(
             normalized.get("title"),
@@ -597,8 +591,7 @@ def _normalize_presentation_arguments(
             title_for_filename = str(normalized.get("title") or "").strip()
             filename_has_chinese = re.search(r"[\u3400-\u9fff]", filename_stem) is not None
             filename_is_identifier = (
-                re.fullmatch(r"[A-Z]{2,8}(?:[- ]?\d{2,8}[A-Z]?)?", filename_stem)
-                is not None
+                re.fullmatch(r"[A-Z]{2,8}(?:[- ]?\d{2,8}[A-Z]?)?", filename_stem) is not None
             )
             if (
                 filename_stem
@@ -607,9 +600,7 @@ def _normalize_presentation_arguments(
                 and re.search(r"[A-Za-z]", filename_stem)
                 and re.search(r"[\u3400-\u9fff]", title_for_filename)
             ):
-                normalized["filename"] = safe_basename(
-                    f"{title_for_filename}.pptx", ".pptx"
-                )
+                normalized["filename"] = safe_basename(f"{title_for_filename}.pptx", ".pptx")
         if requested and isinstance(columns, list) and isinstance(rows, list):
             mapping_modes = _presentation_mapping_modes(normalized.get("mapping_contract"))
             column_fields = [_presentation_column_field(value) for value in columns]
@@ -646,9 +637,7 @@ def _normalize_presentation_arguments(
                         _clean_presentation_cell(
                             value,
                             aggregate=mapping_modes.get(index) == "aggregate",
-                            field=requested_fields[index]
-                            if index < len(requested_fields)
-                            else "",
+                            field=requested_fields[index] if index < len(requested_fields) else "",
                         ),
                         output_language,
                     )
@@ -656,9 +645,7 @@ def _normalize_presentation_arguments(
                 ]
                 for index, field in enumerate(requested_fields):
                     if field == "code" and index < len(visible_cells):
-                        visible_cells[index] = _canonical_presentation_code(
-                            visible_cells[index]
-                        )
+                        visible_cells[index] = _canonical_presentation_code(visible_cells[index])
                 locator = str(raw_row.get("source_locator") or "").strip()
                 if not locator and 0 <= source_index < len(cells):
                     locator = str(cells[source_index] or "").strip()
@@ -974,9 +961,7 @@ def _presentation_focused_document_batches(state: AgentState) -> list[dict[str, 
             continue
         arguments = observation.get("arguments")
         attachment_index = (
-            int(arguments.get("attachment_index") or 1)
-            if isinstance(arguments, Mapping)
-            else 1
+            int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
         )
         data = observation.get("data")
         output = data.get("output") if isinstance(data, Mapping) else None
@@ -1004,8 +989,7 @@ def _presentation_focused_document_batches(state: AgentState) -> list[dict[str, 
                     continue
                 tail = pages[index][1][match.end() :]
                 if (
-                    match.start()
-                    <= max(500, math.floor(len(pages[index][1]) * 0.2))
+                    match.start() <= max(500, math.floor(len(pages[index][1]) * 0.2))
                     and continuation_pattern.search(tail) is None
                 ):
                     heading_pages.add(index)
@@ -1015,10 +999,9 @@ def _presentation_focused_document_batches(state: AgentState) -> list[dict[str, 
                     if match is None or index + 1 >= len(pages):
                         continue
                     tail = pages[index][1][match.end() :]
-                    if (
-                        match.start() >= math.floor(len(pages[index][1]) * 0.6)
-                        or continuation_pattern.search(tail)
-                    ):
+                    if match.start() >= math.floor(
+                        len(pages[index][1]) * 0.6
+                    ) or continuation_pattern.search(tail):
                         selected.add(index + 1)
             for index in sorted(selected):
                 label, body = pages[index]
@@ -1190,7 +1173,19 @@ def _presentation_text_document_batches(state: AgentState) -> list[dict[str, Any
         round_text = str(batch.get("text") or "")
         round_tokens = int(batch.get("token_count") or 0)
         segments = _split_document_round_for_composer(round_text, round_tokens)
+        active_page = 0
         for segment_index, segment in enumerate(segments, start=1):
+            marker_pages: list[int] = []
+            for marker in _PRESENTATION_PAGE_MARKER.finditer(segment):
+                values = [int(value) for value in re.findall(r"\d+", marker.group("page"))]
+                if len(values) == 2 and values[1] >= values[0]:
+                    values = list(range(values[0], values[1] + 1))
+                marker_pages.extend(values)
+            source_pages = list(
+                dict.fromkeys(([active_page] if active_page else []) + marker_pages)
+            )
+            if marker_pages:
+                active_page = marker_pages[-1]
             ordered.append(
                 {
                     **batch,
@@ -1202,6 +1197,7 @@ def _presentation_text_document_batches(state: AgentState) -> list[dict[str, Any
                     ),
                     "segment_no": segment_index,
                     "segment_count": len(segments),
+                    "source_pages": source_pages,
                 }
             )
     previous_tail = ""
@@ -1766,20 +1762,20 @@ def _presentation_logical_entities(
     for entity_id in order:
         entity = entities[entity_id]
         visible_values: list[str] = []
-        for index, field in enumerate(fields):
+        for index, logical_field in enumerate(fields):
             values = entity["values"][index]
             value = (
                 "；".join(values)
-                if field.get("mode") == "aggregate"
+                if logical_field.get("mode") == "aggregate"
                 else (
                     " ".join(values)
-                    if field.get("field") == "name"
+                    if logical_field.get("field") == "name"
                     else (values[0] if values else "")
                 )
             )
             visible_values.append(
                 localize_presentation_field_value(
-                    str(field.get("field") or ""), value, output_language
+                    str(logical_field.get("field") or ""), value, output_language
                 )
             )
         attachments = entity["attachment_indices"]
@@ -1929,12 +1925,22 @@ def _composer_previous_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]
 
 
 def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
-    locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
+    source_filename = str(batch.get("source_filename") or "").strip()
+    source_pages = [
+        int(value)
+        for value in batch.get("source_pages", [])
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    ]
+    if source_pages:
+        page_label = "、".join(str(value) for value in source_pages[:12])
+        locator = f"{source_filename or '原文件'} · 第 {page_label} 页"
+    else:
+        locator = f"attachment:{batch.get('attachment_index', 1)} round:{batch.get('round_no', 1)}"
     if int(batch.get("segment_count") or 1) > 1:
         locator += f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
     structured = batch.get("structured") is True
     output = {
-        "source_filename": str(batch.get("source_filename") or ""),
+        "source_filename": source_filename,
         "format": "json" if structured else "markdown",
         "text": str(batch.get("processing_text") or batch.get("text") or ""),
         "round_start": int(batch.get("round_no") or 1),
@@ -1946,9 +1952,10 @@ def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     }
     if structured:
         output["source_ir"] = dict(batch.get("source_ir") or {})
-        output["source_pages"] = list(batch.get("source_pages") or [])
-    elif batch.get("focused") is True:
-        output["source_pages"] = list(batch.get("source_pages") or [])
+        output["source_pages"] = source_pages
+    elif source_pages:
+        output["source_pages"] = source_pages
+    if batch.get("focused") is True:
         output["focus_phrases"] = list(batch.get("focus_phrases") or [])
     return {
         "tool_name": "work_extract_attached_document",
@@ -2017,7 +2024,7 @@ def _ground_structured_batch_arguments(
         model_cells = list(model_row.get("cells") or []) if isinstance(model_row, Mapping) else []
         source_cells = [str(value or "").strip() for value in source_row.get("values", [])]
         cells: list[str] = []
-        for target_index, (field, _) in enumerate(requested):
+        for target_index, (field_name, _) in enumerate(requested):
             source_value = source_cells[target_index] if target_index < len(source_cells) else ""
             model_value = (
                 str(model_cells[target_index] or "").strip()
@@ -2028,14 +2035,16 @@ def _ground_structured_batch_arguments(
             # change weekday tokens, but deterministic normalization owns that
             # transformation. Names and other audience text remain Composer's
             # responsibility.
-            value = source_value if field in ("code", "time") else (model_value or source_value)
-            if field == "name":
+            value = (
+                source_value if field_name in ("code", "time") else (model_value or source_value)
+            )
+            if field_name == "name":
                 value = normalize_presentation_name_translation(
                     value,
                     source_value,
                     output_language,
                 )
-            cells.append(localize_presentation_field_value(field, value, output_language))
+            cells.append(localize_presentation_field_value(field_name, value, output_language))
         rows.append(
             {
                 "cells": cells,
@@ -2068,7 +2077,7 @@ def _merge_presentation_arguments(
         merged["mapping_contract"] = dict(base_mapping)
     elif isinstance(added_mapping, Mapping):
         merged["mapping_contract"] = dict(added_mapping)
-    for key in ("title", "audience", "style", "brief", "filename"):
+    for key in ("title", "audience", "style", "filename"):
         value = addition.get(key)
         if key not in merged or not str(merged.get(key) or "").strip():
             if value is not None:
@@ -2138,7 +2147,63 @@ def _merge_presentation_arguments(
             3,
         )
         merged["slide_count"] = min(60, max(requested_slides, math.ceil(len(rows) / 6) + 2))
+    else:
+        # Narrative presentations use the same bounded document rounds as
+        # structured decks, but their intermediate representation is a set of
+        # Markdown slide sections instead of table rows. Preserve every
+        # section across rounds and de-duplicate the overlap copied into the
+        # next batch. Recomputing slide_count here keeps the renderer contract
+        # (one section per content slide plus title and closing) deterministic.
+        blocks: list[str] = []
+        seen: set[str] = set()
+        for brief in (base.get("brief"), addition.get("brief")):
+            for block in _presentation_brief_blocks(brief):
+                key = re.sub(r"\s+", " ", block).strip().casefold()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                blocks.append(block)
+        if blocks:
+            merged["brief"] = "\n\n".join(blocks)
+            merged["slide_count"] = min(60, len(blocks) + 2)
+        else:
+            brief = str(addition.get("brief") or base.get("brief") or "").strip()
+            if brief:
+                merged["brief"] = brief
+            merged["slide_count"] = min(
+                60,
+                max(
+                    int(base.get("slide_count") or 0),
+                    int(addition.get("slide_count") or 0),
+                    3,
+                ),
+            )
     return _normalize_presentation_arguments(merged, state)
+
+
+def _presentation_brief_blocks(value: Any) -> list[str]:
+    """Split the audience-facing Markdown IR without discarding bad input.
+
+    The deterministic presentation quality gate remains responsible for
+    rejecting malformed sections. This helper only establishes merge
+    boundaries so a later document round cannot replace an earlier one.
+    """
+
+    text = str(value or "").strip()
+    if not text:
+        return []
+    starts = [match.start() for match in re.finditer(r"(?m)^##\s+", text)]
+    if not starts:
+        return [text]
+    blocks: list[str] = []
+    if text[: starts[0]].strip():
+        blocks.append(text[: starts[0]].strip())
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        block = text[start:end].strip()
+        if block:
+            blocks.append(block)
+    return blocks
 
 
 def _merge_presentation_cells(
@@ -2279,9 +2344,7 @@ def _presentation_repair_base(arguments: Mapping[str, Any], report: Any) -> dict
                 base.pop("brief", None)
             if code == "presentation_visible_language_mismatch":
                 affected_fields = {
-                    str(value)
-                    for value in violation.get("affected_fields", [])
-                    if str(value)
+                    str(value) for value in violation.get("affected_fields", []) if str(value)
                 }
                 for field in ("title", "filename"):
                     if field in affected_fields:
@@ -2378,11 +2441,7 @@ def _presentation_rewrite_base_for_batch(
 ) -> dict[str, Any]:
     """Initialize a rewrite destructively once, then preserve merged batches."""
 
-    return (
-        dict(repaired)
-        if processing.get("processing_key") != processing_key
-        else dict(current)
-    )
+    return dict(repaired) if processing.get("processing_key") != processing_key else dict(current)
 
 
 def _validate_schema_value(
@@ -3359,9 +3418,7 @@ def build_graph(
             else []
         )
         raw_base_arguments = proposed.get("arguments")
-        base_arguments = (
-            dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
-        )
+        base_arguments = dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
         rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
         missing_keys: list[str] = []
         if rewrite_attempt > 0:
@@ -3514,9 +3571,7 @@ def build_graph(
         context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         context["source_coverage"] = _document_source_coverage(state)
         base_arguments = spec.get("base_arguments", {})
-        base_arguments = (
-            dict(base_arguments) if isinstance(base_arguments, Mapping) else {}
-        )
+        base_arguments = dict(base_arguments) if isinstance(base_arguments, Mapping) else {}
         context["previous_arguments"] = _composer_previous_arguments(base_arguments)
         context["previous_merged_record_count"] = 0
         context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
@@ -3733,8 +3788,7 @@ def build_graph(
         if (
             len(results) != len(batch_ids)
             or [result.get("batch_id") for result in results] != batch_ids
-            or [result.get("batch_index") for result in results]
-            != list(range(len(batch_ids)))
+            or [result.get("batch_index") for result in results] != list(range(len(batch_ids)))
         ):
             raise ValueError("parallel Composer results are incomplete or out of contract")
         events = [
@@ -3924,9 +3978,7 @@ def build_graph(
                 "complete": True,
                 "status": "completed",
                 "merged_record_count": len(final_rows),
-                "provider_latency_ms": sum(
-                    int(event.get("latency_ms") or 0) for event in events
-                ),
+                "provider_latency_ms": sum(int(event.get("latency_ms") or 0) for event in events),
                 "wall_latency_ms": wall_latency_ms,
             },
             "node_trace": [
@@ -4030,22 +4082,43 @@ def build_graph(
                     ],
                     "steps": state.get("steps", 0) + 1,
                 }
-        candidate_document_batches = (
-            _presentation_document_batches(state)
-            if _uses_structured_presentation_capability(state, normalized_tool_name)
-            else []
+        # Every source-backed presentation must compose against bounded
+        # document rounds. Previously only table presentations entered this
+        # path, so an illustrated/narrative deck replayed the complete merged
+        # extraction (hundreds of KB) into one Composer request. That exhausted
+        # the conservative prompt/cost allowance, removed the configured
+        # fallback model, and made a single primary timeout terminal.
+        structured_presentation = _uses_structured_presentation_capability(
+            state, normalized_tool_name
         )
+        candidate_document_batches: list[dict[str, Any]] = []
+        if presentation_tool:
+            if structured_presentation:
+                candidate_document_batches = _presentation_document_batches(state)
+            else:
+                # A narrative deck can still receive table-shaped IR from a
+                # general document extractor. That incidental structure must
+                # not switch the Composer into logical-entity/table batching:
+                # choose the batching strategy from the planned presentation
+                # intent first, then use focused or page-preserving text.
+                candidate_document_batches = _presentation_focused_document_batches(
+                    state
+                ) or _presentation_text_document_batches(state)
         all_document_batches = (
             candidate_document_batches
-            if isinstance(task_contract, Mapping)
-            and (
-                (
-                    task_contract.get("exhaustive") is True
-                    and bool(_presentation_requested_columns(task_contract))
+            if not structured_presentation
+            else (
+                candidate_document_batches
+                if isinstance(task_contract, Mapping)
+                and (
+                    (
+                        task_contract.get("exhaustive") is True
+                        and bool(_presentation_requested_columns(task_contract))
+                    )
+                    or any(batch.get("focused") is True for batch in candidate_document_batches)
                 )
-                or any(batch.get("focused") is True for batch in candidate_document_batches)
+                else []
             )
-            else []
         )
         round_processing = bool(all_document_batches)
         rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
@@ -4153,14 +4226,10 @@ def build_graph(
         composition_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
         composition_context["source_coverage"] = _document_source_coverage(state)
         if batch is not None:
-            composition_context["previous_arguments"] = _composer_previous_arguments(
-                base_arguments
-            )
+            composition_context["previous_arguments"] = _composer_previous_arguments(base_arguments)
             previous_table = base_arguments.get("table")
             composition_context["previous_merged_record_count"] = len(
-                previous_table.get("rows", [])
-                if isinstance(previous_table, Mapping)
-                else []
+                previous_table.get("rows", []) if isinstance(previous_table, Mapping) else []
             )
         else:
             composition_context["previous_arguments"] = base_arguments
@@ -4378,13 +4447,9 @@ def build_graph(
                 )
                 requested_fields = [
                     field
-                    for field, _ in _presentation_requested_columns(
-                        state.get("task_contract", {})
-                    )
+                    for field, _ in _presentation_requested_columns(state.get("task_contract", {}))
                 ]
-                code_index = (
-                    requested_fields.index("code") if "code" in requested_fields else -1
-                )
+                code_index = requested_fields.index("code") if "code" in requested_fields else -1
                 observed_keys = {
                     _canonical_presentation_code(row["cells"][code_index]).casefold()
                     for row in final_rows
@@ -5178,9 +5243,7 @@ def build_graph(
             return "wait_task"
         if state.get("outcome") == "tool_failed":
             return "classify_tool_failure"
-        if _latest_document_continuation(state) or _next_pending_document_extraction(
-            state
-        ):
+        if _latest_document_continuation(state) or _next_pending_document_extraction(state):
             return "continue_document_extraction"
         if _completed_presentation_continuation(state):
             return "continue_action"
@@ -5197,9 +5260,7 @@ def build_graph(
         return "assess_progress"
 
     def continue_document_extraction(state: AgentState) -> dict[str, Any]:
-        arguments = _latest_document_continuation(state) or _next_pending_document_extraction(
-            state
-        )
+        arguments = _latest_document_continuation(state) or _next_pending_document_extraction(state)
         if not arguments:
             raise ValueError("document continuation requires a pending extraction round")
         if state.get("action_index", 0) >= state.get("action_budget", policy.max_actions):
@@ -6423,9 +6484,7 @@ def _next_pending_document_extraction(state: AgentState) -> dict[str, int]:
             continue
         arguments = observation.get("arguments")
         attachment_index = (
-            int(arguments.get("attachment_index") or 1)
-            if isinstance(arguments, Mapping)
-            else 1
+            int(arguments.get("attachment_index") or 1) if isinstance(arguments, Mapping) else 1
         )
         if attachment_index < 1 or attachment_index > len(source_document_ids):
             continue
@@ -6469,9 +6528,7 @@ def _completed_presentation_continuation(state: AgentState) -> str:
     ):
         return ""
     coverage = _document_source_coverage(state)
-    if coverage.get("truncated") is not False or float(
-        coverage.get("coverage_ratio") or 0.0
-    ) < 1.0:
+    if coverage.get("truncated") is not False or float(coverage.get("coverage_ratio") or 0.0) < 1.0:
         return ""
     tool_name = _presentation_tool_for_contract(task_contract)
     try:

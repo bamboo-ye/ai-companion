@@ -116,7 +116,9 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertTrue(all(len(events) == 1 for events in observed))
 
-    def test_artifact_router_uses_public_presentation_orchestrator_for_all_capabilities(self) -> None:
+    def test_artifact_router_uses_public_presentation_orchestrator_for_all_capabilities(
+        self,
+    ) -> None:
         tools = [
             {"name": "work_generate_pptx"},
             {"name": "work_generate_table_pptx"},
@@ -166,9 +168,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             },
         )
         self.assertEqual(decision.tool_name, "work_generate_pptx")
-        exposed = [
-            item["function"]["name"] for item in port.requests[0]["tools"]
-        ]
+        exposed = [item["function"]["name"] for item in port.requests[0]["tools"]]
         self.assertEqual(exposed, ["work_generate_pptx"])
 
     def test_model_visible_presentation_schema_is_capability_scoped(self) -> None:
@@ -291,9 +291,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 },
             },
         }
-        compact = _presentation_batch_parameters(
-            schema, harness_injects_provenance=True
-        )
+        compact = _presentation_batch_parameters(schema, harness_injects_provenance=True)
         items = compact["properties"]["table"]["properties"]["rows"]["items"]
         self.assertEqual(items["required"], ["cells", "entity_id"])
         self.assertNotIn("source_locator", items["properties"])
@@ -1227,6 +1225,102 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertIn("相关证据页或上下文窗口", system_prompt)
         self.assertIn("不得把多条事实概括成摘要", system_prompt)
         self.assertNotIn("第一轮必须生成 mapping_contract", system_prompt)
+        self.assertIn("非表格演示章节", system_prompt)
+        self.assertIn("按来源顺序去重合并章节", system_prompt)
+        self.assertNotIn("当前轮次 table", system_prompt)
+        self.assertIn("（来源：第N页）", system_prompt)
+
+    def test_bounded_narrative_round_preserves_composer_fallback_attempt(self) -> None:
+        arguments = {
+            "title": "课程重点",
+            "audience": "学生",
+            "style": "简洁图文",
+            "brief": "## 核心概念\n- 感知连接输入与系统\n- 推理支持后续决策",
+            "slide_count": 3,
+        }
+        port = StubOpenRouter(
+            [
+                OpenRouterError("primary timed out", status_code=408),
+                tool_response(
+                    "work_generate_pptx",
+                    json.dumps(arguments, ensure_ascii=False),
+                ),
+            ],
+            elapsed_seconds=[30, 1],
+        )
+        presentation_context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成叙事型 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
+                            "table": {"type": "object"},
+                            "mapping_contract": {"type": "object"},
+                            "task_contract": {"type": "object"},
+                            "source_coverage": {"type": "object"},
+                        },
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+            "task_contract": {
+                "artifact_types": ["pptx"],
+                "presentation_capabilities": ["narrative", "visual"],
+                "output_language": "zh-CN",
+            },
+            "document_processing_round": {
+                "batch_id": "a1:r1:s1",
+                "round_number": 1,
+                "round_count": 15,
+                "structured": False,
+                "focused": False,
+            },
+            "observations": [
+                {
+                    "tool_name": "work_extract_attached_document",
+                    "data": {
+                        "output": {
+                            "text": "[[PAGE 1]]\n" + "课程材料。" * 1_400,
+                            "source_pages": [1],
+                            "source_locator": "Lecture2b.pdf · 第 1 页",
+                        }
+                    },
+                }
+            ],
+            # Matches the remaining allowance seen in the failed production
+            # checkpoint. The bounded source must leave room for both models.
+            "model_allowance": {
+                "remaining_calls": 61,
+                "remaining_prompt_tokens": 996_038,
+                "remaining_completion_tokens": 129_898,
+                "remaining_cost_micros": 247_757,
+            },
+        }
+
+        composed = port.compose_arguments(
+            module="work",
+            message="提取主要内容并生成中文图文 PPT",
+            tool_name="work_generate_pptx",
+            context=presentation_context,
+        )
+
+        self.assertEqual(composed["title"], "课程重点")
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback"],
+        )
+        self.assertEqual(port.request_timeouts, [30, 30])
+        events = port.consume_observability()
+        self.assertEqual([event["status"] for event in events], ["error", "succeeded"])
 
     def test_repairer_returns_strict_allowlisted_plan(self) -> None:
         port = StubOpenRouter(
@@ -2086,10 +2180,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         decision = port.decide(
             module="work",
-            message=(
-                "帮我翻译\n"
-                "<!--ai-document:doc-1|CS5494-week1.pdf-->"
-            ),
+            message=("帮我翻译\n<!--ai-document:doc-1|CS5494-week1.pdf-->"),
             context={
                 "tools": [
                     {

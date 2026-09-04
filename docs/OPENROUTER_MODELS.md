@@ -85,7 +85,7 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.50.0` makes presentation capability selection a planner-owned
+Graph version `3.52.0` makes presentation capability selection a planner-owned
 semantic decision. Work-module PPT requests now enter `plan` before routing. The
 planner returns a composable capability set containing `narrative` and, only
 when required, `table` and/or `visual`; the Harness then refines the task
@@ -93,8 +93,10 @@ contract without allowing the
 model to relax source, language, exhaustiveness, or artifact requirements.
 Structured large-document composition uses LangGraph `Send` fan-out/fan-in for
 independent logical-entity batches. `AGENT_MODEL_FANOUT_CONCURRENCY` defaults to
-`2` and is capped at `4`; free-text and focused batches remain serial because
-their composition can depend on previously merged context. Every branch receives
+`2` and is capped at `4`; free-text and focused batches remain serial and are
+bounded before Composer dispatch because their composition can depend on
+previously merged context. Narrative batches merge Markdown slide sections in
+source order and deterministically recalculate the final slide count. Every branch receives
 a disjoint share of the remaining call, token, and cost budgets, records usage in
 a thread-local buffer, and is merged in source-batch order by a deterministic
 join. A
