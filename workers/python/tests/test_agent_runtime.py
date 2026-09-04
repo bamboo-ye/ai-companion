@@ -1411,7 +1411,8 @@ class AgentRuntimeTest(unittest.TestCase):
                 "- 第二条事实（来源：第1页）\n\n"
                 "## 协方差正则化\n"
                 "- 防止协方差矩阵退化（来源：第11页）\n\n"
-                f"## {long_heading}\n"
+                "## 高级主题\n"
+                f"### {long_heading}\n"
                 f"- {long_fact}（来源：第12页）\n"
                 "- 另一条结论（来源：第12页）"
             ),
@@ -1427,6 +1428,8 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("协方差正则化：防止协方差矩阵退化", brief)
         self.assertIn(long_heading, brief)
         self.assertNotIn(f"## {long_heading}", brief)
+        self.assertNotIn("### ", brief)
+        self.assertIn("高级主题", brief)
         self.assertEqual(finalized["slide_count"], brief.count("## ") + 2)
         for line in brief.splitlines():
             if line.startswith("## "):
