@@ -244,7 +244,7 @@ METRICS_INPUT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt test test-go test-python test-web eval-m2 eval-m4 build build-go run-api run-worker migrate infra-up infra-down infra-config release-check release-evidence validate-release-evidence test-release-evidence-validator check
+.PHONY: help fmt test test-go test-python test-web eval-m2 eval-m4 build build-go run-api run-worker migrate infra-up infra-up-kafka-scale infra-down infra-config release-check release-evidence validate-release-evidence test-release-evidence-validator check docker-up-kafka-scale
 .PHONY: certify-agent-direct-traffic-production-recovery-adapter verify-agent-direct-traffic-production-recovery-adapter attest-agent-direct-traffic-production-recovery-rollout evaluate-agent-direct-traffic-production-recovery-gate attest-agent-direct-traffic-production-recovery-gate verify-agent-direct-traffic-production-recovery-gate apply-agent-direct-traffic-production-recovery
 .PHONY: certify-agent-direct-traffic-production-expansion-adapter verify-agent-direct-traffic-production-expansion-adapter attest-agent-direct-traffic-production-expansion-rollout evaluate-agent-direct-traffic-production-expansion-gate attest-agent-direct-traffic-production-expansion-gate verify-agent-direct-traffic-production-expansion-gate apply-agent-direct-traffic-production-expansion
 .PHONY: certify-agent-direct-traffic-production-expansion-25-adapter verify-agent-direct-traffic-production-expansion-25-adapter attest-agent-direct-traffic-production-expansion-25-rollout evaluate-agent-direct-traffic-production-expansion-25-gate attest-agent-direct-traffic-production-expansion-25-gate verify-agent-direct-traffic-production-expansion-25-gate apply-agent-direct-traffic-production-expansion-25
@@ -795,7 +795,7 @@ run-api: ## Run API locally
 run-worker: ## Run background worker locally
 	set -a; . ./$(ENV_FILE); set +a; go run ./cmd/worker
 
-run-agent-worker: ## Run the Kafka/LangGraph Agent worker locally
+run-agent-worker: ## Run the database-first LangGraph Agent worker locally
 	set -a; . ./$(ENV_FILE); set +a; go run ./cmd/agent-worker
 
 migrate: ## Apply pending legacy MySQL migrations
@@ -855,6 +855,9 @@ agent-direct-canary: ## Run disposable no-tool Agent requests and require the di
 infra-up: ## Start local infrastructure
 	docker compose --env-file .env -f deploy/compose/compose.yml up -d
 
+infra-up-kafka-scale: ## Start local infrastructure plus optional Kafka scale transport
+	KAFKA_ENABLED=true KAFKA_BROKERS=kafka:29092 docker compose --profile kafka-scale --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d
+
 infra-down: ## Stop local infrastructure
 	docker compose --env-file .env -f deploy/compose/compose.yml down
 
@@ -863,6 +866,9 @@ infra-config: ## Validate the Compose model
 
 docker-up: ## Build and start the complete Docker application stack
 	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
+
+docker-up-kafka-scale: ## Start the application with Kafka horizontal-scale dispatch
+	KAFKA_ENABLED=true KAFKA_BROKERS=kafka:29092 docker compose --profile app --profile agent --profile agent-runtime --profile kafka-scale --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
 
 docker-down: ## Stop the complete Docker application stack
 	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml down

@@ -31,7 +31,7 @@ This completion status covers the repository implementation, local quality gates
 - Long-term memory, bounded context, document intake, page-level PDF/text parsing, structural chunking, Qdrant retrieval, citations, insufficient-evidence behavior, deletion, and a 100-case M2 quality gate.
 - Ledger candidates/confirmation, ledger CRUD, Excel export, plans, reminders, application notification records, and system-reminder adapter boundaries.
 - Versioned Skill runtime, deterministic intent routing, MCP tool allowlists, office document/spreadsheet/presentation skills, durable long-task queue leases, Worker takeover, and generated-file access control.
-- Kafka-backed asynchronous transport for production delivery, outbox/inbox recovery, poison-message handling, DLQ/replay/compensation operations, model circuit breaker, and L0-L3 reliability policy.
+- Database-first asynchronous dispatch with leases and reconciliation, plus an optional Kafka horizontal-scale adapter with outbox/inbox recovery, poison-message handling, DLQ/replay/compensation operations, model circuit breaker, and L0-L3 reliability policy.
 - Team workspaces, invitations, resource sharing for documents/generated files/ledger exports, and privacy isolation for non-shared personal data.
 - Email delivery queue, SMTP/no-op sender adapters, Worker delivery processing, failed-delivery replay, and audit trail.
 - Billing plans, entitlement summary, and service-side quota guards.
@@ -73,7 +73,7 @@ Before inviting external testers or production traffic:
 2. Create at least one active MFA-enabled admin operator account.
 3. Configure non-development model provider and approved region/retention policy.
 4. Run migrations against the target database.
-5. Start API, Worker, MySQL, Redis, Kafka, Qdrant, and object storage for the target environment.
+5. Start API, Worker, PostgreSQL, Redis, Qdrant, and object storage. Add Kafka only when the measured horizontal-scale criteria in ADR 0005 are met.
 6. Collect evidence:
 
    ```sh

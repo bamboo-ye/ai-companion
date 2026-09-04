@@ -4,7 +4,7 @@
 
 - Go API 继续承担鉴权、HTTP/SSE、配额、安全策略和控制面。
 - PostgreSQL 成为唯一业务关系库，使用 `app`、`eventing`、`agent`、`langgraph` 四个 schema 隔离职责。
-- Kafka 继续承担命令分发和领域事件，不把 LangGraph 的数据库检查点当作消息队列。
+- PostgreSQL 任务表和租约承担默认命令调度；Kafka 仅在水平扩展模式下提供低延迟分发提示和领域事件扇出。LangGraph 检查点不充当消息队列。
 - Python LangGraph Worker 使用 `agent_run_id` 作为 `thread_id`，每次运行可独立恢复、审批和重试。
 - 工具调用必须经过 Go Tool Gateway；账本、提醒、计划和文件写操作继续在落库前中断并等待用户确认。
 - Qdrant 继续只保存文档向量与检索负载，文件本体继续保存在对象存储。
@@ -99,12 +99,12 @@
   另一份工具白名单，也不会把模型返回的未知工具名转发给领域服务。
 - 创建 Agent Run 与 `agent.run.requested.v1` Outbox 事件在同一个 PostgreSQL
   事务内提交；重复幂等键不会生成第二条运行或第二条事件。
-- 独立 Go `agent-worker` 使用 `ai-companion-agent-v1` consumer group 消费
-  `agent.run.requested.v1` 和 `agent.run.resume.requested.v1`。事件进入有界内存
-  队列后即可提交 Kafka offset，`AGENT_WORKER_CONCURRENCY` 个执行槽并行认领
-  持久化 Agent Run，`AGENT_DISPATCH_QUEUE_SIZE` 提供背压。数据库认领和 revision
-  围栏仍是执行权来源；进程在入队后崩溃时，reconciler 会重新认领未完成运行。
-  现有 `chat.command.v1` consumer 不会看到 Agent 事件。
+- 独立 Go `agent-worker` 默认按一秒间隔扫描持久化 Agent Run，使用
+  `AGENT_WORKER_CONCURRENCY` 个执行槽并行认领。启用可选 Kafka scale 模式后，
+  `ai-companion-agent-v1` consumer group 消费 `agent.run.requested.v1` 和
+  `agent.run.resume.requested.v1`，有界内存队列由 `AGENT_DISPATCH_QUEUE_SIZE`
+  提供背压，数据库扫描降为低频恢复。两种模式下，数据库认领和 revision 围栏
+  都是执行权来源。
 - Agent Worker 在 `AGENT_METRICS_ADDR`（默认 `:9467`）提供 `/healthz`、`/readyz`
   和 `/metrics`。指标记录首次入队、排队合并、运行中一次尾随重放、当前有界队列状态，
   以及 Skill 终态事件到持久化唤醒/分发入队的延迟；不使用 run/task/user ID 标签。
@@ -162,9 +162,9 @@
   失败/超时同时纳入平台可靠性采样。重试指标由 PostgreSQL Run Event 和终态
   联合计算，不依赖易丢失的进程内计数；五分钟窗口使用重试事件与终态部分索引，
   不随全量运行历史做周期性扫描。
-- Agent Worker Compose 依赖常驻 Worker，确保 Agent Outbox topic 由最新
-  Relay 发布；reconciler 启动时先等待一个轮询周期，正常 Kafka consumer
-  可以优先领取新事件。
+- Agent Worker Compose 依赖常驻 Worker。默认模式由数据库 reconciler 领取
+  Agent Run；`kafka-scale` profile 启用时，Outbox Relay/consumer 可优先分发，
+  reconciler 继续作为低频恢复路径。
 - OpenRouter 工具决策使用固定、版本化的角色模型；默认不配置跨模型 fallback，
   仅在同一模型的兼容 provider 间按价格路由。若显式启用已评审的跨模型 fallback，
   每次尝试都会占用调用、输入/输出 token 和成本预算；401/403 直接终止。

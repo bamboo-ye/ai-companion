@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 
-This runbook defines the minimum drill set for the M6 internal release. It is written for the current local/early deployment shape: MySQL as authority, object storage/local file stores for artifacts, Kafka as asynchronous transport, and Qdrant as rebuildable retrieval index.
+This runbook defines the minimum drill set for the M6 internal release. Durable business state and leases in the authoritative database are the default dispatcher; Kafka is an optional horizontal-scale transport, object storage/local file stores hold artifacts, and Qdrant is a rebuildable retrieval index.
 
 ## Data classes
 
@@ -12,7 +12,7 @@ This runbook defines the minimum drill set for the M6 internal release. It is wr
 | Outbox/Inbox and compensation records | MySQL | Restore with business data; they are part of recovery state. |
 | Uploaded documents and generated files | object storage / local file store | Restore from object backup; metadata lives in MySQL. |
 | Qdrant document index | Qdrant | Rebuild from MySQL document chunks if necessary. |
-| Kafka messages | Kafka | Not the authority; accepted work is recoverable through MySQL Outbox and durable job tables. |
+| Kafka messages (optional) | Kafka | Not the authority; accepted work is recoverable through the database Outbox and durable job tables. |
 
 ## MySQL restore drill
 

@@ -153,8 +153,14 @@ func main() {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	errCh := make(chan error, 4)
 	runners := 1
+	reconcileInterval := cfg.AgentWorkerPollInterval
+	dispatchMode := "database"
+	if cfg.KafkaEnabled {
+		reconcileInterval = cfg.KafkaReconcileInterval
+		dispatchMode = "kafka"
+	}
 	go runNamed(errCh, "Agent Run reconciler", func() error {
-		return runtimeWorker.RunReconciler(runCtx, cfg.AgentWorkerPollInterval)
+		return runtimeWorker.RunReconciler(runCtx, reconcileInterval)
 	})
 
 	var consumer *eventbus.KafkaConsumer
@@ -257,6 +263,8 @@ func main() {
 		"graph_version", agent.GraphVersion,
 		"kafka_enabled", cfg.KafkaEnabled,
 		"kafka_group", cfg.AgentKafkaConsumerGroup,
+		"dispatch_mode", dispatchMode,
+		"reconcile_interval", reconcileInterval,
 		"lease", cfg.AgentWorkerLeaseDuration,
 		"runtime_timeout", cfg.AgentWorkerTimeout,
 		"run_timeout", cfg.AgentRunTimeout,

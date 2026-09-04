@@ -14,9 +14,9 @@ This runbook is for backend internal releases from M8 onward. The bias is boring
    - forward migration reviewed
    - rollback migration exists for schema-only changes
    - migration tested on restored or local Docker MySQL
-3. Kafka:
+3. Optional Kafka scale transport (only when `KAFKA_ENABLED=true`):
    - topic allowlist and Compose initializer match event schemas
-   - Outbox relay metrics healthy
+   - Outbox relay and consumer metrics healthy
    - no unexpected `dead_letter` backlog
 4. Operator and security controls:
    - `OPERATOR_MFA_REQUIRED=true` in production

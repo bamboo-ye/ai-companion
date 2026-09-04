@@ -5,6 +5,8 @@ import io
 import json
 import os
 import shutil
+import threading
+import time
 import unittest
 from dataclasses import replace
 from unittest.mock import Mock, patch
@@ -333,6 +335,150 @@ class OfficeToolsTest(unittest.TestCase):
         self.assertEqual(usage["vision_page_count"], 5)
         self.assertEqual(usage["round_count"], 2)
 
+    def test_layout_translation_uses_bounded_parallelism_and_reduces_wall_latency(
+        self,
+    ) -> None:
+        blocks = tuple(
+            PdfTextBlock(
+                page_no=page_no,
+                block_no=1,
+                bbox=(10, 10, 200, 40),
+                text=f"Page {page_no} source text",
+                font_size=10,
+                color=(0, 0, 0),
+                rotation=0,
+            )
+            for page_no in range(1, 17)
+        )
+        layout = PdfLayout(
+            source=b"%PDF-layout-concurrency-test",
+            parser_version="pymupdf-test-layout-v1",
+            page_count=16,
+            blocks=blocks,
+            page_previews={},
+            page_sizes=tuple((300, 200) for _ in range(16)),
+            page_rotations=tuple(0 for _ in range(16)),
+            image_placements=(),
+        )
+        active = 0
+        peak_active = 0
+        lock = threading.Lock()
+
+        def translated(text: str, _target: str, **_kwargs: object) -> tuple[str, dict[str, object]]:
+            nonlocal active, peak_active
+            with lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            try:
+                time.sleep(0.05)
+                return text.replace("source text", "中文内容"), {
+                    "provider": "openrouter",
+                    "requested_model": "openai/gpt-5-mini",
+                    "returned_model": "openai/gpt-5-mini",
+                    "upstream_provider": "OpenAI",
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "cost_micros": 10,
+                    "cost_accounting": "reported",
+                    "latency_ms": 50,
+                    "vision_page_count": 0,
+                }
+            finally:
+                with lock:
+                    active -= 1
+
+        with (
+            patch(
+                "ai_companion_worker.office_tools._openrouter_translate",
+                side_effect=translated,
+            ),
+            patch.dict(os.environ, {"MODEL_TRANSLATION_CONCURRENCY": "1"}),
+        ):
+            sequential_started = time.perf_counter()
+            _translate_layout_blocks(layout, "Chinese")
+            sequential_elapsed = time.perf_counter() - sequential_started
+
+        peak_active = 0
+        with (
+            patch(
+                "ai_companion_worker.office_tools._openrouter_translate",
+                side_effect=translated,
+            ),
+            patch.dict(os.environ, {"MODEL_TRANSLATION_CONCURRENCY": "2"}),
+        ):
+            parallel_started = time.perf_counter()
+            translations, usage, rounds = _translate_layout_blocks(layout, "Chinese")
+            parallel_elapsed = time.perf_counter() - parallel_started
+
+        self.assertEqual(rounds, 4)
+        self.assertEqual(len(translations), 16)
+        self.assertEqual(peak_active, 2)
+        self.assertEqual(usage["concurrency"], 2)
+        self.assertEqual(usage["latency_ms"], 200)
+        self.assertLess(usage["wall_latency_ms"], usage["latency_ms"])
+        self.assertLess(parallel_elapsed, sequential_elapsed * 0.75)
+
+    def test_parallel_translation_stops_dispatch_after_failure_and_retains_usage(
+        self,
+    ) -> None:
+        blocks = tuple(
+            PdfTextBlock(
+                page_no=page_no,
+                block_no=1,
+                bbox=(10, 10, 200, 40),
+                text=f"Page {page_no} source text",
+                font_size=10,
+                color=(0, 0, 0),
+                rotation=0,
+            )
+            for page_no in range(1, 13)
+        )
+        layout = PdfLayout(
+            source=b"%PDF-layout-failure-test",
+            parser_version="pymupdf-test-layout-v1",
+            page_count=12,
+            blocks=blocks,
+            page_previews={},
+            page_sizes=tuple((300, 200) for _ in range(12)),
+            page_rotations=tuple(0 for _ in range(12)),
+            image_placements=(),
+        )
+
+        def translated(text: str, _target: str, **_kwargs: object) -> tuple[str, dict[str, object]]:
+            if "[[PAGE 1 BLOCK 1]]" in text:
+                raise ModelBackedOperationError(
+                    "translation_model_truncated",
+                    {
+                        "provider": "openrouter",
+                        "cost_micros": 7,
+                        "cost_accounting": "reported",
+                        "latency_ms": 2,
+                    },
+                )
+            time.sleep(0.03)
+            return text.replace("source text", "中文内容"), {
+                "provider": "openrouter",
+                "cost_micros": 5,
+                "cost_accounting": "reported",
+                "latency_ms": 30,
+            }
+
+        with (
+            patch(
+                "ai_companion_worker.office_tools._openrouter_translate",
+                side_effect=translated,
+            ) as translate,
+            patch.dict(os.environ, {"MODEL_TRANSLATION_CONCURRENCY": "2"}),
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _translate_layout_blocks(layout, "Chinese")
+
+        self.assertEqual(caught.exception.code, "translation_model_truncated")
+        self.assertEqual(translate.call_count, 2)
+        self.assertEqual(caught.exception.model_usage["round_count"], 2)
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 12)
+        self.assertEqual(caught.exception.model_usage["concurrency"], 2)
+
     @patch("urllib.request.urlopen")
     def test_pdf_translation_uses_budgeted_openrouter_policy_and_usage(self, urlopen: Mock) -> None:
         response = urlopen.return_value.__enter__.return_value
@@ -468,6 +614,47 @@ class OfficeToolsTest(unittest.TestCase):
                 _openrouter_translate("Source text", "English")
         self.assertEqual(caught.exception.code, "translation_model_truncated")
         self.assertEqual(caught.exception.model_usage["cost_micros"], 4)
+
+    @patch("urllib.request.urlopen")
+    def test_pdf_translation_rejects_reported_cost_above_reserved_batch_budget(
+        self,
+        urlopen: Mock,
+    ) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "model": "openai/gpt-5-mini",
+                "provider": "OpenAI",
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": "Translated text"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 30,
+                    "completion_tokens": 8,
+                    "cost": 0.006,
+                },
+            }
+        ).encode()
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_TRANSLATION_NAME": "openai/gpt-5-mini",
+            },
+        ):
+            with self.assertRaises(ModelBackedOperationError) as caught:
+                _openrouter_translate(
+                    "Source text",
+                    "English",
+                    remaining_cost_micros=5_000,
+                )
+        self.assertEqual(caught.exception.code, "translation_model_budget_exhausted")
+        self.assertEqual(caught.exception.model_usage["cost_micros"], 6_000)
+        self.assertEqual(caught.exception.model_usage["max_cost_micros"], 5_000)
 
     @patch("urllib.request.urlopen")
     def test_pdf_translation_requires_the_complete_page_marker_sequence(

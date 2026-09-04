@@ -779,6 +779,35 @@ func (s *Store) DeliverNotification(ctx context.Context, deliveryID string, now 
 	return err
 }
 
+func (s *Store) DeliverNextNotification(ctx context.Context, now time.Time) (bool, error) {
+	var deliveryID string
+	err := s.db.QueryRowContext(ctx, `
+		WITH candidate AS (
+			SELECT id
+			FROM app.notification_deliveries
+			WHERE status='queued'
+				AND enqueued_at IS NOT NULL
+				AND scheduled_at<=$1
+			ORDER BY scheduled_at,id
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE app.notification_deliveries AS delivery SET
+			status='delivered',
+			provider_message_id=COALESCE(delivery.provider_message_id,'in-app:' || delivery.id::text),
+			failure_code=NULL,
+			updated_at=$1
+		FROM candidate
+		WHERE delivery.id=candidate.id
+		RETURNING delivery.id::text`,
+		now,
+	).Scan(&deliveryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 const planSelect = `
 	SELECT
 		p.id::text,p.user_id::text,p.title,TO_CHAR(p.local_date,'YYYY-MM-DD'),

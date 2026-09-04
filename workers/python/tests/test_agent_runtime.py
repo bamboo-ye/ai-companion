@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+import threading
+import time
 import unittest
 from typing import Any, Mapping
+from unittest.mock import patch
 
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -375,6 +380,477 @@ class AgentRuntimeTest(unittest.TestCase):
             runtime_config("run-123")["configurable"]["thread_id"],
             "run-123",
         )
+
+    def test_runtime_config_bounds_model_fanout_concurrency(self) -> None:
+        with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "4"}):
+            self.assertEqual(runtime_config("run-fanout")["max_concurrency"], 4)
+        with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "5"}):
+            with self.assertRaisesRegex(ValueError, "between 1 and 4"):
+                runtime_config("run-fanout")
+
+    def test_structured_composer_batches_fan_out_and_join_in_source_order(self) -> None:
+        mapping = {
+            "version": "target-mapping-v1",
+            "source_table_ids": ["table:one"],
+            "entity_level": "row",
+            "field_mappings": [
+                {"target_index": 0, "source_column_ids": ["code"], "mode": "direct"},
+                {"target_index": 1, "source_column_ids": ["name"], "mode": "direct"},
+                {"target_index": 2, "source_column_ids": ["time"], "mode": "aggregate"},
+            ],
+        }
+        fields = [
+            {"target_index": 0, "field": "code", "label": "课程代码", "mode": "direct"},
+            {"target_index": 1, "field": "name", "label": "课程名称", "mode": "direct"},
+            {"target_index": 2, "field": "time", "label": "上课时间", "mode": "aggregate"},
+        ]
+
+        def batch(index: int, code: str, name: str) -> dict[str, Any]:
+            entity = {
+                "entity_id": f"entity-{index}",
+                "values": [code, name, f"周{index} 10:00-11:00"],
+                "source_locator": f"附件 1 · 第 {index} 页",
+                "source_refs": [f"row-{index}"],
+                "source_pages": [index],
+                "attachment_indices": [1],
+            }
+            logical_ir = {
+                "version": "presentation-logical-entity-ir-v1",
+                "fields": fields,
+                "entities": [
+                    {
+                        "entity_id": entity["entity_id"],
+                        "values": entity["values"],
+                    }
+                ],
+            }
+            text = "[[COMPACT LOGICAL ENTITY IR]]\n" + json.dumps(
+                logical_ir,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            return {
+                "batch_id": f"logical-entities:b{index}",
+                "attachment_index": 1,
+                "round_no": index,
+                "segment_no": 1,
+                "segment_count": 1,
+                "text": text,
+                "processing_text": text,
+                "token_count": 100,
+                "source_filename": "courses.pdf",
+                "source_ir": logical_ir,
+                "source_pages": [index],
+                "structured": True,
+                "grounded_rows": [entity],
+            }
+
+        batches = [
+            batch(1, "PED1101", "Canoeing"),
+            batch(2, "PED1102", "Swimming"),
+            batch(3, "PED1103", "Archery"),
+        ]
+
+        class ParallelDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(
+                    ModelDecision(
+                        intent="work_generate_pptx",
+                        tool_name="work_generate_pptx",
+                        requires_argument_composition=True,
+                    )
+                )
+                self.active = 0
+                self.peak_active = 0
+                self.composed_batches: list[str] = []
+                self.lock = threading.Lock()
+
+            def plan(self, **values: Any) -> AgentPlan:
+                return AgentPlan(
+                    objective=str(values["message"]),
+                    steps=("读取全部课程", "生成结构化演示文稿"),
+                    success_criteria="完整覆盖课程代码、名称和时间。",
+                    task_intent={
+                        "presentation_capabilities": ["narrative", "table"],
+                        "presentation_mode": "structured_table",
+                        "requested_fields": ["code", "name", "time"],
+                        "confidence": "high",
+                    },
+                )
+
+            def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
+                context = values["context"]
+                processing_round = context["document_processing_round"]
+                with self.lock:
+                    self.active += 1
+                    self.peak_active = max(self.peak_active, self.active)
+                    self.composed_batches.append(str(processing_round["batch_id"]))
+                try:
+                    time.sleep(0.08)
+                    source_ir = context["observations"][0]["data"]["output"]["source_ir"]
+                    rows = [
+                        {
+                            "entity_id": entity["entity_id"],
+                            "cells": [
+                                entity["values"][0],
+                                {
+                                    "PED1101": "独木舟",
+                                    "PED1102": "游泳",
+                                    "PED1103": "射箭",
+                                }[entity["values"][0]],
+                                entity["values"][2],
+                            ],
+                            "source_locator": "model supplied locator",
+                        }
+                        for entity in source_ir["entities"]
+                    ]
+                    return {
+                        "title": "体育课课程表",
+                        "audience": "学生",
+                        "style": "简洁表格",
+                        "brief": "完整课程清单",
+                        "slide_count": 3,
+                        "table": {"columns": ["课程代码", "课程名称", "上课时间"], "rows": rows},
+                    }
+                finally:
+                    with self.lock:
+                        self.active -= 1
+
+        decisions = ParallelDecisions()
+        tools = FakeTools(
+            ToolPreparation(
+                status="completed",
+                tool_name="work_generate_pptx",
+                response="PPT 已生成。",
+                data={
+                    "kind": "skill_run",
+                    "id": "parallel-pptx",
+                    "skill_name": "office.pptx_generate",
+                    "status": "succeeded",
+                    "output": {
+                        "outline": [
+                            {
+                                "page": 2,
+                                "table": {
+                                    "columns": ["课程代码", "课程名称", "上课时间"],
+                                    "row_count": 3,
+                                    "source_locators": [
+                                        "附件 1 · 第 1 页",
+                                        "附件 1 · 第 2 页",
+                                        "附件 1 · 第 3 页",
+                                    ],
+                                },
+                            }
+                        ],
+                        "quality_report": {
+                            "passed": True,
+                            "violations": [],
+                            "table_row_count": 3,
+                        },
+                        "source_coverage": {"coverage_ratio": 1.0, "truncated": False},
+                        "source_overwritten": False,
+                    },
+                    "files": [{"name": "courses.pptx"}],
+                },
+            )
+        )
+        payload = agent_input("run-composer-fanout", "work")
+        payload["user_message"] = (
+            "根据附件中的所有课程代码、课程名称和上课时间生成完整中文PPT"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        payload["context"]["tools"] = [
+            {
+                "name": "work_generate_pptx",
+                "description": "生成结构化 PPTX",
+                "requires_plan": True,
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "required": [
+                        "title",
+                        "audience",
+                        "style",
+                        "brief",
+                        "slide_count",
+                        "table",
+                    ],
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                        "table": {"type": "object"},
+                        "task_contract": {"type": "object"},
+                        "mapping_contract": {"type": "object"},
+                        "source_coverage": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+        with (
+            patch(
+                "ai_companion_worker.agent_runtime._presentation_document_batches",
+                return_value=batches,
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._presentation_source_ir",
+                return_value={
+                    "version": "document-source-ir-v1",
+                    "structure_preserved": True,
+                    "tables": [],
+                },
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._deterministic_presentation_mapping",
+                return_value=(mapping, []),
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._relevant_source_tables",
+                return_value=[],
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime.presentation_source_record_keys",
+                return_value=["PED1101", "PED1102", "PED1103"],
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime.validate_presentation_arguments",
+                return_value=[],
+            ),
+        ):
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "1"}):
+                sequential_runtime = AgentRuntime(
+                    build_graph(
+                        checkpointer=InMemorySaver(),
+                        decisions=decisions,
+                        tools=tools,
+                    )
+                )
+                sequential_started = time.perf_counter()
+                sequential_runtime.start(
+                    {**payload, "run_id": "run-composer-sequential-baseline"}
+                )
+                sequential_elapsed_ms = (
+                    time.perf_counter() - sequential_started
+                ) * 1000
+            decisions.peak_active = 0
+            decisions.composed_batches.clear()
+            tools.prepared.clear()
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "2"}):
+                runtime = AgentRuntime(
+                    build_graph(
+                        checkpointer=InMemorySaver(),
+                        decisions=decisions,
+                        tools=tools,
+                    )
+                )
+                started = time.perf_counter()
+                result = runtime.start(payload)
+                elapsed_ms = (time.perf_counter() - started) * 1000
+
+        self.assertEqual(result["outcome"], "completed")
+        self.assertEqual(decisions.peak_active, 2)
+        self.assertEqual(
+            sorted(decisions.composed_batches),
+            ["logical-entities:b1", "logical-entities:b2", "logical-entities:b3"],
+        )
+        generated = next(
+            prepared["arguments"]
+            for prepared in tools.prepared
+            if prepared["tool_name"] == "work_generate_pptx"
+        )
+        self.assertEqual(
+            [row["cells"][0] for row in generated["table"]["rows"]],
+            ["PED1101", "PED1102", "PED1103"],
+        )
+        self.assertTrue(result["document_processing"]["parallel"])
+        self.assertTrue(result["document_processing"]["complete"])
+        self.assertEqual(result["document_processing"]["concurrency"], 2)
+        self.assertLess(
+            result["document_processing"]["wall_latency_ms"],
+            result["document_processing"]["provider_latency_ms"],
+        )
+        self.assertLess(elapsed_ms, sequential_elapsed_ms * 0.85)
+        trace_nodes = [event["node"] for event in result["node_trace"]]
+        self.assertIn("fanout_composition", trace_nodes)
+        self.assertIn("join_composition", trace_nodes)
+
+    def test_parallel_composer_failure_settles_every_branch_usage(self) -> None:
+        fields = [
+            {"target_index": 0, "field": "code", "label": "课程代码", "mode": "direct"},
+            {"target_index": 1, "field": "name", "label": "课程名称", "mode": "direct"},
+        ]
+        batches = [
+            {
+                "batch_id": f"logical-entities:b{index}",
+                "attachment_index": 1,
+                "round_no": index,
+                "segment_no": 1,
+                "segment_count": 1,
+                "processing_text": f"batch-{index}",
+                "token_count": 10,
+                "source_ir": {
+                    "version": "presentation-logical-entity-ir-v1",
+                    "fields": fields,
+                    "entities": [],
+                },
+                "source_pages": [index],
+                "structured": True,
+                "grounded_rows": [],
+            }
+            for index in (1, 2)
+        ]
+        mapping = {
+            "version": "target-mapping-v1",
+            "source_table_ids": ["table:one"],
+            "entity_level": "row",
+            "field_mappings": [
+                {"target_index": 0, "source_column_ids": ["code"], "mode": "direct"},
+                {"target_index": 1, "source_column_ids": ["name"], "mode": "direct"},
+            ],
+        }
+
+        class FailingParallelDecisions(FakeDecisions):
+            def __init__(self) -> None:
+                super().__init__(
+                    ModelDecision(
+                        intent="work_generate_pptx",
+                        tool_name="work_generate_pptx",
+                        requires_argument_composition=True,
+                    )
+                )
+                self.local = threading.local()
+
+            def plan(self, **values: Any) -> AgentPlan:
+                return AgentPlan(
+                    objective=str(values["message"]),
+                    steps=("读取全部课程", "生成结构化演示文稿"),
+                    success_criteria="完整覆盖课程代码和名称。",
+                    task_intent={
+                        "presentation_capabilities": ["narrative", "table"],
+                        "presentation_mode": "structured_table",
+                        "requested_fields": ["code", "name"],
+                        "confidence": "high",
+                    },
+                )
+
+            def compose_arguments(self, **values: Any) -> Mapping[str, Any]:
+                batch_id = str(
+                    values["context"]["document_processing_round"]["batch_id"]
+                )
+                failed = batch_id.endswith("b2")
+                self.local.events = [
+                    {
+                        "kind": "model_call",
+                        "role": "composer",
+                        "status": "failed" if failed else "succeeded",
+                        "provider": "test",
+                        "requested_model": "test/composer",
+                        "returned_model": "test/composer",
+                        "upstream_provider": "test",
+                        "generation_id": batch_id,
+                        "prompt_tokens": 11,
+                        "completion_tokens": 7,
+                        "cached_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "cost_micros": 100 if failed else 200,
+                        "latency_ms": 30,
+                        "error_status": 503 if failed else 0,
+                        "retryable": failed,
+                    }
+                ]
+                time.sleep(0.03)
+                if failed:
+                    raise RuntimeError("upstream unavailable")
+                return {
+                    "title": "体育课课程表",
+                    "audience": "学生",
+                    "style": "简洁表格",
+                    "brief": "完整课程清单",
+                    "slide_count": 3,
+                    "table": {"columns": ["课程代码", "课程名称"], "rows": []},
+                }
+
+            def consume_observability(self) -> list[dict[str, Any]]:
+                events = list(getattr(self.local, "events", []))
+                self.local.events = []
+                return events
+
+        payload = agent_input("run-composer-fanout-failure", "work")
+        payload["user_message"] = (
+            "根据附件中的所有课程代码和课程名称生成完整中文PPT"
+            "\n<!--ai-document:doc-1|courses.pdf-->"
+        )
+        payload["context"]["tools"] = [
+            {
+                "name": "work_generate_pptx",
+                "description": "生成结构化 PPTX",
+                "requires_plan": True,
+                "compose_arguments": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "audience": {"type": "string"},
+                        "style": {"type": "string"},
+                        "brief": {"type": "string"},
+                        "slide_count": {"type": "integer"},
+                        "table": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+        decisions = FailingParallelDecisions()
+        tools = FakeTools(ToolPreparation(status="completed", tool_name=""))
+        with (
+            patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "2"}),
+            patch(
+                "ai_companion_worker.agent_runtime._presentation_document_batches",
+                return_value=batches,
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._presentation_source_ir",
+                return_value={
+                    "version": "document-source-ir-v1",
+                    "structure_preserved": True,
+                    "tables": [],
+                },
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._deterministic_presentation_mapping",
+                return_value=(mapping, []),
+            ),
+            patch(
+                "ai_companion_worker.agent_runtime._relevant_source_tables",
+                return_value=[],
+            ),
+        ):
+            result = AgentRuntime(
+                build_graph(
+                    checkpointer=InMemorySaver(),
+                    decisions=decisions,
+                    tools=tools,
+                )
+            ).start(payload)
+
+        self.assertEqual(result["outcome"], "model_unavailable")
+        self.assertEqual(result["budget_usage"]["model_calls_by_node"]["compose_document_batch"], 2)
+        self.assertEqual(result["budget_usage"]["cost_micros"], 300)
+        branch_events = [
+            event
+            for event in result["model_events"]
+            if event.get("graph_node") == "compose_document_batch"
+        ]
+        self.assertEqual(
+            sorted(event["batch_id"] for event in branch_events),
+            ["logical-entities:b1", "logical-entities:b2"],
+        )
+        self.assertEqual(result["document_processing"]["status"], "failed")
+        self.assertFalse(result["document_processing"]["complete"])
+        self.assertEqual(tools.prepared, [])
 
     def test_generated_pptx_is_not_terminal_without_quality_evidence(self) -> None:
         decisions = PresentationGateDecisions()

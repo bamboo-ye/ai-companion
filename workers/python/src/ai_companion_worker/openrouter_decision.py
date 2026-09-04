@@ -456,7 +456,7 @@ class OpenRouterDecisionPort:
         config.validate()
         self._config = config
         self._monotonic = monotonic
-        self._observability: list[dict[str, Any]] = []
+        self._observability_local = threading.local()
 
     @classmethod
     def from_env(cls) -> OpenRouterDecisionPort:
@@ -548,8 +548,17 @@ class OpenRouterDecisionPort:
         }
 
     def consume_observability(self) -> list[dict[str, Any]]:
-        events, self._observability = self._observability, []
+        buffer = self._observability_buffer()
+        events = list(buffer)
+        buffer.clear()
         return events
+
+    def _observability_buffer(self) -> list[dict[str, Any]]:
+        buffer = getattr(self._observability_local, "events", None)
+        if not isinstance(buffer, list):
+            buffer = []
+            self._observability_local.events = buffer
+        return cast(list[dict[str, Any]], buffer)
 
     def plan(
         self,
@@ -1749,9 +1758,10 @@ class OpenRouterDecisionPort:
         }.get(role, self._config.reasoning_effort)
 
     def _annotate_latest_contract_error(self, error: OpenRouterError) -> None:
-        if error.status_code != 0 or not self._observability:
+        events = self._observability_buffer()
+        if error.status_code != 0 or not events:
             return
-        latest = self._observability[-1]
+        latest = events[-1]
         if latest.get("kind") != "model_call" or latest.get("status") != "succeeded":
             return
         latest["contract_valid"] = False
@@ -1830,7 +1840,7 @@ class OpenRouterDecisionPort:
         try:
             result = self._request(payload, timeout_seconds=timeout_seconds)
         except OpenRouterError as exc:
-            self._observability.append(
+            self._observability_buffer().append(
                 {
                     "kind": "model_call",
                     "role": role,
@@ -1863,7 +1873,7 @@ class OpenRouterDecisionPort:
         returned_model = result.get("model")
         upstream_provider = result.get("provider")
         generation_id = result.get("id")
-        self._observability.append(
+        self._observability_buffer().append(
             {
                 "kind": "model_call",
                 "role": role,

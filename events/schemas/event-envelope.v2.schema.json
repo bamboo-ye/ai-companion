@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.ai-companion.local/event-envelope.v2.schema.json",
-  "title": "Kafka event envelope v2",
+  "title": "Asynchronous event envelope v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["event_id", "event_type", "event_version", "aggregate_type", "aggregate_id", "occurred_at", "payload"],

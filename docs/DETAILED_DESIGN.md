@@ -97,9 +97,9 @@ API Gateway / Go Application
   |-- Ledger / Plan / Reminder
   |-- File / Finance / Notification
   |
-  +--> PostgreSQL 18        权威业务数据、事务、审计、Outbox、Agent 检查点
+  +--> PostgreSQL 18        权威数据、任务租约、默认异步调度、Outbox、Agent 检查点
   +--> Redis                缓存、限流、在线状态、实时分发、短期回放
-  +--> Kafka (KRaft)        异步命令、任务事件、重试与死信
+  +--> Kafka (可选)         水平扩展后的异步分发加速与事件扇出
   +--> Qdrant               稠密/稀疏混合向量检索
   +--> S3/MinIO             原始文件、解析产物、图片、报告
   +--> LLM/Embedding/Vision 可替换的模型供应商适配层
@@ -123,10 +123,10 @@ Go Workers / Python Algorithm Workers
 ### 5.2 推荐技术基线
 
 - Go 1.26；HTTP 使用 `net/http`，数据库通过 `database/sql` + `pgx` 访问，迁移由仓库内版本化迁移器执行。
-- PostgreSQL 18；Redis 使用当前受支持稳定版；Kafka 使用当前稳定版并以 KRaft 模式部署。
+- PostgreSQL 18；Redis 使用当前受支持稳定版；初始部署不要求 Kafka，达到水平扩展门槛后使用当前稳定版 Kafka/KRaft。
 - Web：Next.js + TypeScript + Tailwind CSS；客户端数据请求使用 TanStack Query。
 - Android：Kotlin、Jetpack Compose、Coroutines/Flow、Room；iOS：Swift、SwiftUI、async/await、SwiftData/Core Data。双端共享 OpenAPI 契约、设计令牌和交互规范，但不共享 UI 代码。
-- Python Worker：只承担依赖 Python 生态的文档、表格、金融和媒体算法，通过 Kafka/gRPC 与 Go 控制面交互；不能直接绕过 Go 权限层对外产生副作用。
+- Python Worker：只承担依赖 Python 生态的文档、表格、金融和媒体算法，通过 Go 控制面和持久化任务契约交互；Kafka 仅作为可选调度加速层，Worker 不能直接绕过 Go 权限层对外产生副作用。
 - 对象存储：开发环境 MinIO，生产环境兼容 S3 的托管对象存储。
 - 检索：Qdrant 稠密向量 + 稀疏检索 + RRF，必要时增加 cross-encoder 重排。
 - 可观测性：OpenTelemetry、Prometheus、Grafana、Loki/兼容日志系统、Tempo/兼容链路系统。
@@ -189,7 +189,7 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 - Supervisor 根据角色模块选择 companion/life/work 子图。所有业务工具经 Go Tool Gateway 调用，Python Worker 不直写 `app` schema。
 - Tool Gateway 只信任 `agent.runs` 中的用户、会话、角色、模块和原始消息；Python Worker 不得通过请求参数覆盖这些身份。Go 侧按当前模块的精确工具定义再次校验白名单。
 - 写操作使用 Go 签发的短时 HMAC 确认令牌，令牌绑定 run、工具、候选和规范化变更；commit 使用领域幂等键，重放不得产生第二条业务记录。
-- `agent_run_id` 是 LangGraph `thread_id`；Kafka 只负责创建或恢复运行，不能用 `conversation_id` 复用检查点。
+- `agent_run_id` 是 LangGraph `thread_id`；数据库任务认领负责创建或恢复运行，可选 Kafka 只提供分发提示，不能用 `conversation_id` 复用检查点。
 - 需要确认的账本、提醒、计划和文件写操作通过 `interrupt()` 暂停，收到 Go 控制面签发的确认结果后使用 `Command(resume=...)` 恢复。
 - 所谓 harness/loop engineering 落实为：受限循环、检查点、执行日志、预算、策略验证、确定性重试和评测集，而不是开放式自我循环。
 - Supervisor 从原始请求编译不可变任务契约，锁定制品类型、完整性意图、必需字段、输出语言和硬性完成条件；模型不能在后续轮次删减这些条件。
@@ -309,9 +309,21 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 - 1.0 增加内容安全工单、套餐/配额、供应商路由、灰度发布和成本看板。
 - 管理员使用独立身份域、MFA、最小权限和高风险操作二次确认；禁止后台直接查看完整私聊正文，除非存在合法授权和严格审计流程。
 
-## 7. Kafka、降级与投递设计
+## 7. 数据库优先调度、Kafka 扩展与降级设计
 
-### 7.1 Topic 建议
+### 7.1 默认数据库调度
+
+事务内同时写业务任务状态和 Outbox。Worker 默认每秒扫描一次可运行任务，使用租约、`FOR UPDATE SKIP LOCKED`、幂等键和 revision fence 并发认领。数据库模式的 Outbox settlement 只表示执行责任已经由持久化业务状态接管，不表示任务已经完成；任务最终状态仍由各领域表记录。
+
+通知、文档、Skill、对话、账本、邮件和 Agent Run 都必须有独立于 Kafka 的数据库认领或对账路径。这样单机和初始生产部署不需要 broker，也不会因关闭 Kafka 导致 Outbox 无限保持 `pending`。
+
+### 7.2 可选 Kafka 水平扩展
+
+设置 `KAFKA_ENABLED=true`、配置 `KAFKA_BROKERS` 并启用 Compose `kafka-scale` profile 后，Outbox Relay 和隔离 consumer group 成为低延迟分发加速层；数据库轮询降为 30 秒的 stranded-work 恢复扫描。Kafka 不拥有任务真相，broker 丢失、重复投递或 rebalance 都由数据库租约、Inbox 去重和对账恢复。
+
+建议仅在以下指标持续出现时启用：数据库空轮询/认领压力超过预算、需要横向扩展大量 Worker 副本、一个事件需要多个独立消费者，或需要 broker 级保留与回放。启用前必须完成分区容量、ACL/TLS/SASL、lag 告警和故障演练。
+
+可选 Kafka topic：
 
 | Topic | Key | 用途 |
 |---|---|---|
@@ -325,11 +337,11 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 | `*.retry.v1` | original key | 指数退避重试 |
 | `*.dlq.v1` | original key | 人工检查和补偿 |
 
-事务内写业务记录和 Outbox；Relay 将 Outbox 投递到 Kafka；消费者用 `event_id` 写 Inbox 去重。整体按“至少一次 + 幂等”设计，不依赖跨系统的脆弱全局事务。
+Kafka 模式下 Relay 将 Outbox 投递到 broker；消费者用 `event_id` 写 Inbox 去重。整体按“至少一次 + 幂等”设计，不依赖跨系统的脆弱全局事务。
 
 运维恢复面使用独立 `OPERATOR_TOKEN` 认证，不复用普通用户访问令牌。进入 `dead_letter` 的 Outbox 事件可被列出、查看详情和重放；重放只把事件恢复为 `pending`，由 Relay 重新投递。每次重放自动写入补偿记录，人工补发、回滚或外部修复也可登记为 `compensation_records`，用于发布复盘和审计。
 
-### 7.2 动态降级
+### 7.3 动态降级
 
 降级控制器每 10～30 秒综合消费 lag、最老消息年龄、worker 利用率、模型错误率和 p95 延迟，使用滞回和最短驻留时间防止级别抖动。
 
@@ -344,7 +356,7 @@ Receive -> Classify -> BuildContext -> Plan(max steps)
 
 策略不仅用于展示：聊天、模型选择的显式记忆写入、长期记忆/RAG 上下文、文档问答和模型调用都会读取当前策略。L3 时聊天请求只持久化为 accepted job，不启动模型；Worker 收到命令也保持 durable job 等待恢复。模型供应商通过熔断器保护，熔断打开时已领取的生成任务会重新变为 accepted 并延后 `available_at`，而不是被错误标记为失败。
 
-### 7.3 Redis 混合推送
+### 7.4 Redis 混合推送
 
 - `presence:{user_id}` 保存带 TTL 的设备在线状态。
 - 在线：worker 发布结果事件，网关经 Redis Pub/Sub 或 Stream 推送 WebSocket。
@@ -485,7 +497,7 @@ M6 内测发布包含可导入的 Prometheus 告警规则、Grafana dashboard、
 ```text
 ai_companion/
   cmd/api/                 # HTTP/实时网关
-  cmd/worker/              # Kafka/后台任务 worker
+  cmd/worker/              # 数据库优先、可选 Kafka 的后台任务 worker
   cmd/migrate/             # 数据库迁移入口
   internal/
     identity/ character/ conversation/ memory/ rag/

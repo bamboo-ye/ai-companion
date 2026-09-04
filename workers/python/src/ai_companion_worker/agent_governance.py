@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.49.2"
+GRAPH_VERSION = "3.50.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -84,6 +84,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "execution_mode_reason",
             "task_contract",
             "artifact_validation",
+            "composition_plan",
+            "composition_results",
             "steps",
         ),
     ),
@@ -135,6 +137,44 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         recovery="checkpoint_replay",
         max_model_calls=48,
         allowed_writes=(*_MODEL_CONTROL_WRITES, "proposed_tool", "document_processing"),
+    ),
+    "fanout_composition": NodeContract(
+        responsibility=(
+            "Prepare independent structured Composer batches and reserve one disjoint "
+            "model allowance for each branch."
+        ),
+        kind="deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(
+            *_MODEL_CONTROL_WRITES,
+            "composition_plan",
+            "composition_results",
+            "document_processing",
+        ),
+    ),
+    "compose_document_batch": NodeContract(
+        responsibility=(
+            "Compose one independent structured document batch without mutating shared state."
+        ),
+        kind="model",
+        model_role="composer",
+        recovery="checkpoint_replay",
+        max_model_calls=48,
+        allowed_writes=("composition_results",),
+    ),
+    "join_composition": NodeContract(
+        responsibility=(
+            "Validate, order, account for and deterministically merge every Composer branch."
+        ),
+        kind="deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(
+            *_MODEL_CONTROL_WRITES,
+            "proposed_tool",
+            "document_processing",
+            "composition_plan",
+            "composition_results",
+        ),
     ),
     "email_quality_gate": NodeContract(
         responsibility=(
@@ -402,6 +442,8 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
             "presentation_validation",
             "presentation_rewrite_attempts",
             "document_processing",
+            "composition_plan",
+            "composition_results",
             "response_validation",
             "response_rewrite_attempts",
             "node_trace",

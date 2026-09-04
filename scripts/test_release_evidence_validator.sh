@@ -24,7 +24,7 @@ write_ready_bundle() {
   printf 'ai_companion_http_requests_total 1\n' > "$dir/metrics.prom"
   printf 'id,occurred_at,actor_type,actor_id,actor_label,action,resource_type,resource_id,trace_id,metadata\n' > "$dir/audit-logs.csv"
   cat > "$dir/release-readiness.json" <<'JSON'
-{"status":"ready","checks":[{"key":"service_ready","status":"passed"},{"key":"operator_mfa_required","status":"passed"},{"key":"operator_account_store","status":"passed"},{"key":"active_admin_operator","status":"passed"},{"key":"active_mfa_admin_operator","status":"passed"},{"key":"identity_admin_store","status":"passed"},{"key":"operations_store","status":"passed"},{"key":"kafka_transport_enabled","status":"passed"},{"key":"https_web_origin","status":"passed"},{"key":"security_headers_enabled","status":"passed"},{"key":"model_provider_configured","status":"passed"}]}
+{"status":"ready","checks":[{"key":"service_ready","status":"passed"},{"key":"operator_mfa_required","status":"passed"},{"key":"operator_account_store","status":"passed"},{"key":"active_admin_operator","status":"passed"},{"key":"active_mfa_admin_operator","status":"passed"},{"key":"identity_admin_store","status":"passed"},{"key":"operations_store","status":"passed"},{"key":"kafka_horizontal_scaling","status":"warning"},{"key":"https_web_origin","status":"passed"},{"key":"security_headers_enabled","status":"passed"},{"key":"model_provider_configured","status":"passed"}]}
 JSON
 
   for name in \
@@ -146,7 +146,7 @@ missing_readiness_bundle="$tmp_root/missing-readiness-check"
 write_ready_bundle "$missing_readiness_bundle"
 write_good_headers "$missing_readiness_bundle"
 cat > "$missing_readiness_bundle/release-readiness.json" <<'JSON'
-{"status":"ready","checks":[{"key":"service_ready","status":"passed"},{"key":"operator_mfa_required","status":"passed"},{"key":"operator_account_store","status":"passed"},{"key":"active_admin_operator","status":"passed"},{"key":"identity_admin_store","status":"passed"},{"key":"operations_store","status":"passed"},{"key":"kafka_transport_enabled","status":"passed"},{"key":"https_web_origin","status":"passed"},{"key":"security_headers_enabled","status":"passed"},{"key":"model_provider_configured","status":"passed"}]}
+{"status":"ready","checks":[{"key":"service_ready","status":"passed"},{"key":"operator_mfa_required","status":"passed"},{"key":"operator_account_store","status":"passed"},{"key":"active_admin_operator","status":"passed"},{"key":"identity_admin_store","status":"passed"},{"key":"operations_store","status":"passed"},{"key":"kafka_horizontal_scaling","status":"warning"},{"key":"https_web_origin","status":"passed"},{"key":"security_headers_enabled","status":"passed"},{"key":"model_provider_configured","status":"passed"}]}
 JSON
 expect_rejection "$missing_readiness_bundle" 'release-readiness required checks are missing or not passed' 'evidence validator rejects missing required readiness check'
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 )
@@ -504,6 +505,34 @@ func (s *Store) DeliverNotification(ctx context.Context, deliveryID string, now 
 		return errors.New("notification delivery is not deliverable")
 	}
 	return err
+}
+
+func (s *Store) DeliverNextNotification(ctx context.Context, now time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var deliveryID string
+	err = tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id) FROM notification_deliveries WHERE status='queued' AND enqueued_at IS NOT NULL AND scheduled_at<=? ORDER BY scheduled_at,id LIMIT 1 FOR UPDATE SKIP LOCKED`, now).Scan(&deliveryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE notification_deliveries SET status='delivered',provider_message_id=COALESCE(provider_message_id,CONCAT('in-app:',?)),failure_code=NULL,updated_at=? WHERE id=UUID_TO_BIN(?) AND status='queued'`, deliveryID, now, deliveryID)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return false, eventbus.ErrConflict
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 const planSelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),title,DATE_FORMAT(local_date,'%Y-%m-%d'),timezone,status,created_at,updated_at FROM plans`

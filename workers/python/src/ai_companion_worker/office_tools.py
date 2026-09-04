@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from pathlib import PurePath
 from statistics import fmean
@@ -718,58 +719,137 @@ def _translate_layout_blocks(
     target_language: str,
 ) -> tuple[dict[str, str], dict[str, Any], int]:
     batches = _translation_batches(layout.blocks)
-    translations: dict[str, str] = {}
-    usages: list[dict[str, Any]] = []
+    if not batches:
+        return {}, _aggregate_translation_usage([], _translation_cost_limit()), 0
+
     cost_limit = _translation_cost_limit()
+    concurrency = min(
+        len(batches),
+        _bounded_positive_int("MODEL_TRANSLATION_CONCURRENCY", 2, 4),
+    )
+    started_ns = time.perf_counter_ns()
+    results: list[dict[str, str] | None] = [None] * len(batches)
+    usages: list[dict[str, Any] | None] = [None] * len(batches)
     used_cost = 0
-    for batch in batches:
-        remaining_cost = cost_limit - used_cost
-        if remaining_cost <= 0:
-            raise ModelBackedOperationError(
-                "translation_model_budget_exhausted",
-                _aggregate_translation_usage(usages, cost_limit),
-            )
-        text = "\n\n".join(f"{block.marker}\n{block.text}" for block in batch)
-        page_numbers = sorted({block.page_no for block in batch})
-        previews = [
-            (page_no, layout.page_previews[page_no])
-            for page_no in page_numbers
-            if page_no in layout.page_previews
-        ]
-        try:
-            translated, usage = _openrouter_translate(
-                text,
-                target_language,
-                page_previews=previews,
-                remaining_cost_micros=remaining_cost,
-            )
-        except ModelBackedOperationError as exc:
-            raise ModelBackedOperationError(
-                exc.code,
-                _aggregate_translation_usage([*usages, exc.model_usage], cost_limit),
-            ) from exc
-        except ValueError as exc:
-            if usages:
-                raise ModelBackedOperationError(
-                    str(exc),
-                    _aggregate_translation_usage(usages, cost_limit),
-                ) from exc
-            raise
-        used_cost += _non_negative_int(usage.get("cost_micros"))
-        usages.append(usage)
-        if used_cost > cost_limit:
-            raise ModelBackedOperationError(
-                "translation_model_budget_exhausted",
-                _aggregate_translation_usage(usages, cost_limit),
-            )
-        try:
-            translations.update(_parse_block_translations(translated, batch))
-        except ValueError as exc:
-            raise ModelBackedOperationError(
-                str(exc),
-                _aggregate_translation_usage(usages, cost_limit),
-            ) from exc
-    return translations, _aggregate_translation_usage(usages, cost_limit), len(batches)
+    reserved_cost = 0
+    next_batch = 0
+    first_failure: tuple[int, Exception] | None = None
+    pending: dict[Future[tuple[dict[str, str], dict[str, Any]]], tuple[int, int]] = {}
+
+    with ThreadPoolExecutor(
+        max_workers=concurrency,
+        thread_name_prefix="pdf-translation",
+    ) as executor:
+        while next_batch < len(batches) or pending:
+            while (
+                first_failure is None
+                and next_batch < len(batches)
+                and len(pending) < concurrency
+            ):
+                available_cost = cost_limit - used_cost - reserved_cost
+                open_slots = concurrency - len(pending)
+                if available_cost <= 0 or open_slots <= 0:
+                    first_failure = (
+                        next_batch,
+                        ValueError("translation_model_budget_exhausted"),
+                    )
+                    break
+                # Reserve the entire remaining budget across the currently open
+                # execution slots. A completed call releases the difference
+                # between its reservation and reported cost before another batch
+                # can start, so concurrent calls can never multiply the run cap.
+                reservation = max(1, available_cost // open_slots)
+                batch_index = next_batch
+                future = executor.submit(
+                    _translate_layout_batch,
+                    layout,
+                    batches[batch_index],
+                    target_language,
+                    reservation,
+                )
+                pending[future] = (batch_index, reservation)
+                reserved_cost += reservation
+                next_batch += 1
+
+            if not pending:
+                break
+
+            completed, _ = wait(tuple(pending), return_when=FIRST_COMPLETED)
+            for future in sorted(completed, key=lambda item: pending[item][0]):
+                batch_index, reservation = pending.pop(future)
+                reserved_cost -= reservation
+                try:
+                    translated_batch, usage = future.result()
+                except ModelBackedOperationError as exc:
+                    usage = exc.model_usage
+                    usages[batch_index] = usage
+                    used_cost += _non_negative_int(usage.get("cost_micros"))
+                    if first_failure is None:
+                        first_failure = (batch_index, exc)
+                except Exception as exc:
+                    if first_failure is None:
+                        first_failure = (batch_index, exc)
+                else:
+                    results[batch_index] = translated_batch
+                    usages[batch_index] = usage
+                    batch_cost = _non_negative_int(usage.get("cost_micros"))
+                    used_cost += batch_cost
+                    if batch_cost > reservation or used_cost + reserved_cost > cost_limit:
+                        first_failure = first_failure or (
+                            batch_index,
+                            ModelBackedOperationError(
+                                "translation_model_budget_exhausted",
+                                usage,
+                            ),
+                        )
+
+    ordered_usages = [usage for usage in usages if usage is not None]
+    wall_latency_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
+    aggregate = _aggregate_translation_usage(
+        ordered_usages,
+        cost_limit,
+        wall_latency_ms=wall_latency_ms,
+        concurrency=concurrency,
+    )
+    if first_failure is not None:
+        _, failure = first_failure
+        if isinstance(failure, ModelBackedOperationError):
+            raise ModelBackedOperationError(failure.code, aggregate) from failure
+        if ordered_usages:
+            raise ModelBackedOperationError(str(failure), aggregate) from failure
+        raise failure
+
+    translations: dict[str, str] = {}
+    for batch_result in results:
+        if batch_result is None:
+            raise ModelBackedOperationError("translation_model_incomplete", aggregate)
+        translations.update(batch_result)
+    return translations, aggregate, len(batches)
+
+
+def _translate_layout_batch(
+    layout: PdfLayout,
+    batch: list[PdfTextBlock],
+    target_language: str,
+    reserved_cost_micros: int,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    text = "\n\n".join(f"{block.marker}\n{block.text}" for block in batch)
+    page_numbers = sorted({block.page_no for block in batch})
+    previews = [
+        (page_no, layout.page_previews[page_no])
+        for page_no in page_numbers
+        if page_no in layout.page_previews
+    ]
+    translated, usage = _openrouter_translate(
+        text,
+        target_language,
+        page_previews=previews,
+        remaining_cost_micros=reserved_cost_micros,
+    )
+    try:
+        return _parse_block_translations(translated, batch), usage
+    except ValueError as exc:
+        raise ModelBackedOperationError(str(exc), usage) from exc
 
 
 def _translation_batches(
@@ -827,6 +907,9 @@ def _parse_block_translations(
 def _aggregate_translation_usage(
     usages: list[dict[str, Any]],
     max_cost_micros: int,
+    *,
+    wall_latency_ms: int = 0,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     first = usages[0] if usages else {}
     returned_models = {
@@ -863,6 +946,8 @@ def _aggregate_translation_usage(
             else "reserved_upper_bound"
         ),
         "latency_ms": sum(_non_negative_int(usage.get("latency_ms")) for usage in usages),
+        "wall_latency_ms": max(0, wall_latency_ms),
+        "concurrency": max(1, concurrency),
         "max_cost_micros": max_cost_micros,
         "round_count": len(usages),
         "vision_page_count": sum(
@@ -1046,6 +1131,8 @@ def _openrouter_translate(
     )
     if reported_cost_micros is None:
         raise ModelBackedOperationError("translation_model_usage_invalid", model_usage)
+    if reported_cost_micros > max_cost_micros:
+        raise ModelBackedOperationError("translation_model_budget_exhausted", model_usage)
     try:
         finish_reason = payload["choices"][0].get("finish_reason")
     except (KeyError, IndexError, TypeError, AttributeError) as exc:

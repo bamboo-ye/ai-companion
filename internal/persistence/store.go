@@ -50,6 +50,7 @@ type ApplicationStore interface {
 	eventbus.OperationsStore
 
 	EnqueueDueNotifications(context.Context, time.Time, int) (int, error)
+	DeliverNextNotification(context.Context, time.Time) (bool, error)
 	DeliverNotification(context.Context, string, time.Time) error
 	ReliabilitySample(context.Context, time.Time) (reliability.Sample, error)
 	Close() error

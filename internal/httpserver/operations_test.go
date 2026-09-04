@@ -247,7 +247,7 @@ func TestOperatorReleaseReadinessChecklist(t *testing.T) {
 	}
 	ready := New(config.Config{
 		HTTPAddr: ":0", ServiceName: "test", Environment: "production", AuthTokenSecret: "ops-readiness-secret-with-enough-entropy",
-		OperatorToken: "legacy-disabled-by-mfa", OperatorMFARequired: true, WebOrigin: "https://app.example.com", KafkaEnabled: true, ModelProvider: "openai-compatible",
+		OperatorToken: "legacy-disabled-by-mfa", OperatorMFARequired: true, WebOrigin: "https://app.example.com", KafkaEnabled: false, ModelProvider: "openai-compatible",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ready.SetOperationsStore(eventbus.NewMemoryStore())
 	ready.SetOperatorAuthStore(opsauth.NewMemoryStore(admin))
@@ -269,7 +269,7 @@ func TestOperatorReleaseReadinessChecklist(t *testing.T) {
 		t.Fatalf("viewer readiness=%d %s", forbidden.Code, forbidden.Body.String())
 	}
 	readyResponse := performOperatorJSONWithOTP(t, ready, http.MethodGet, "/v1/ops/release-readiness", "release-admin-token", "", otp, nil)
-	if readyResponse.Code != http.StatusOK || !strings.Contains(readyResponse.Body.String(), `"status":"ready"`) || !strings.Contains(readyResponse.Body.String(), `"key":"kafka_transport_enabled"`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_admin_operator"`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_mfa_admin_operator"`) || strings.Contains(readyResponse.Body.String(), `"status":"failed"`) {
+	if readyResponse.Code != http.StatusOK || !strings.Contains(readyResponse.Body.String(), `"status":"ready"`) || !strings.Contains(readyResponse.Body.String(), `"key":"kafka_horizontal_scaling","status":"warning","required":false`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_admin_operator"`) || !strings.Contains(readyResponse.Body.String(), `"key":"active_mfa_admin_operator"`) || strings.Contains(readyResponse.Body.String(), `"status":"failed"`) {
 		t.Fatalf("ready readiness=%d %s", readyResponse.Code, readyResponse.Body.String())
 	}
 }

@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 
-Use this runbook for internal release incidents involving API errors, queue lag, Kafka delivery, model outages, or DLQ recovery. Always preserve user data first; do not “fix” by deleting accepted work.
+Use this runbook for internal release incidents involving API errors, database queue lag, optional Kafka delivery, model outages, or DLQ recovery. Always preserve user data first; do not “fix” by deleting accepted work.
 
 ## First five minutes
 
@@ -59,8 +59,8 @@ Actions:
    - sample recent generation jobs with status `accepted`
    - confirm no broad 5xx on chat acceptance
 2. Check dependencies:
-   - MySQL availability
-   - Kafka broker and consumer group health
+   - authoritative database availability and task-claim health
+   - Kafka broker and consumer group health only when `KAFKA_ENABLED=true`
    - model provider error rate and latency
    - Worker process health
 3. If model-only outage:
@@ -80,7 +80,7 @@ Symptoms:
 
 Actions:
 
-1. Identify the backlog class from MySQL reliability sampler queries:
+1. Identify the backlog class from database reliability sampler queries:
    - Skill runs
    - document ingestion
    - document cleanup
@@ -89,7 +89,7 @@ Actions:
    - notification deliveries
    - Outbox relay
 2. Scale or restart only the affected Worker group.
-3. If Kafka consumer group is stuck, restart consumers; Inbox dedupe protects repeated events.
+3. In `kafka-scale` mode, if a Kafka consumer group is stuck, restart consumers; Inbox dedupe protects repeated events. In database mode, inspect claim locks, leases and Worker saturation instead.
 4. Do not lower lease durations during an incident unless stale workers are confirmed dead.
 
 ## 模型供应商故障
@@ -182,20 +182,22 @@ Symptoms:
 
 Actions:
 
-1. 检查 Agent Worker `/healthz`、`/readyz`、`/metrics`，再检查 Kafka consumer group 对
-   `skill.run.succeeded.v1`、`skill.run.failed.v1`、`skill.run.cancelled.v1` 的分区分配与 lag。
+1. 检查 Agent Worker `/healthz`、`/readyz`、`/metrics` 和 PostgreSQL Agent Run
+   认领/等待状态；仅在 `kafka-scale` 模式下继续检查 terminal Skill topic 的分区分配与 lag。
 2. 用 `ai_companion_agent_tool_wake_events_total` 区分 `awakened`、`no_match` 和 `error`。
    `no_match` 可由不关联 Agent 的普通 Skill 终态产生，不应单独作为故障；`error` 需要关联
-   `Agent Kafka consumer` 和 `Agent tool task wake` 脱敏日志调查数据库或分发失败。
-3. 若唤醒延迟升高，依次检查 Kafka lag、Agent Worker CPU/内存、PostgreSQL
-   `agent_runs_waiting_tool_task_idx` 和分发队列深度。不要缩短 durable reconciler 的回退间隔
-   来掩盖事件链路故障。
+   Agent reconciler 日志调查数据库认领失败；`kafka-scale` 模式再关联 `Agent Kafka consumer`
+   和 `Agent tool task wake` 脱敏日志调查事件分发失败。
+3. 若唤醒延迟升高，依次检查 Agent Worker CPU/内存、PostgreSQL
+   `agent_runs_waiting_tool_task_idx` 和数据库认领延迟；`kafka-scale` 模式再检查 Kafka lag
+   与分发队列深度。不要用无界轮询掩盖事件链路故障。
 4. 若尾随重放比例升高，对比 `replay_requested`、`coalesced`、`replays_pending` 和执行时长。
    每个运行最多保留一个尾随重放；不要关闭持久化 claim 或 Inbox 去重。优先修复重复发布、
    状态抖动或异常长执行。
-5. 告警期间保留 reconciler。事件提示丢失时它仍负责恢复 durable queued/waiting 状态，
-   但不应把 30 秒级回退当作满足 1 秒在线目标。
-6. 恢复标准：Worker ready=1、Kafka lag 回落、连续两个五分钟窗口的唤醒 p95 <= 1 秒，
+5. 告警期间保留 reconciler。数据库模式下它是默认调度器；`kafka-scale` 模式下事件提示
+   丢失时它仍负责恢复 durable queued/waiting 状态，30 秒恢复扫描不作为 1 秒在线目标。
+6. 恢复标准：Worker ready=1、数据库认领延迟恢复；`kafka-scale` 模式还需 Kafka lag 回落。
+   连续两个五分钟窗口的唤醒 p95 <= 1 秒，
    且在不少于 20 个新提示时尾随重放比例 <= 25%。
 
 ## DLQ 重放与补偿

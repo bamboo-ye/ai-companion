@@ -53,15 +53,13 @@ make run-api
 make run-worker
 ```
 
-Production asynchronous delivery uses Kafka through the transactional Outbox
-Relay. Chat generation, document ingestion/cleanup, Skill execution, ledger
-export, and notification delivery use isolated consumer groups; PostgreSQL
-stores authoritative business state, Outbox/Inbox records, leases, retries and
-recovery metadata. Explicit long-term memory writes are selected by a model tool
-during `chat.command.v1` processing instead of being emitted as a separate
-pattern-matching extraction job. Local `make infra-up` starts Kafka and the
-one-shot fixed-topic initializer. See
-[`docs/adr/0004-kafka-asynchronous-transport.md`](docs/adr/0004-kafka-asynchronous-transport.md).
+Asynchronous delivery is database-first. PostgreSQL stores authoritative job
+state, Agent Runs, leases, retries, Outbox records and recovery metadata; the
+Worker polls and claims runnable rows with bounded concurrency. Kafka remains an
+optional Outbox/consumer-group accelerator for later horizontal scaling. Enable
+it with `make docker-up-kafka-scale`, or set `KAFKA_ENABLED=true`, provide
+`KAFKA_BROKERS`, and activate the Compose `kafka-scale` profile. See
+[`docs/adr/0005-database-first-async-dispatch.md`](docs/adr/0005-database-first-async-dispatch.md).
 
 The LangGraph migration now includes the PostgreSQL checkpointer, durable Agent
 Run store, and an authenticated Go Tool Gateway. Run `make
@@ -70,11 +68,13 @@ verify persistent interrupt/resume behavior. `AGENT_GATEWAY_TOKEN` and
 `AGENT_CONFIRMATION_SECRET` are server-side secrets and must never use a
 `NEXT_PUBLIC_*` prefix.
 
-The dedicated Agent Worker consumes `agent.run.requested.v1` and
-`agent.run.resume.requested.v1`, uses OpenRouter tool calling for
-model-assisted intent selection, and keeps Go as the authority for tool
-definitions, confirmation, and business writes. Start it alongside the app
-with `make agent-worker-up`.
+The dedicated Agent Worker claims persisted Agent Runs directly by default,
+uses OpenRouter tool calling for model-assisted intent selection, and keeps Go
+as the authority for tool definitions, confirmation, and business writes. In
+Kafka scale mode, `agent.run.requested.v1` and
+`agent.run.resume.requested.v1` provide low-latency dispatch hints while the
+database reconciler remains the recovery path. Start it alongside the app with
+`make agent-worker-up`.
 
 Chat cutover is module-scoped and disabled by default in development. Staging
 can set `AGENT_CHAT_MODULES=life` for a narrow canary; production must set
@@ -94,8 +94,9 @@ CANARY_TIMEOUT_SECONDS=240 sh scripts/run_agent_life_canary.sh
 ```
 
 The script creates a disposable account and a real CNY 50 ledger entry. It
-verifies Kafka/Agent exclusivity, approval token redaction, resume completion,
-one assistant message, and one ledger write. See
+verifies Agent dispatch exclusivity, approval token redaction, resume completion,
+one assistant message, and one ledger write. The Kafka-specific transport checks
+are exercised only in the `kafka-scale` profile. See
 [`docs/runbooks/evidence/2026-07-24-agent-life-canary.md`](docs/runbooks/evidence/2026-07-24-agent-life-canary.md).
 
 In another terminal:
@@ -622,6 +623,6 @@ pnpm dev
 
 M0-M4, M6, and the M8 Web/backend platform scope are complete. M5 financial research and M7 native Android/iOS client expansion are skipped by explicit product decision for this completion pass.
 
-The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, Kafka-based asynchronous execution, reliability/degradation controls, team workspaces, email delivery/replay operations, billing quota guards, minor-mode safety gating, operator MFA/RBAC/admin APIs, audit CSV export, release-readiness checks, and automated release evidence collection/validation.
+The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, reliability/degradation controls, team workspaces, email delivery/replay operations, billing quota guards, minor-mode safety gating, operator MFA/RBAC/admin APIs, audit CSV export, release-readiness checks, and automated release evidence collection/validation.
 
 See [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md), [`docs/M6_STATUS.md`](docs/M6_STATUS.md), and [`docs/M8_STATUS.md`](docs/M8_STATUS.md) for acceptance evidence and remaining deployment-only prerequisites.
