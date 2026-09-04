@@ -2291,27 +2291,34 @@ def _finalize_narrative_presentation_arguments(
     finalized = dict(arguments)
     if isinstance(finalized.get("table"), Mapping):
         return _normalize_presentation_arguments(finalized, state)
-    raw_blocks = _presentation_brief_blocks(finalized.get("brief"))
     sections: list[dict[str, Any]] = []
-    for block in raw_blocks:
-        lines = [line.strip() for line in block.splitlines() if line.strip()]
-        if not lines:
+    current: dict[str, Any] | None = None
+    for raw_line in str(finalized.get("brief") or "").splitlines():
+        line = raw_line.strip()
+        if not line:
             continue
-        heading_match = re.fullmatch(r"##\s+(.+)", lines[0])
-        if heading_match is None:
+        heading_match = re.fullmatch(r"#{2,6}\s+(.+)", line)
+        if heading_match is not None:
+            current = {"heading": heading_match.group(1).strip(), "bullets": []}
+            sections.append(current)
+            continue
+        bullet_match = re.fullmatch(r"-\s+(.+)", line)
+        if bullet_match is None or current is None:
             return _normalize_presentation_arguments(finalized, state)
-        bullets: list[str] = []
-        for line in lines[1:]:
-            bullet_match = re.fullmatch(r"-\s+(.+)", line)
-            if bullet_match is None:
-                return _normalize_presentation_arguments(finalized, state)
-            bullets.extend(_split_presentation_bullet(bullet_match.group(1).strip()))
-        full_heading = heading_match.group(1).strip()
+        current["bullets"].extend(
+            _split_presentation_bullet(bullet_match.group(1).strip())
+        )
+
+    for section in sections:
+        full_heading = section["heading"]
         heading = full_heading
         if len(heading) > 28:
             heading = heading[:27].rstrip() + "…"
-            bullets = [*_split_presentation_bullet(f"主题范围：{full_heading}"), *bullets]
-        sections.append({"heading": heading, "bullets": bullets})
+            section["bullets"] = [
+                *_split_presentation_bullet(f"主题范围：{full_heading}"),
+                *section["bullets"],
+            ]
+        section["heading"] = heading
 
     index = 0
     while len(sections) > 1 and index < len(sections):
@@ -2319,12 +2326,24 @@ def _finalize_narrative_presentation_arguments(
         if len(section["bullets"]) >= 2:
             index += 1
             continue
-        target_index = index - 1 if index > 0 else 1
+        target_index = (
+            index + 1
+            if not section["bullets"] and index + 1 < len(sections)
+            else (index - 1 if index > 0 else 1)
+        )
         target = sections[target_index]
-        facts = section["bullets"] or ["本节主题"]
+        if not section["bullets"] and target_index > index:
+            combined_heading = f"{section['heading']}：{target['heading']}"
+            if len(combined_heading) <= 28:
+                target["heading"] = combined_heading
+                del sections[index]
+                continue
         folded: list[str] = []
-        for fact in facts:
-            folded.extend(_split_presentation_bullet(f"{section['heading']}：{fact}"))
+        if not section["bullets"]:
+            folded.extend(_split_presentation_bullet(f"主题范围：{section['heading']}"))
+        else:
+            for fact in section["bullets"]:
+                folded.extend(_split_presentation_bullet(f"{section['heading']}：{fact}"))
         if target_index < index:
             target["bullets"].extend(folded)
         else:
