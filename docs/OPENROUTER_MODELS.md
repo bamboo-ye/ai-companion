@@ -85,7 +85,7 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.54.0` makes presentation capability selection a planner-owned
+Graph version `3.55.0` makes presentation capability selection a planner-owned
 semantic decision. Work-module PPT requests now enter `plan` before routing. The
 planner returns a composable capability set containing `narrative` and, only
 when required, `table` and/or `visual`; the Harness then refines the task

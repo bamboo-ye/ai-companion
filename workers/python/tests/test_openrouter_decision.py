@@ -1319,6 +1319,15 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             ["openrouter/free", "free/fallback"],
         )
         self.assertEqual(port.request_timeouts, [30, 30])
+        composer_schema = port.requests[0]["tools"][0]["function"]["parameters"]
+        self.assertIn("brief", composer_schema["properties"])
+        self.assertIn("brief", composer_schema["required"])
+        self.assertNotIn("table", composer_schema["properties"])
+        self.assertNotIn("mapping_contract", composer_schema["properties"])
+        self.assertIn(
+            "非表格演示章节",
+            port.requests[0]["messages"][0]["content"],
+        )
         events = port.consume_observability()
         self.assertEqual([event["status"] for event in events], ["error", "succeeded"])
 
