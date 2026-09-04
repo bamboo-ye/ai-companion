@@ -2225,6 +2225,125 @@ def _presentation_brief_blocks(value: Any) -> list[str]:
     return blocks
 
 
+_PRESENTATION_BULLET_SOURCE_SUFFIX = re.compile(
+    r"\s*([（(]来源\s*[:：][^）)]+[）)])\s*$",
+    re.I,
+)
+
+
+def _split_presentation_bullet(value: str, *, limit: int = 100) -> list[str]:
+    """Split an overlong bullet without losing its trusted source locator."""
+
+    text = re.sub(r"\s+", " ", value).strip()
+    if not text or len(text) <= limit:
+        return [text] if text else []
+    source_match = _PRESENTATION_BULLET_SOURCE_SUFFIX.search(text)
+    source_suffix = source_match.group(1) if source_match else ""
+    body = text[: source_match.start()].strip() if source_match else text
+    available = max(24, limit - len(source_suffix) - (1 if source_suffix else 0))
+    clauses = [
+        clause.strip()
+        for clause in re.split(r"(?<=[。；;！？!?])", body)
+        if clause.strip()
+    ]
+    pieces: list[str] = []
+    current = ""
+    for clause in clauses or [body]:
+        if len(clause) > available:
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.extend(
+                clause[index : index + available].strip()
+                for index in range(0, len(clause), available)
+                if clause[index : index + available].strip()
+            )
+            continue
+        candidate = f"{current}{clause}" if current else clause
+        if current and len(candidate) > available:
+            pieces.append(current)
+            current = clause
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    return [
+        f"{piece} {source_suffix}".strip() if source_suffix else piece
+        for piece in pieces
+        if piece
+    ]
+
+
+def _finalize_narrative_presentation_arguments(
+    arguments: Mapping[str, Any],
+    state: AgentState,
+) -> dict[str, Any]:
+    """Make the merged narrative IR renderable without discarding content.
+
+    Providers occasionally ignore a structural repair request for one thin
+    section or one long line. Re-running every source batch for that local
+    defect is expensive and can introduce a different defect. At the final
+    merge boundary the Harness can instead apply lossless structure-only
+    normalization: preserve long heading text in a bullet, split long bullets,
+    and fold sections with fewer than two facts into a neighbour.
+    """
+
+    finalized = dict(arguments)
+    if isinstance(finalized.get("table"), Mapping):
+        return _normalize_presentation_arguments(finalized, state)
+    raw_blocks = _presentation_brief_blocks(finalized.get("brief"))
+    sections: list[dict[str, Any]] = []
+    for block in raw_blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        heading_match = re.fullmatch(r"##\s+(.+)", lines[0])
+        if heading_match is None:
+            return _normalize_presentation_arguments(finalized, state)
+        bullets: list[str] = []
+        for line in lines[1:]:
+            bullet_match = re.fullmatch(r"-\s+(.+)", line)
+            if bullet_match is None:
+                return _normalize_presentation_arguments(finalized, state)
+            bullets.extend(_split_presentation_bullet(bullet_match.group(1).strip()))
+        full_heading = heading_match.group(1).strip()
+        heading = full_heading
+        if len(heading) > 28:
+            heading = heading[:27].rstrip() + "…"
+            bullets = [*_split_presentation_bullet(f"主题范围：{full_heading}"), *bullets]
+        sections.append({"heading": heading, "bullets": bullets})
+
+    index = 0
+    while len(sections) > 1 and index < len(sections):
+        section = sections[index]
+        if len(section["bullets"]) >= 2:
+            index += 1
+            continue
+        target_index = index - 1 if index > 0 else 1
+        target = sections[target_index]
+        facts = section["bullets"] or ["本节主题"]
+        folded: list[str] = []
+        for fact in facts:
+            folded.extend(_split_presentation_bullet(f"{section['heading']}：{fact}"))
+        if target_index < index:
+            target["bullets"].extend(folded)
+        else:
+            target["bullets"] = [*folded, *target["bullets"]]
+        del sections[index]
+        if index:
+            index -= 1
+
+    if sections:
+        finalized["brief"] = "\n\n".join(
+            "\n".join(
+                [f"## {section['heading']}", *[f"- {bullet}" for bullet in section["bullets"]]]
+            )
+            for section in sections
+        )
+        finalized["slide_count"] = min(60, len(sections) + 2)
+    return _normalize_presentation_arguments(finalized, state)
+
+
 def _merge_presentation_cells(
     base_cells: list[Any], addition_cells: list[Any], mapping_contract: Any
 ) -> list[str]:
@@ -4451,6 +4570,15 @@ def build_graph(
             )
             next_batch_index = int(processing.get("next_batch_index") or 0) + 1
             compose_more = next_batch_index < len(selected_batches)
+            if not compose_more and not isinstance(normalized_arguments.get("table"), Mapping):
+                normalized_arguments = _finalize_narrative_presentation_arguments(
+                    normalized_arguments,
+                    state,
+                )
+                normalized_arguments = _project_arguments_to_trusted_schema(
+                    normalized_arguments,
+                    definition,
+                )
             processing_update = {
                 **processing,
                 "next_batch_index": next_batch_index,
