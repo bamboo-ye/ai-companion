@@ -27,7 +27,8 @@ import pymupdf  # type: ignore[import-untyped]
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
 from PIL import Image
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
@@ -77,6 +78,7 @@ PRESENTATION_TITLE_COLOR = RGBColor(43, 63, 117)
 PRESENTATION_ACCENT_COLOR = RGBColor(72, 104, 183)
 PRESENTATION_TEXT_COLOR = RGBColor(31, 41, 55)
 PRESENTATION_MUTED_COLOR = RGBColor(91, 100, 116)
+PRESENTATION_BODY_FONT_FAMILY = "WenQuanYi Zen Hei"
 CJK_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -255,18 +257,20 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             visual = visual_assignments[index - 1] if index - 1 < len(visual_assignments) else None
             slide = presentation.slides.add_slide(presentation.slide_layouts[1])
             slide.shapes.title.text = heading
-            frame = slide.placeholders[1].text_frame
-            frame.clear()
+            body_placeholder = slide.placeholders[1]
+            body_placeholder.text_frame.clear()
             bullet_font_size = _presentation_bullet_font_size(
                 bullets,
                 has_visual=visual is not None,
             )
-            for bullet_index, bullet in enumerate(bullets):
-                paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
-                paragraph.text = _presentation_render_text(bullet)
-                paragraph.level = 0
-                paragraph.font.size = Pt(bullet_font_size)
-            _style_body_placeholder(slide.placeholders[1], bullets, has_visual=visual is not None)
+            _style_body_placeholder(body_placeholder, bullets, has_visual=visual is not None)
+            _add_native_presentation_bullet_boxes(
+                slide,
+                body_placeholder,
+                bullets,
+                font_size=bullet_font_size,
+                has_visual=visual is not None,
+            )
             _style_slide(slide, title_color=PRESENTATION_ACCENT_COLOR)
             if visual is not None:
                 _add_presentation_visual(slide, visual)
@@ -295,16 +299,19 @@ def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, 
             else ["核心内容已按主题分组", "请结合实际场景确认后续行动"]
         )
     )
-    summary_frame = summary_slide.placeholders[1].text_frame
-    summary_frame.clear()
-    for index, bullet in enumerate(summary_bullets):
-        paragraph = summary_frame.paragraphs[0] if index == 0 else summary_frame.add_paragraph()
-        paragraph.text = bullet
-        paragraph.font.size = Pt(22)
+    summary_placeholder = summary_slide.placeholders[1]
+    summary_placeholder.text_frame.clear()
     summary_visual = visual_assignments[0] if table and visual_assignments else None
     _style_body_placeholder(
-        summary_slide.placeholders[1],
+        summary_placeholder,
         summary_bullets,
+        has_visual=summary_visual is not None,
+    )
+    _add_native_presentation_bullet_boxes(
+        summary_slide,
+        summary_placeholder,
+        summary_bullets,
+        font_size=22,
         has_visual=summary_visual is not None,
     )
     _style_slide(summary_slide, title_color=PRESENTATION_TITLE_COLOR)
@@ -1484,6 +1491,169 @@ def _presentation_bullet_font_size(
     return min(size, 18)
 
 
+def _style_native_presentation_bullet(paragraph: Any, font_size: int) -> None:
+    """Write one real bullet paragraph with stable baseline and indentation."""
+
+    paragraph.level = 0
+    paragraph.font.size = Pt(font_size)
+    paragraph.font.name = PRESENTATION_BODY_FONT_FAMILY
+    properties = paragraph._p.get_or_add_pPr()  # noqa: SLF001
+    properties.set("marL", str(int(Pt(18))))
+    properties.set("indent", str(-int(Pt(9))))
+    for child in list(properties):
+        if child.tag.rsplit("}", 1)[-1].startswith("bu"):
+            properties.remove(child)
+    boundary_names = {"tabLst", "defRPr", "extLst"}
+    insertion_index = next(
+        (
+            index
+            for index, child in enumerate(properties)
+            if child.tag.rsplit("}", 1)[-1] in boundary_names
+        ),
+        len(properties),
+    )
+    bullet_size = OxmlElement("a:buSzPct")
+    bullet_size.set("val", "100000")
+    bullet_font = OxmlElement("a:buFont")
+    bullet_font.set("typeface", PRESENTATION_BODY_FONT_FAMILY)
+    bullet_character = OxmlElement("a:buChar")
+    bullet_character.set("char", "•")
+    for offset, child in enumerate((bullet_size, bullet_font, bullet_character)):
+        properties.insert(insertion_index + offset, child)
+
+
+def _presentation_body_rhythm(
+    bullets: list[str],
+    *,
+    has_visual: bool,
+) -> tuple[int, float]:
+    total_characters = sum(len(value) for value in bullets)
+    if has_visual:
+        return (
+            4 if len(bullets) >= 5 or total_characters > 260 else 6,
+            1.0 if len(bullets) >= 4 or total_characters > 210 else 1.05,
+        )
+    return (
+        16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8,
+        1.1,
+    )
+
+
+def _presentation_display_units(value: str) -> float:
+    return sum(
+        1.0 if unicodedata.east_asian_width(character) in {"W", "F"} else 0.55
+        for character in value
+        if unicodedata.category(character) != "Cf"
+    )
+
+
+def _presentation_bullet_box_height_points(
+    value: str,
+    *,
+    width_points: float,
+    font_size: int,
+    line_spacing: float,
+) -> float:
+    usable_width = max(72.0, width_points - Inches(0.12) / 12_700.0 - 36.0)
+    characters_per_line = max(8.0, usable_width / max(font_size, 1))
+    line_count = max(1, math.ceil(_presentation_display_units(value) / characters_per_line))
+    # The nominal OOXML line-spacing multiple excludes part of a CJK font's
+    # ascent/descent box. Reserve the renderer-observed minimum line pitch so
+    # separately positioned bullet boxes never collide.
+    effective_line_spacing = max(line_spacing, 1.25)
+    return (line_count + 0.75) * font_size * effective_line_spacing + 3.0
+
+
+def _add_native_presentation_bullet_boxes(
+    slide: Any,
+    placeholder: Any,
+    bullets: list[str],
+    *,
+    font_size: int,
+    has_visual: bool,
+) -> None:
+    """Render each item as an aligned native marker and editable text pair.
+
+    Some cross-platform renderers put a native bullet on an otherwise empty
+    first line when a CJK paragraph wraps. Give the native marker its own
+    one-line box and place the editable item text in a sibling box with the
+    same top inset, font and line spacing. This keeps the marker native while
+    making its baseline independent from renderer-specific wrapping.
+    """
+
+    paragraph_spacing, line_spacing = _presentation_body_rhythm(
+        bullets,
+        has_visual=has_visual,
+    )
+    marker_width = int(Inches(0.25))
+    text_left = int(placeholder.left) + marker_width
+    text_width = max(int(Inches(0.75)), int(placeholder.width) - marker_width)
+    width_points = float(text_width) / 12_700.0
+    heights = [
+        _presentation_bullet_box_height_points(
+            bullet,
+            width_points=width_points,
+            font_size=font_size,
+            line_spacing=line_spacing,
+        )
+        for bullet in bullets
+    ]
+    total_height = sum(heights) + paragraph_spacing * max(0, len(heights) - 1)
+    available_height = float(placeholder.height) / 12_700.0
+    top = float(placeholder.top)
+    if placeholder.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE:
+        top += max(0.0, available_height - total_height) * 12_700.0 / 2.0
+    for index, (bullet, height_points) in enumerate(zip(bullets, heights, strict=True), start=1):
+        marker = slide.shapes.add_textbox(
+            placeholder.left,
+            int(top),
+            marker_width,
+            Pt(height_points),
+        )
+        marker.name = f"Native Bullet Marker {index}"
+        marker_frame = marker.text_frame
+        marker_frame.clear()
+        marker_frame.word_wrap = False
+        marker_frame.auto_size = MSO_AUTO_SIZE.NONE
+        marker_frame.margin_left = Pt(0)
+        marker_frame.margin_right = Pt(0)
+        marker_frame.margin_top = Pt(1)
+        marker_frame.margin_bottom = Pt(1)
+        marker_frame.vertical_anchor = MSO_ANCHOR.TOP
+        marker_paragraph = marker_frame.paragraphs[0]
+        marker_paragraph.text = "\u2060"
+        _style_native_presentation_bullet(marker_paragraph, font_size)
+        marker_paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
+        marker_paragraph.space_after = Pt(0)
+        marker_paragraph.line_spacing = line_spacing
+
+        text_shape = slide.shapes.add_textbox(
+            text_left,
+            int(top),
+            text_width,
+            Pt(height_points),
+        )
+        text_shape.name = f"Bullet Text {index}"
+        text_frame = text_shape.text_frame
+        text_frame.clear()
+        text_frame.word_wrap = True
+        text_frame.auto_size = MSO_AUTO_SIZE.NONE
+        text_frame.margin_left = Pt(0)
+        text_frame.margin_right = Inches(0.08)
+        text_frame.margin_top = Pt(1)
+        text_frame.margin_bottom = Pt(1)
+        text_frame.vertical_anchor = MSO_ANCHOR.TOP
+        text_paragraph = text_frame.paragraphs[0]
+        text_paragraph.text = _presentation_render_text(bullet)
+        text_paragraph.level = 0
+        text_paragraph.font.size = Pt(font_size)
+        text_paragraph.font.name = PRESENTATION_BODY_FONT_FAMILY
+        text_paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
+        text_paragraph.space_after = Pt(0)
+        text_paragraph.line_spacing = line_spacing
+        top += int(Pt(height_points + paragraph_spacing))
+
+
 def _style_body_placeholder(
     placeholder: Any,
     bullets: list[str],
@@ -1508,12 +1678,10 @@ def _style_body_placeholder(
         if not has_visual and len(bullets) <= 3 and total_characters <= 260
         else MSO_ANCHOR.TOP
     )
-    if has_visual:
-        paragraph_spacing = 4 if len(bullets) >= 5 or total_characters > 260 else 6
-        line_spacing = 1.0 if len(bullets) >= 4 or total_characters > 210 else 1.05
-    else:
-        paragraph_spacing = 16 if len(bullets) <= 2 else 12 if len(bullets) == 3 else 8
-        line_spacing = 1.1
+    paragraph_spacing, line_spacing = _presentation_body_rhythm(
+        bullets,
+        has_visual=has_visual,
+    )
     for paragraph in frame.paragraphs:
         paragraph.font.color.rgb = PRESENTATION_TEXT_COLOR
         paragraph.space_after = Pt(paragraph_spacing)
@@ -2612,6 +2780,15 @@ def _presentation_layout_violations(presentation: Presentation) -> list[dict[str
                     }
                 )
                 break
+            if _presentation_native_bullet_geometry_invalid(shape):
+                violations.append(
+                    {
+                        "code": "native_bullet_geometry_invalid",
+                        "message": "项目符号未与正文共享稳定的原生段落缩进",
+                        "slide": slide_index,
+                    }
+                )
+                break
             if _presentation_body_text_overflow_risk(shape):
                 violations.append(
                     {
@@ -2624,6 +2801,60 @@ def _presentation_layout_violations(presentation: Presentation) -> list[dict[str
     return violations
 
 
+def _is_presentation_native_bullet_shape(shape: Any) -> bool:
+    if not getattr(shape, "has_text_frame", False):
+        return False
+    if str(getattr(shape, "name", "")).startswith("Native Bullet "):
+        return True
+    return bool(
+        getattr(shape, "is_placeholder", False)
+        and shape.placeholder_format.type == PP_PLACEHOLDER.OBJECT
+    )
+
+
+def _is_presentation_body_text_shape(shape: Any) -> bool:
+    return bool(
+        getattr(shape, "has_text_frame", False)
+        and (
+            _is_presentation_native_bullet_shape(shape)
+            or str(getattr(shape, "name", "")).startswith("Bullet Text ")
+        )
+    )
+
+
+def _presentation_native_bullet_geometry_invalid(shape: Any) -> bool:
+    if not _is_presentation_native_bullet_shape(shape):
+        return False
+    expected_margin = int(Pt(18))
+    expected_indent = -int(Pt(9))
+    for paragraph in shape.text_frame.paragraphs:
+        if not paragraph.text.strip():
+            continue
+        properties = paragraph._p.pPr  # noqa: SLF001
+        if properties is None:
+            return True
+        if int(properties.get("marL", "0")) != expected_margin:
+            return True
+        if int(properties.get("indent", "0")) != expected_indent:
+            return True
+        bullet_elements = {
+            child.tag.rsplit("}", 1)[-1]: child for child in properties if "}bu" in child.tag
+        }
+        if bullet_elements.get("buChar") is None:
+            return True
+        if bullet_elements["buChar"].get("char") != "•":
+            return True
+        if bullet_elements.get("buSzPct") is None:
+            return True
+        if bullet_elements["buSzPct"].get("val") != "100000":
+            return True
+        if bullet_elements.get("buFont") is None:
+            return True
+        if bullet_elements["buFont"].get("typeface") != PRESENTATION_BODY_FONT_FAMILY:
+            return True
+    return False
+
+
 def _presentation_body_text_overflow_risk(shape: Any) -> bool:
     """Conservatively detect wrapped body text that cannot fit its box.
 
@@ -2632,15 +2863,15 @@ def _presentation_body_text_overflow_risk(shape: Any) -> bool:
     the same overflow class as an independent slide renderer.
     """
 
-    if (
-        not getattr(shape, "is_placeholder", False)
-        or shape.placeholder_format.type != PP_PLACEHOLDER.OBJECT
-        or not getattr(shape, "has_text_frame", False)
-    ):
+    if not _is_presentation_body_text_shape(shape):
+        return False
+    if str(getattr(shape, "name", "")).startswith("Native Bullet Marker "):
         return False
     frame = shape.text_frame
+    hanging_indent_reserve = 36.0 if _is_presentation_native_bullet_shape(shape) else 0.0
     usable_width = (
-        float(shape.width - frame.margin_left - frame.margin_right) / 12_700.0 - 36.0
+        float(shape.width - frame.margin_left - frame.margin_right) / 12_700.0
+        - hanging_indent_reserve
     )
     usable_height = float(shape.height - frame.margin_top - frame.margin_bottom) / 12_700.0
     if usable_width <= 0 or usable_height <= 0:
@@ -2650,14 +2881,13 @@ def _presentation_body_text_overflow_risk(shape: Any) -> bool:
         if not paragraph.text.strip():
             continue
         font_size = paragraph.font.size.pt if paragraph.font.size is not None else 18.0
-        display_units = sum(
-            1.0 if unicodedata.east_asian_width(character) in {"W", "F"} else 0.55
-            for character in paragraph.text
-        )
+        display_units = _presentation_display_units(paragraph.text)
         characters_per_line = max(8.0, usable_width / max(font_size, 1.0))
         line_count = max(1, math.ceil(display_units / characters_per_line))
         line_spacing = paragraph.line_spacing
-        spacing_multiple = float(line_spacing) if isinstance(line_spacing, float) else 1.0
+        spacing_multiple = (
+            max(float(line_spacing), 1.25) if isinstance(line_spacing, float) else 1.25
+        )
         spacing_after = paragraph.space_after.pt if paragraph.space_after is not None else 0.0
         required_height += (line_count + 0.6) * font_size * spacing_multiple + spacing_after
     return required_height > usable_height
