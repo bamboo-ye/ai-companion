@@ -18,7 +18,7 @@ from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
@@ -26,6 +26,7 @@ from ai_companion_worker.office_tools import (
     CJK_FONT_CANDIDATES,
     ModelBackedOperationError,
     _openrouter_translate,
+    _presentation_body_text_overflow_risk,
     _translate_layout_blocks,
     _translation_batches,
     _presentation_display_rows,
@@ -975,6 +976,71 @@ class OfficeToolsTest(unittest.TestCase):
         )
         with ZipFile(io.BytesIO(generated)) as archive:
             self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
+
+    def test_pptx_dense_visual_body_uses_capacity_safe_typography(self) -> None:
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (800, 450), (45, 105, 190)).save(image_bytes, format="PNG")
+        source = io.BytesIO()
+        document = canvas.Canvas(source, pagesize=(420, 300))
+        document.drawImage(
+            ImageReader(io.BytesIO(image_bytes.getvalue())),
+            165,
+            70,
+            width=225,
+            height=127,
+        )
+        document.save()
+        bullets = [
+            f"第{index}项内容说明分类器如何依据训练样本计算条件概率并保持数值稳定"
+            f"，同时记录完整来源位置以便复核（来源：第1页）"
+            for index in range(1, 6)
+        ]
+
+        result = execute(
+            "pptx_generate",
+            {
+                "title": "密集图文排版",
+                "audience": "学习者",
+                "style": "图文简洁",
+                "brief": "## 核心内容\n" + "\n".join(f"- {bullet}" for bullet in bullets),
+                "slide_count": 3,
+                "visual_mode": "source_only",
+                "source_documents": [
+                    {
+                        "filename": "课程原文.pdf",
+                        "media_type": "application/pdf",
+                        "data_base64": base64.b64encode(source.getvalue()).decode(),
+                    }
+                ],
+            },
+        )
+
+        self.assertTrue(result["output"]["quality_report"]["passed"])
+        generated = base64.b64decode(result["files"][0]["data_base64"])
+        deck = Presentation(io.BytesIO(generated))
+        body = deck.slides[1].placeholders[1]
+        self.assertEqual({paragraph.font.size.pt for paragraph in body.text_frame.paragraphs}, {15})
+        self.assertEqual({paragraph.space_after.pt for paragraph in body.text_frame.paragraphs}, {4})
+        self.assertFalse(_presentation_body_text_overflow_risk(body))
+
+    def test_presentation_gate_detects_wrapped_body_overflow_risk(self) -> None:
+        deck = Presentation()
+        slide = deck.slides.add_slide(deck.slide_layouts[1])
+        body = slide.placeholders[1]
+        body.left = Inches(0.78)
+        body.top = Inches(1.42)
+        body.width = Inches(5.45)
+        body.height = Inches(5.28)
+        frame = body.text_frame
+        frame.clear()
+        for index in range(5):
+            paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+            paragraph.text = "这是需要换行显示的长段落，用于验证正文虽然位于画布内但渲染后仍会越过占位区域。" * 2
+            paragraph.font.size = Pt(17)
+            paragraph.line_spacing = 1.1
+            paragraph.space_after = Pt(8)
+
+        self.assertTrue(_presentation_body_text_overflow_risk(body))
 
     @patch("urllib.request.urlopen", side_effect=OSError("network unavailable"))
     def test_pptx_image_generation_failure_safely_falls_back_to_text(self, urlopen: Mock) -> None:
