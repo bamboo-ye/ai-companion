@@ -1629,6 +1629,32 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("训练与测试划分：随机划分数据", brief)
         self.assertEqual(finalized["slide_count"], 4)
 
+    def test_narrative_finalizer_does_not_rewrite_two_dimensional_optimization_formula(self) -> None:
+        state: dict[str, Any] = {"task_contract": {}}
+        arguments = {
+            "title": "支持向量机",
+            "audience": "学生",
+            "style": "简洁教学",
+            "brief": (
+                "## 损失函数\n"
+                "- SVM 的目标函数为：argmin_w,b C w^T w + (1/N) Σ hinge loss，"
+                "其中系数来自二维公式（来源：第21页）\n"
+                "- 铰链损失用于惩罚间隔内样本（来源：第21页）"
+            ),
+            "slide_count": 3,
+        }
+
+        finalized = _finalize_narrative_presentation_arguments(
+            arguments,
+            state,  # type: ignore[arg-type]
+        )
+
+        brief = finalized["brief"]
+        self.assertNotIn("argmin", brief)
+        self.assertNotIn("C w^T w", brief)
+        self.assertIn("SVM 的目标函数与精确系数、约束及符号定义见原文", brief)
+        self.assertIn("（来源：第21页）", brief)
+
     def test_presentation_merge_keeps_one_logical_entity_and_cleans_aggregate_noise(
         self,
     ) -> None:

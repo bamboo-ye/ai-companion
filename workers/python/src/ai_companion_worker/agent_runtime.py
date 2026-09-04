@@ -2388,6 +2388,10 @@ _PRESENTATION_BULLET_SOURCE_SUFFIX = re.compile(
     r"\s*([（(]来源\s*[:：][^）)]+[）)])\s*$",
     re.I,
 )
+_PRESENTATION_OPTIMIZATION_FORMULA = re.compile(
+    r"(?<![A-Za-z])arg(?:min|max)(?![A-Za-z])",
+    re.I,
+)
 _PRESENTATION_PRODUCTION_HEADING = re.compile(
     r"^(?:可视化|插图|配图)(?:设计)?建议"
     r"(?:\s*[（(][^）)]*(?:授课|演示|展示)[^）)]*[）)])?$",
@@ -2464,6 +2468,35 @@ def _split_presentation_bullet(value: str, *, limit: int = 100) -> list[str]:
     ]
 
 
+def _stabilize_presentation_formula_bullet(value: str) -> str:
+    """Avoid lossy linear rewrites of source formulas with two-dimensional layout.
+
+    PDF text extraction commonly separates fraction numerators, denominators,
+    bounds, and an ``argmin``/``argmax`` operator into unrelated text runs. A
+    language model can still produce a plausible-looking formula from those
+    runs, but the coefficients may be wrong. Keep the audience-facing concept
+    and trusted page locator while directing readers to the rendered source for
+    the exact optimization expression.
+    """
+
+    text = re.sub(r"\s+", " ", value).strip()
+    source_match = _PRESENTATION_BULLET_SOURCE_SUFFIX.search(text)
+    source_suffix = source_match.group(1) if source_match else ""
+    body = text[: source_match.start()].strip() if source_match else text
+    formula_match = _PRESENTATION_OPTIMIZATION_FORMULA.search(body)
+    if formula_match is None:
+        return text
+    prefix = body[: formula_match.start()].strip()
+    colon = max(prefix.rfind("："), prefix.rfind(":"))
+    if colon >= 0:
+        prefix = prefix[:colon].strip()
+    prefix = re.sub(r"[，,；;\s]*(?:为|是)\s*$", "", prefix).strip(" ，,；;：:")
+    if len(prefix) < 2:
+        prefix = "优化目标"
+    stabilized = f"{prefix}与精确系数、约束及符号定义见原文"
+    return f"{stabilized} {source_suffix}".strip() if source_suffix else stabilized
+
+
 def _finalize_narrative_presentation_arguments(
     arguments: Mapping[str, Any],
     state: AgentState,
@@ -2495,7 +2528,11 @@ def _finalize_narrative_presentation_arguments(
         bullet_match = re.fullmatch(r"-\s+(.+)", line)
         if bullet_match is None or current is None:
             return _normalize_presentation_arguments(finalized, state)
-        current["bullets"].extend(_split_presentation_bullet(bullet_match.group(1).strip()))
+        current["bullets"].extend(
+            _split_presentation_bullet(
+                _stabilize_presentation_formula_bullet(bullet_match.group(1).strip())
+            )
+        )
 
     audience_sections = []
     for section in sections:
