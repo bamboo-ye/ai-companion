@@ -10,7 +10,7 @@ groups:
           service: ai-companion
         annotations:
           summary: "伴AI 进入 L3 保护模式"
-          description: "系统已进入 accept-only，本轮用户请求应被持久化但不会启动模型/重型算法。检查模型、Kafka、MySQL 与 Worker。"
+          description: "系统已进入 accept-only，本轮用户请求应被持久化但不会启动模型/重型算法。检查模型、数据库任务队列与 Worker；启用 Kafka 扩展模式时再检查 Kafka。"
           runbook: "docs/runbooks/incident-response.md#l3-保护模式"
 
       - alert: AICompanionQueueLagHigh
@@ -32,7 +32,7 @@ groups:
           service: ai-companion
         annotations:
           summary: "伴AI 最老可运行任务超过保护阈值"
-          description: "最老任务年龄 >= 120s，降级控制器可能进入 L3；优先检查 Worker 存活和 Kafka consumer group。"
+          description: "最老任务年龄 >= 120s，降级控制器可能进入 L3；优先检查 Worker 存活和数据库任务认领，启用 Kafka 扩展模式时再检查 consumer group。"
           runbook: "docs/runbooks/incident-response.md#队列积压"
 
       - alert: AICompanionModelErrorRatioHigh

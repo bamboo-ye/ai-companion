@@ -298,10 +298,46 @@ func main() {
 					os.Exit(1)
 				}
 			}
+		} else {
 			runnerCount++
-			go runNamed("notification scheduler", func() error { return runNotificationScheduler(runCtx, store, cfg.NotificationSchedulerInterval) })
+			databaseRelay := eventbus.NewRelay(
+				store,
+				eventbus.DatabaseReconciledPublisher{},
+				workerID+"-database-outbox",
+				cfg.OutboxRelayLeaseDuration,
+				cfg.OutboxRelayBatchSize,
+				cfg.OutboxRelayMaxAttempts,
+			)
+			databaseRelay.SetErrorHandler(func(relayErr error) {
+				logger.Warn("database outbox settlement", "error", relayErr)
+			})
+			go runNamed("database outbox settlement", func() error {
+				return databaseRelay.Run(runCtx, cfg.OutboxRelayPollInterval)
+			})
+			runnerCount++
+			go runNamed("database notification reconciler", func() error {
+				return runNotificationDeliveryReconciler(
+					runCtx,
+					store,
+					cfg.NotificationSchedulerInterval,
+				)
+			})
 		}
-		workerLogger.Info("durable workers ready", "worker_id", workerID, "database_driver", cfg.DatabaseDriver, "skill_lease", cfg.SkillWorkerLeaseDuration)
+		runnerCount++
+		go runNamed("notification scheduler", func() error {
+			return runNotificationScheduler(runCtx, store, cfg.NotificationSchedulerInterval)
+		})
+		dispatchMode := "database"
+		if cfg.KafkaEnabled {
+			dispatchMode = "kafka"
+		}
+		workerLogger.Info(
+			"durable workers ready",
+			"worker_id", workerID,
+			"database_driver", cfg.DatabaseDriver,
+			"dispatch_mode", dispatchMode,
+			"skill_lease", cfg.SkillWorkerLeaseDuration,
+		)
 		runErr := <-errCh
 		cancelRun()
 		for runnerIndex := 1; runnerIndex < runnerCount; runnerIndex++ {
@@ -323,6 +359,7 @@ func main() {
 
 type notificationStore interface {
 	EnqueueDueNotifications(context.Context, time.Time, int) (int, error)
+	DeliverNextNotification(context.Context, time.Time) (bool, error)
 }
 
 func runNotificationScheduler(ctx context.Context, store notificationStore, interval time.Duration) error {
@@ -346,5 +383,48 @@ func runNotificationScheduler(ctx context.Context, store notificationStore, inte
 			return nil
 		case <-ticker.C:
 		}
+	}
+}
+
+func runNotificationDeliveryReconciler(
+	ctx context.Context,
+	store notificationStore,
+	interval time.Duration,
+) error {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if _, err := deliverAvailableNotifications(ctx, store, time.Now().UTC()); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func deliverAvailableNotifications(
+	ctx context.Context,
+	store notificationStore,
+	now time.Time,
+) (int, error) {
+	delivered := 0
+	for {
+		processed, err := store.DeliverNextNotification(ctx, now)
+		if err != nil {
+			if ctx.Err() != nil {
+				return delivered, nil
+			}
+			return delivered, err
+		}
+		if !processed {
+			return delivered, nil
+		}
+		delivered++
 	}
 }

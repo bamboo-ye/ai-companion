@@ -8,14 +8,14 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
-from typing import Any, Callable, Literal, Mapping, Protocol, TypedDict, cast
+from typing import Annotated, Any, Callable, Literal, Mapping, Protocol, TypedDict, cast
 
 # LangGraph checkpoint deserialization must never import arbitrary Python
 # modules from database-controlled payloads.
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command, interrupt
+from langgraph.types import Command, Send, interrupt
 
 from ai_companion_worker.email_quality import (
     EMAIL_DRAFT_POLICY_VERSION,
@@ -79,6 +79,21 @@ _PRESENTATION_TOOLS = frozenset(
     )
 )
 _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
+
+
+def _merge_composition_result_updates(
+    current: list[dict[str, Any]],
+    updates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [dict(item) for item in current if isinstance(item, Mapping)]
+    for item in updates:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("reset") is True:
+            merged = []
+            continue
+        merged.append(dict(item))
+    return merged
 
 
 def _presentation_tool_for_contract(task_contract: Mapping[str, Any]) -> str:
@@ -229,6 +244,12 @@ class AgentState(AgentInput, total=False):
     task_contract: dict[str, Any]
     artifact_validation: dict[str, Any]
     document_processing: dict[str, Any]
+    composition_plan: dict[str, Any]
+    composition_job: dict[str, Any]
+    composition_results: Annotated[
+        list[dict[str, Any]],
+        _merge_composition_result_updates,
+    ]
 
 
 @dataclass(frozen=True)
@@ -420,7 +441,19 @@ def runtime_config(run_id: str) -> dict[str, Any]:
         # compatibility is enforced by the persisted graph identity instead.
         "configurable": {"thread_id": normalized},
         "recursion_limit": 256,
+        "max_concurrency": _model_fanout_concurrency(),
     }
+
+
+def _model_fanout_concurrency() -> int:
+    raw = os.environ.get("AGENT_MODEL_FANOUT_CONCURRENCY", "2").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("AGENT_MODEL_FANOUT_CONCURRENCY must be an integer") from exc
+    if not 1 <= value <= 4:
+        raise ValueError("AGENT_MODEL_FANOUT_CONCURRENCY must be between 1 and 4")
+    return value
 
 
 def tool_allowed(module: ModuleKey, tool_name: str) -> bool:
@@ -2683,6 +2716,8 @@ def _supervise(
         ),
         "artifact_validation": {},
         "document_processing": {},
+        "composition_plan": {},
+        "composition_results": [],
         "needs_response": False,
         "node_contracts": node_contract_manifest(),
         "budget_limits": limits,
@@ -3275,7 +3310,7 @@ def build_graph(
         if proposed and state.get("execution_mode") == "agentic" and not state.get("plan"):
             return "plan"
         if proposed and proposed.get("compose_arguments") is True:
-            return "compose_arguments"
+            return composition_route(state)
         if proposed:
             return "preflight_normalize"
         if state.get("needs_response"):
@@ -3296,6 +3331,621 @@ def build_graph(
         if not state.get("proposed_tool"):
             return state["module"]
         return after_decision(state)
+
+    def parallel_composition_spec(state: AgentState) -> dict[str, Any] | None:
+        if _model_fanout_concurrency() <= 1:
+            return None
+        proposed = state.get("proposed_tool", {})
+        tool_name = proposed.get("name")
+        if (
+            not isinstance(tool_name, str)
+            or tool_name not in _PRESENTATION_TOOLS
+            or proposed.get("compose_arguments") is not True
+            or not _uses_structured_presentation_capability(state, tool_name)
+        ):
+            return None
+        task_contract = state.get("task_contract", {})
+        candidate_batches = _presentation_document_batches(state)
+        batches = (
+            candidate_batches
+            if isinstance(task_contract, Mapping)
+            and (
+                (
+                    task_contract.get("exhaustive") is True
+                    and bool(_presentation_requested_columns(task_contract))
+                )
+                or any(batch.get("focused") is True for batch in candidate_batches)
+            )
+            else []
+        )
+        raw_base_arguments = proposed.get("arguments")
+        base_arguments = (
+            dict(raw_base_arguments) if isinstance(raw_base_arguments, Mapping) else {}
+        )
+        rewrite_attempt = int(state.get("presentation_rewrite_attempts", 0))
+        missing_keys: list[str] = []
+        if rewrite_attempt > 0:
+            base_arguments = _normalize_presentation_arguments(
+                _presentation_repair_base(
+                    base_arguments,
+                    state.get("artifact_validation", {}),
+                ),
+                state,
+            )
+            batches, missing_keys = _repair_document_batches(
+                batches,
+                base_arguments,
+                state,
+            )
+        source_ir = _presentation_source_ir(state)
+        structural_mapping, structural_violations = _deterministic_presentation_mapping(
+            source_ir,
+            task_contract if isinstance(task_contract, Mapping) else {},
+        )
+        # Only compact logical-entity batches are independent of previously
+        # merged output. Focused/free-text batches retain the established
+        # checkpointed serial Composer path.
+        if (
+            len(batches) < 2
+            or structural_violations
+            or any(batch.get("structured") is not True for batch in batches)
+        ):
+            return None
+        base_arguments["mapping_contract"] = structural_mapping
+        processing_key = canonical_arguments_hash(
+            {
+                "version": "document-processing-fanout-v1",
+                "tool_name": tool_name,
+                "rewrite_attempt": rewrite_attempt,
+                "batches": [batch.get("batch_id") for batch in batches],
+            }
+        )
+        return {
+            "version": "composer-fanout-v1",
+            "processing_key": processing_key,
+            "tool_name": tool_name,
+            "rewrite_attempt": rewrite_attempt,
+            "batch_ids": [str(batch.get("batch_id") or "") for batch in batches],
+            "batch_count": len(batches),
+            "base_arguments": base_arguments,
+            "structural_mapping": structural_mapping,
+            "missing_record_keys": missing_keys,
+        }
+
+    def composition_route(state: AgentState) -> str:
+        return (
+            "fanout_composition"
+            if parallel_composition_spec(state) is not None
+            else "compose_arguments"
+        )
+
+    def split_allowance(total: int, count: int, index: int) -> int:
+        quotient, remainder = divmod(max(0, total), count)
+        return quotient + (1 if index < remainder else 0)
+
+    def fanout_composition(state: AgentState) -> dict[str, Any]:
+        node = "fanout_composition"
+        spec = parallel_composition_spec(state)
+        if spec is None:
+            raise ValueError("parallel Composer fan-out requires independent batches")
+        reason = model_access_reason(state, "compose_document_batch")
+        if reason:
+            return model_terminal_update(state, node=node, reason=reason)
+        allowance = with_model_allowance(
+            state,
+            {},
+            node="compose_document_batch",
+        )["model_allowance"]
+        batch_count = int(spec["batch_count"])
+        if (
+            int(allowance.get("remaining_calls", 0)) < batch_count
+            or int(allowance.get("remaining_prompt_tokens", 0)) < batch_count
+            or int(allowance.get("remaining_completion_tokens", 0)) < batch_count
+            or int(allowance.get("remaining_cost_micros", 0)) < batch_count
+        ):
+            return model_terminal_update(
+                state,
+                node=node,
+                reason="剩余模型预算不足以为每个并行 Composer 批次预留独立额度",
+            )
+        allocations = [
+            {
+                key: split_allowance(int(allowance[key]), batch_count, index)
+                for key in (
+                    "remaining_calls",
+                    "remaining_prompt_tokens",
+                    "remaining_completion_tokens",
+                    "remaining_cost_micros",
+                )
+            }
+            for index in range(batch_count)
+        ]
+        concurrency = min(_model_fanout_concurrency(), batch_count)
+        plan = {
+            **spec,
+            "allocations": allocations,
+            "concurrency": concurrency,
+            "started_at_ms": int(time.time() * 1000),
+        }
+        return {
+            "composition_plan": plan,
+            "composition_results": [{"reset": True}],
+            "document_processing": {
+                "version": "document-processing-fanout-v1",
+                "processing_key": spec["processing_key"],
+                "tool_name": spec["tool_name"],
+                "rewrite_attempt": spec["rewrite_attempt"],
+                "batch_count": batch_count,
+                "processed_batches": [],
+                "missing_record_keys": list(spec["missing_record_keys"]),
+                "complete": False,
+                "parallel": True,
+                "concurrency": concurrency,
+            },
+            "node_trace": [
+                *state.get("node_trace", []),
+                _trace_event(
+                    node,
+                    "succeeded",
+                    details={
+                        "batch_count": batch_count,
+                        "concurrency": concurrency,
+                        "budget_reserved": True,
+                    },
+                ),
+            ],
+            "steps": state.get("steps", 0) + 1,
+        }
+
+    def parallel_composition_context(
+        state: AgentState,
+        spec: Mapping[str, Any],
+        batch: Mapping[str, Any],
+        batch_index: int,
+        allocation: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        context = dict(state.get("context", {}))
+        context["model_allowance"] = dict(allocation)
+        context["agent_plan"] = dict(state.get("plan", {}))
+        context["observations"] = [_document_batch_observation(batch)]
+        context["action_index"] = state.get("action_index", 0)
+        context["task_contract"] = dict(state.get("task_contract", {}))
+        context["email_validation"] = dict(state.get("email_validation", {}))
+        context["artifact_validation"] = dict(state.get("artifact_validation", {}))
+        context["source_coverage"] = _document_source_coverage(state)
+        base_arguments = spec.get("base_arguments", {})
+        base_arguments = (
+            dict(base_arguments) if isinstance(base_arguments, Mapping) else {}
+        )
+        context["previous_arguments"] = _composer_previous_arguments(base_arguments)
+        context["previous_merged_record_count"] = 0
+        context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
+        structural_mapping = spec.get("structural_mapping")
+        if isinstance(structural_mapping, Mapping):
+            context["locked_mapping_contract"] = dict(structural_mapping)
+        source_ir = _presentation_source_ir(state)
+        source_tables = _relevant_source_tables(
+            source_ir,
+            state.get("task_contract", {}),
+        )
+        context["source_structure_summary"] = {
+            "version": source_ir.get("version"),
+            "tables": [
+                {
+                    "id": projected.get("id"),
+                    "columns": projected.get("columns", []),
+                    "row_count": len(table.get("rows", [])),
+                    "row_group_count": len(table.get("row_groups", [])),
+                }
+                for table in source_tables
+                for projected in [
+                    _project_source_table(
+                        table,
+                        state.get("task_contract", {}),
+                    )
+                ]
+            ],
+        }
+        context["document_processing_round"] = {
+            "version": "document-processing-fanout-v1",
+            "batch_id": batch.get("batch_id"),
+            "round_number": batch_index + 1,
+            "round_count": int(spec["batch_count"]),
+            "source_round": int(batch.get("round_no") or 1),
+            "source_segment": int(batch.get("segment_no") or 1),
+            "source_segment_count": int(batch.get("segment_count") or 1),
+            "attachment_index": int(batch.get("attachment_index") or 1),
+            "rewrite_attempt": int(spec.get("rewrite_attempt") or 0),
+            "timeout_retry_attempt": 0,
+            "missing_record_keys": list(spec.get("missing_record_keys") or []),
+            "structured": True,
+            "focused": False,
+            "compact_entity_ir": True,
+            "focus_phrases": [],
+        }
+        return context
+
+    def dispatch_composition_batches(state: AgentState) -> str | list[Send]:
+        if state.get("outcome"):
+            return "finalize"
+        plan = state.get("composition_plan", {})
+        spec = parallel_composition_spec(state)
+        if spec is None or plan.get("processing_key") != spec.get("processing_key"):
+            raise ValueError("parallel Composer plan changed before dispatch")
+        batches = _presentation_document_batches(state)
+        if int(spec.get("rewrite_attempt") or 0) > 0:
+            batches, _ = _repair_document_batches(
+                batches,
+                cast(Mapping[str, Any], spec.get("base_arguments", {})),
+                state,
+            )
+        by_id = {str(batch.get("batch_id") or ""): batch for batch in batches}
+        batch_ids = [str(value) for value in plan.get("batch_ids", [])]
+        allocations = plan.get("allocations")
+        if not isinstance(allocations, list) or len(allocations) != len(batch_ids):
+            raise ValueError("parallel Composer allowance plan is invalid")
+        sends: list[Send] = []
+        for index, batch_id in enumerate(batch_ids):
+            batch = by_id.get(batch_id)
+            allocation = allocations[index]
+            if batch is None or not isinstance(allocation, Mapping):
+                raise ValueError("parallel Composer batch plan is invalid")
+            sends.append(
+                Send(
+                    "compose_document_batch",
+                    {
+                        "composition_job": {
+                            "version": "composer-fanout-job-v1",
+                            "processing_key": plan["processing_key"],
+                            "batch_index": index,
+                            "batch_count": len(batch_ids),
+                            "batch_id": batch_id,
+                            "module": state["module"],
+                            "message": state["user_message"],
+                            "tool_name": plan["tool_name"],
+                            "context": parallel_composition_context(
+                                state,
+                                plan,
+                                batch,
+                                index,
+                                allocation,
+                            ),
+                            "allocation": dict(allocation),
+                        }
+                    },
+                )
+            )
+        return sends
+
+    def consume_composition_events(
+        *,
+        started_ns: int,
+        succeeded: bool,
+        batch_id: str,
+    ) -> list[dict[str, Any]]:
+        consumer = getattr(decisions, "consume_observability", None)
+        raw_events = consumer() if callable(consumer) else []
+        events = [dict(item) for item in raw_events if isinstance(item, dict)]
+        if not events and succeeded:
+            events = [
+                {
+                    "kind": "model_call",
+                    "role": "composer",
+                    "status": "succeeded",
+                    "provider": manifest.get("provider", "unknown"),
+                    "requested_model": "",
+                    "returned_model": "",
+                    "upstream_provider": "",
+                    "generation_id": "",
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cached_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "cost_micros": 0,
+                    "latency_ms": _elapsed_ms(started_ns),
+                    "error_status": 0,
+                    "retryable": False,
+                }
+            ]
+        for event in events:
+            event["graph_node"] = "compose_document_batch"
+            event["batch_id"] = batch_id
+        return events
+
+    def compose_document_batch(state: AgentState) -> dict[str, Any]:
+        job = state.get("composition_job", {})
+        if job.get("version") != "composer-fanout-job-v1":
+            raise ValueError("parallel Composer job version is invalid")
+        composer = getattr(decisions, "compose_arguments", None)
+        if not callable(composer):
+            raise ValueError("decision port must implement compose_arguments for marked tools")
+        started_ns = time.perf_counter_ns()
+        batch_id = str(job.get("batch_id") or "")
+        error: dict[str, Any] = {}
+        arguments: dict[str, Any] = {}
+        try:
+            composed = composer(
+                module=cast(ModuleKey, job["module"]),
+                message=str(job["message"]),
+                tool_name=str(job["tool_name"]),
+                context=cast(Mapping[str, Any], job["context"]),
+            )
+            if not isinstance(composed, Mapping):
+                raise ValueError("composed tool arguments must be an object")
+            arguments = dict(composed)
+        except ModelBudgetExceeded as exc:
+            events = consume_composition_events(
+                started_ns=started_ns,
+                succeeded=False,
+                batch_id=batch_id,
+            )
+            error = {
+                "kind": "budget",
+                "type": type(exc).__name__,
+                "message": str(exc).strip()[:240],
+            }
+        except Exception as exc:
+            events = consume_composition_events(
+                started_ns=started_ns,
+                succeeded=False,
+                batch_id=batch_id,
+            )
+            error = {
+                "kind": "model" if events else "runtime_contract",
+                "type": type(exc).__name__,
+                "message": str(exc).strip()[:240],
+            }
+        else:
+            events = consume_composition_events(
+                started_ns=started_ns,
+                succeeded=True,
+                batch_id=batch_id,
+            )
+        return {
+            "composition_results": [
+                {
+                    "version": "composer-fanout-result-v1",
+                    "processing_key": job["processing_key"],
+                    "batch_index": int(job["batch_index"]),
+                    "batch_id": batch_id,
+                    "arguments": arguments,
+                    "events": events,
+                    "allocation": dict(job.get("allocation", {})),
+                    "elapsed_ms": _elapsed_ms(started_ns),
+                    "error": error,
+                }
+            ]
+        }
+
+    def join_composition(state: AgentState) -> dict[str, Any]:
+        node = "join_composition"
+        plan = state.get("composition_plan", {})
+        processing_key = str(plan.get("processing_key") or "")
+        results = sorted(
+            (
+                dict(result)
+                for result in state.get("composition_results", [])
+                if result.get("processing_key") == processing_key
+            ),
+            key=lambda result: int(result.get("batch_index", -1)),
+        )
+        batch_ids = [str(value) for value in plan.get("batch_ids", [])]
+        if (
+            len(results) != len(batch_ids)
+            or [result.get("batch_id") for result in results] != batch_ids
+            or [result.get("batch_index") for result in results]
+            != list(range(len(batch_ids)))
+        ):
+            raise ValueError("parallel Composer results are incomplete or out of contract")
+        events = [
+            dict(event)
+            for result in results
+            for event in result.get("events", [])
+            if isinstance(event, Mapping)
+        ]
+        usage = apply_model_events(
+            state.get("budget_usage", initial_budget_usage()),
+            node="compose_document_batch",
+            events=events,
+        )
+        branch_traces = [
+            _trace_event(
+                "compose_document_batch",
+                "failed" if result.get("error") else "succeeded",
+                details={
+                    "batch_id": result["batch_id"],
+                    "batch_number": int(result["batch_index"]) + 1,
+                    "batch_count": len(results),
+                    "model_calls": sum(
+                        1
+                        for event in result.get("events", [])
+                        if isinstance(event, Mapping) and event.get("kind") == "model_call"
+                    ),
+                    "elapsed_ms": int(result.get("elapsed_ms") or 0),
+                    "error": dict(result.get("error", {})),
+                },
+            )
+            for result in results
+        ]
+        budget_violation = False
+        for result in results:
+            allocation = result.get("allocation", {})
+            result_events = [
+                event
+                for event in result.get("events", [])
+                if isinstance(event, Mapping) and event.get("kind") == "model_call"
+            ]
+            observed = {
+                "remaining_calls": len(result_events),
+                "remaining_prompt_tokens": sum(
+                    int(event.get("prompt_tokens") or 0) for event in result_events
+                ),
+                "remaining_completion_tokens": sum(
+                    int(event.get("completion_tokens") or 0) for event in result_events
+                ),
+                "remaining_cost_micros": sum(
+                    int(event.get("cost_micros") or 0) for event in result_events
+                ),
+            }
+            if isinstance(allocation, Mapping) and any(
+                observed[key] > int(allocation.get(key) or 0) for key in observed
+            ):
+                budget_violation = True
+        first_error = next(
+            (
+                dict(result["error"])
+                for result in results
+                if isinstance(result.get("error"), Mapping) and result["error"]
+            ),
+            {},
+        )
+        joined_node_trace = [*state.get("node_trace", []), *branch_traces]
+        common: dict[str, Any] = {
+            "budget_usage": usage,
+            "model_events": [*state.get("model_events", []), *events],
+            "composition_plan": {},
+            "composition_results": [{"reset": True}],
+            "node_trace": joined_node_trace,
+            "steps": state.get("steps", 0) + len(results) + 1,
+        }
+        if budget_violation or first_error.get("kind") == "budget":
+            return {
+                **common,
+                "outcome": "model_budget_exhausted",
+                "response": "任务已安全停止：并行 Composer 分支超出预留模型预算。",
+                "needs_response": False,
+                "document_processing": {
+                    **state.get("document_processing", {}),
+                    "complete": False,
+                    "status": "failed",
+                },
+            }
+        if first_error:
+            if first_error.get("kind") == "runtime_contract":
+                raise ValueError(str(first_error.get("message") or "Composer branch failed"))
+            statuses = {
+                int(event.get("error_status") or 0)
+                for event in events
+                if int(event.get("error_status") or 0) > 0
+            }
+            authentication_error = bool(statuses.intersection((401, 403)))
+            provider_error = bool(statuses) or any(
+                event.get("status") == "error" for event in events
+            )
+            return {
+                **common,
+                "outcome": (
+                    "model_authentication_error"
+                    if authentication_error
+                    else "model_unavailable"
+                    if provider_error
+                    else "model_invalid_response"
+                ),
+                "response": (
+                    "模型服务鉴权失败，任务已安全停止；请修复 OpenRouter 凭据后发起新的运行。"
+                    if authentication_error
+                    else "并行 Composer 分支失败，任务已安全停止；调用成本和已有结果均已保留。"
+                ),
+                "needs_response": False,
+                "document_processing": {
+                    **state.get("document_processing", {}),
+                    "complete": False,
+                    "status": "failed",
+                },
+            }
+        batches = _presentation_document_batches(state)
+        by_id = {str(batch.get("batch_id") or ""): batch for batch in batches}
+        merged_arguments = dict(plan.get("base_arguments", {}))
+        processed: list[dict[str, Any]] = []
+        for result in results:
+            batch = by_id.get(str(result["batch_id"]))
+            if batch is None:
+                raise ValueError("parallel Composer source batch is unavailable at join")
+            normalized = _normalize_presentation_arguments(
+                cast(Mapping[str, Any], result["arguments"]),
+                state,
+            )
+            normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
+            normalized = _ground_structured_batch_arguments(normalized, batch, state)
+            normalized = _normalize_presentation_arguments(normalized, state)
+            normalized["mapping_contract"] = dict(plan.get("structural_mapping", {}))
+            merged_arguments = _merge_presentation_arguments(
+                merged_arguments,
+                normalized,
+                state,
+            )
+            table = normalized.get("table")
+            processed.append(
+                {
+                    "batch_id": result["batch_id"],
+                    "attachment_index": batch.get("attachment_index"),
+                    "source_round": batch.get("round_no"),
+                    "source_segment": batch.get("segment_no", 1),
+                    "source_segment_count": batch.get("segment_count", 1),
+                    "input_characters": len(str(batch.get("processing_text") or "")),
+                    "estimated_tokens": int(batch.get("token_count") or 0),
+                    "record_count": len(
+                        table.get("rows", []) if isinstance(table, Mapping) else []
+                    ),
+                }
+            )
+        definition = _trusted_tool_definition(state, str(plan["tool_name"]))
+        if definition is None:
+            raise ValueError("argument composition requires a trusted tool definition")
+        parameters = definition.get("parameters")
+        properties = parameters.get("properties") if isinstance(parameters, Mapping) else None
+        if isinstance(properties, Mapping) and "task_contract" in properties:
+            merged_arguments["task_contract"] = dict(state.get("task_contract", {}))
+        if isinstance(properties, Mapping) and "source_coverage" in properties:
+            merged_arguments["source_coverage"] = _document_source_coverage(state)
+        final_table = merged_arguments.get("table")
+        final_rows = final_table.get("rows", []) if isinstance(final_table, Mapping) else []
+        expected_keys = presentation_source_record_keys(
+            state.get("observations", []),
+            state.get("task_contract", {}),
+        )
+        missing_keys = _missing_presentation_record_keys(merged_arguments, expected_keys)
+        wall_latency_ms = max(
+            0,
+            int(time.time() * 1000) - int(plan.get("started_at_ms") or 0),
+        )
+        return {
+            **common,
+            "proposed_tool": {
+                "name": plan["tool_name"],
+                "arguments": merged_arguments,
+                "compose_arguments": False,
+            },
+            "document_processing": {
+                **state.get("document_processing", {}),
+                "next_batch_index": len(results),
+                "processed_batches": processed,
+                "missing_record_keys": missing_keys,
+                "complete": True,
+                "status": "completed",
+                "merged_record_count": len(final_rows),
+                "provider_latency_ms": sum(
+                    int(event.get("latency_ms") or 0) for event in events
+                ),
+                "wall_latency_ms": wall_latency_ms,
+            },
+            "node_trace": [
+                *joined_node_trace,
+                _trace_event(
+                    node,
+                    "succeeded",
+                    details={
+                        "batch_count": len(results),
+                        "concurrency": plan.get("concurrency"),
+                        "merged_record_count": len(final_rows),
+                        "provider_latency_ms": sum(
+                            int(event.get("latency_ms") or 0) for event in events
+                        ),
+                        "wall_latency_ms": wall_latency_ms,
+                    },
+                ),
+            ],
+        }
 
     def compose_arguments(state: AgentState) -> dict[str, Any]:
         node = "compose_arguments"
@@ -4003,7 +4653,7 @@ def build_graph(
             return "finalize"
         proposed = state.get("proposed_tool", {})
         if proposed.get("compose_arguments") is True:
-            return "compose_arguments"
+            return composition_route(state)
         return "preflight_normalize"
 
     def preflight_normalize(state: AgentState) -> dict[str, Any]:
@@ -5324,6 +5974,8 @@ def build_graph(
             "presentation_validation": {},
             "presentation_rewrite_attempts": 0,
             "document_processing": {},
+            "composition_plan": {},
+            "composition_results": [{"reset": True}],
             "node_trace": [
                 *state.get("node_trace", []),
                 _trace_event("continue_action", "succeeded"),
@@ -5396,6 +6048,9 @@ def build_graph(
     register("companion", decide)
     register("life", decide)
     register("work", decide)
+    register("fanout_composition", fanout_composition)
+    register("compose_document_batch", compose_document_batch)
+    register("join_composition", join_composition)
     register("compose_arguments", compose_arguments)
     register("email_quality_gate", email_quality_gate)
     register("preflight_normalize", preflight_normalize)
@@ -5437,6 +6092,7 @@ def build_graph(
             after_decision,
             {
                 "plan": "plan",
+                "fanout_composition": "fanout_composition",
                 "compose_arguments": "compose_arguments",
                 "preflight_normalize": "preflight_normalize",
                 "generate_response": "generate_response",
@@ -5451,10 +6107,26 @@ def build_graph(
             "companion": "companion",
             "life": "life",
             "work": "work",
+            "fanout_composition": "fanout_composition",
             "compose_arguments": "compose_arguments",
             "preflight_normalize": "preflight_normalize",
             "generate_response": "generate_response",
             "response_quality_gate": "response_quality_gate",
+            "finalize": "finalize",
+        },
+    )
+    builder.add_conditional_edges(
+        "fanout_composition",
+        dispatch_composition_batches,
+        ["compose_document_batch", "finalize"],
+    )
+    builder.add_edge("compose_document_batch", "join_composition")
+    builder.add_conditional_edges(
+        "join_composition",
+        after_composition,
+        {
+            "compose_arguments": "compose_arguments",
+            "email_quality_gate": "email_quality_gate",
             "finalize": "finalize",
         },
     )
@@ -5471,6 +6143,7 @@ def build_graph(
         "email_quality_gate",
         after_email_quality,
         {
+            "fanout_composition": "fanout_composition",
             "compose_arguments": "compose_arguments",
             "preflight_normalize": "preflight_normalize",
             "finalize": "finalize",

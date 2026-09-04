@@ -8,7 +8,7 @@ Environment:
 - API image/commit:
 - Worker image/commit:
 - Database:
-- Kafka brokers:
+- Kafka brokers (optional `kafka-scale` mode):
 - Redis:
 - Qdrant:
 - Model provider:
@@ -134,7 +134,7 @@ Expected:
   - `active_mfa_admin_operator`
   - `identity_admin_store`
   - `operations_store`
-  - `kafka_transport_enabled`
+  - `kafka_horizontal_scaling` (optional; `warning` is expected while database dispatch is the selected mode)
   - `https_web_origin`
   - `security_headers_enabled`
   - `model_provider_configured`
@@ -161,7 +161,7 @@ Checks:
 - [ ] `GET /metrics` from monitoring network
 - [ ] `healthz.headers` contains `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, and `Permissions-Policy`
 - [ ] `GET /v1/ops/outbox/dead-letter`
-- [ ] `GET /v1/ops/kafka/poison-messages`
+- [ ] `GET /v1/ops/kafka/poison-messages` when `kafka-scale` is enabled
 - [ ] `GET /v1/ops/email/deliveries`
 - [ ] `GET /v1/ops/console/bootstrap`
 
@@ -209,7 +209,7 @@ Choose at least one from each group for an internal release; run the full set be
 Fault:
 
 - [ ] Kill Worker and verify accepted jobs recover
-- [ ] Stop Kafka and verify Outbox resumes
+- [ ] In `kafka-scale` mode, stop Kafka and verify database reconciliation continues and publication resumes
 - [ ] Force model provider timeout and verify degradation/defer behavior
 
 Load:

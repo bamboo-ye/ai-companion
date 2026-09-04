@@ -630,7 +630,7 @@ Implemented:
   - `active_admin_operator`
   - `identity_admin_store`
   - `operations_store`
-  - `kafka_transport_enabled`
+  - `kafka_transport_enabled` (historical key; ADR 0005 replaces it with optional `kafka_horizontal_scaling`)
   - `https_web_origin`
   - `security_headers_enabled`
   - `model_provider_configured`

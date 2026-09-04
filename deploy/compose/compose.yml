@@ -60,6 +60,7 @@ services:
       retries: 20
 
   kafka:
+    profiles: ["kafka-scale"]
     image: apache/kafka:4.3.0
     restart: unless-stopped
     environment:
@@ -89,6 +90,7 @@ services:
       start_period: 60s
 
   kafka-init:
+    profiles: ["kafka-scale"]
     image: apache/kafka:4.3.0
     depends_on:
       kafka:
@@ -228,8 +230,8 @@ services:
       APP_DATABASE_DRIVER: postgres
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
       LANGGRAPH_POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable&options=-csearch_path%3Dlanggraph%2Cpublic"
-      KAFKA_BROKERS: kafka:29092
-      KAFKA_ENABLED: "true"
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-false}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-}
       AGENT_GATEWAY_URL: http://api:8080
       AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:-development-agent-gateway-token}
       PYTHON_EXECUTABLE: /usr/local/bin/python
@@ -243,6 +245,7 @@ services:
         condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
+        required: false
       api:
         condition: service_healthy
       worker:
@@ -437,7 +440,8 @@ services:
       MYSQL_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
       REDIS_ADDR: redis:6379
-      KAFKA_BROKERS: kafka:29092
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-false}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-}
       QDRANT_URL: http://qdrant:6333
       MINIO_ENDPOINT: minio:9000
       DOCUMENT_STORAGE_DIR: /app/.data/files
@@ -464,6 +468,7 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+        required: false
       qdrant:
         condition: service_started
     healthcheck:
@@ -491,7 +496,8 @@ services:
       MYSQL_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
       REDIS_ADDR: redis:6379
-      KAFKA_BROKERS: kafka:29092
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-false}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-}
       QDRANT_URL: http://qdrant:6333
       MINIO_ENDPOINT: minio:9000
       DOCUMENT_STORAGE_DIR: /app/.data/files
@@ -512,6 +518,7 @@ services:
         condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
+        required: false
       qdrant:
         condition: service_started
     restart: unless-stopped

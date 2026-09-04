@@ -1,6 +1,10 @@
 # ADR 0004: Kafka as the project-wide asynchronous transport
 
-Status: accepted (2026-07-06)
+Status: superseded by ADR 0005 (2026-09-04)
+
+This ADR records the original Kafka-first rollout. The event contracts,
+Outbox/Inbox implementation and Kafka adapter remain valid, but Kafka is no
+longer a mandatory production transport.
 
 ## Context
 

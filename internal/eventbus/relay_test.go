@@ -39,6 +39,20 @@ func TestRelayPublishesAndInboxDeduplicates(t *testing.T) {
 	}
 }
 
+func TestDatabaseReconciledPublisherSettlesOutboxWithoutKafka(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC)
+	store.Add(Event{ID: "event-database", AggregateType: "agent_run", AggregateID: "run-1", Type: "agent.run.requested.v1", Version: 1, Payload: json.RawMessage(`{"run_id":"run-1"}`), OccurredAt: now})
+	relay := NewRelay(store, DatabaseReconciledPublisher{}, "database-relay", time.Minute, 10, 3)
+	relay.now = func() time.Time { return now }
+
+	count, err := relay.RunOnce(context.Background())
+	item := store.events["event-database"]
+	if err != nil || count != 1 || item.status != "published" || item.ack.Topic != DatabaseReconciledTopic {
+		t.Fatalf("relay count=%d state=%#v err=%v", count, item, err)
+	}
+}
+
 func TestRelayRetriesWithBackoffThenMovesToDLQAndReplays(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC)

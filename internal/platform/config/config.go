@@ -434,7 +434,7 @@ func Load(serviceName string) (Config, error) {
 	if err != nil || agentWorkerLeaseDuration <= 0 {
 		return Config{}, fmt.Errorf("AGENT_WORKER_LEASE_DURATION must be a positive duration")
 	}
-	agentWorkerPollInterval, err := time.ParseDuration(value("AGENT_WORKER_POLL_INTERVAL", "30s"))
+	agentWorkerPollInterval, err := time.ParseDuration(value("AGENT_WORKER_POLL_INTERVAL", "1s"))
 	if err != nil || agentWorkerPollInterval <= 0 {
 		return Config{}, fmt.Errorf("AGENT_WORKER_POLL_INTERVAL must be a positive duration")
 	}
@@ -516,13 +516,13 @@ func Load(serviceName string) (Config, error) {
 		return Config{}, fmt.Errorf("WEB_ORIGIN must use https in production")
 	}
 
-	brokers := splitNonEmpty(value("KAFKA_BROKERS", "127.0.0.1:9092"))
-	if len(brokers) == 0 {
-		return Config{}, fmt.Errorf("at least one Kafka broker is required")
-	}
-	kafkaEnabled, err := strconv.ParseBool(value("KAFKA_ENABLED", "true"))
+	kafkaEnabled, err := strconv.ParseBool(value("KAFKA_ENABLED", "false"))
 	if err != nil {
 		return Config{}, fmt.Errorf("KAFKA_ENABLED must be true or false")
+	}
+	brokers := splitNonEmpty(value("KAFKA_BROKERS", ""))
+	if kafkaEnabled && len(brokers) == 0 {
+		return Config{}, fmt.Errorf("at least one Kafka broker is required when KAFKA_ENABLED=true")
 	}
 	kafkaReconcileInterval, err := time.ParseDuration(value("KAFKA_RECONCILE_INTERVAL", "30s"))
 	if err != nil || kafkaReconcileInterval <= 0 {

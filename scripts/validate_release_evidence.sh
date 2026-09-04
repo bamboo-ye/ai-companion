@@ -240,11 +240,11 @@ required = {
     "active_mfa_admin_operator",
     "identity_admin_store",
     "operations_store",
-    "kafka_transport_enabled",
     "https_web_origin",
     "security_headers_enabled",
     "model_provider_configured",
 }
+optional = {"kafka_horizontal_scaling"}
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
@@ -261,13 +261,19 @@ for check in checks:
     if isinstance(check, dict) and isinstance(check.get("key"), str):
         by_key[check["key"]] = check
 
-missing = sorted(required - by_key.keys())
+missing = sorted((required | optional) - by_key.keys())
 if missing:
     raise SystemExit("missing checks: " + ", ".join(missing))
 
 not_passed = sorted(key for key in required if by_key[key].get("status") != "passed")
 if not_passed:
     raise SystemExit("required checks not passed: " + ", ".join(not_passed))
+
+invalid_optional = sorted(
+    key for key in optional if by_key[key].get("status") not in {"passed", "warning"}
+)
+if invalid_optional:
+    raise SystemExit("optional checks invalid: " + ", ".join(invalid_optional))
 PY
 then
 	pass "release-readiness required checks are passed"

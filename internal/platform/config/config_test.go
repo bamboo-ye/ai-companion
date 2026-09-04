@@ -34,10 +34,10 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ShutdownTimeout != 10*time.Second {
 		t.Fatalf("ShutdownTimeout = %s", cfg.ShutdownTimeout)
 	}
-	if len(cfg.KafkaBrokers) != 1 || cfg.KafkaBrokers[0] != "127.0.0.1:9092" {
+	if len(cfg.KafkaBrokers) != 0 {
 		t.Fatalf("KafkaBrokers = %#v", cfg.KafkaBrokers)
 	}
-	if !cfg.KafkaEnabled || cfg.OutboxRelayPollInterval != 500*time.Millisecond || cfg.OutboxRelayLeaseDuration != 30*time.Second || cfg.OutboxRelayBatchSize != 50 || cfg.OutboxRelayMaxAttempts != 8 {
+	if cfg.KafkaEnabled || cfg.OutboxRelayPollInterval != 500*time.Millisecond || cfg.OutboxRelayLeaseDuration != 30*time.Second || cfg.OutboxRelayBatchSize != 50 || cfg.OutboxRelayMaxAttempts != 8 {
 		t.Fatalf("Kafka relay defaults = enabled:%v poll:%s lease:%s batch:%d attempts:%d", cfg.KafkaEnabled, cfg.OutboxRelayPollInterval, cfg.OutboxRelayLeaseDuration, cfg.OutboxRelayBatchSize, cfg.OutboxRelayMaxAttempts)
 	}
 	if cfg.KafkaConsumerGroup != "ai-companion-background-v1" || cfg.KafkaReconcileInterval != 30*time.Second {
@@ -87,7 +87,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.AgentKafkaConsumerGroup != "ai-companion-agent-v1" ||
 		cfg.AgentMetricsAddr != ":9467" ||
 		cfg.AgentWorkerLeaseDuration != 14*time.Minute ||
-		cfg.AgentWorkerPollInterval != 30*time.Second ||
+		cfg.AgentWorkerPollInterval != time.Second ||
 		cfg.AgentWorkerRetryDelay != 30*time.Second ||
 		cfg.AgentWorkerRetryMaxDelay != 2*time.Minute ||
 		cfg.AgentWorkerRetryJitterPercent != 20 ||
@@ -120,6 +120,23 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if len(cfg.AgentChatModules) != 0 {
 		t.Fatalf("AgentChatModules = %#v", cfg.AgentChatModules)
+	}
+}
+
+func TestLoadRequiresBrokersOnlyWhenKafkaIsEnabled(t *testing.T) {
+	t.Setenv("KAFKA_ENABLED", "true")
+	t.Setenv("KAFKA_BROKERS", "")
+	if _, err := Load("test-service"); err == nil || err.Error() != "at least one Kafka broker is required when KAFKA_ENABLED=true" {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	t.Setenv("KAFKA_BROKERS", "kafka-1:9092,kafka-2:9092")
+	cfg, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.KafkaEnabled || len(cfg.KafkaBrokers) != 2 {
+		t.Fatalf("Kafka configuration = enabled:%v brokers:%#v", cfg.KafkaEnabled, cfg.KafkaBrokers)
 	}
 }
 

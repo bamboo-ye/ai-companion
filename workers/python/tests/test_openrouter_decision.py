@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping
 from unittest.mock import patch
 
@@ -95,6 +97,25 @@ def context() -> dict[str, Any]:
 
 
 class OpenRouterDecisionPortTest(unittest.TestCase):
+    def test_observability_buffers_are_isolated_between_parallel_branches(self) -> None:
+        port = StubOpenRouter([])
+        barrier = threading.Barrier(2)
+
+        def record(branch: str) -> list[dict[str, Any]]:
+            port._observability_buffer().append({"kind": "model_call", "branch": branch})
+            barrier.wait(timeout=1)
+            return port.consume_observability()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(record, branch) for branch in ("a", "b")]
+            observed = [future.result(timeout=2) for future in futures]
+
+        self.assertEqual(
+            {events[0]["branch"] for events in observed},
+            {"a", "b"},
+        )
+        self.assertTrue(all(len(events) == 1 for events in observed))
+
     def test_artifact_router_uses_public_presentation_orchestrator_for_all_capabilities(self) -> None:
         tools = [
             {"name": "work_generate_pptx"},

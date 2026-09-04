@@ -27,11 +27,11 @@ This is the M8 internal-release test plan. It is not a replacement for external 
 | Fault | Expected behavior |
 |---|---|
 | Kill Worker | Accepted jobs remain durable; expired leases are reclaimed. |
-| Stop Kafka broker | Outbox events remain pending/publishing and resume after broker recovery. |
+| Stop Kafka broker (`kafka-scale` only) | Durable database jobs continue through reconciliation; broker publication resumes after recovery. |
 | Model provider timeout | Circuit breaker opens; claimed generation jobs defer back to `accepted`. |
 | Qdrant unavailable | Document ingestion/query fails or degrades without losing uploaded files. |
 | Redis unavailable | Presence/rate-limit returns explicit unavailable errors; MySQL authority remains safe. |
-| Duplicate Kafka delivery | Inbox dedupe prevents repeated side effects. |
+| Duplicate Kafka delivery (`kafka-scale` only) | Inbox dedupe prevents repeated side effects. |
 | API restart during SSE | Client can reconnect and fetch generation events by `Last-Event-ID`. |
 
 ## Load checks
@@ -47,9 +47,9 @@ Run these with local/internal data only:
 3. Document upload burst:
    - 50 small text/PDF uploads.
    - Expected: jobs queued, no duplicate active file rows for identical hashes.
-4. Kafka backlog:
-   - pause Worker, enqueue jobs, resume Worker.
-   - Expected: lag drains; oldest job age returns below 15 s.
+4. Durable queue backlog:
+   - pause Worker, enqueue jobs, resume Worker; repeat with Kafka lag when testing `kafka-scale`.
+   - Expected: database backlog drains and oldest job age returns below 15 s; optional Kafka lag also drains.
 5. Model outage:
    - force provider failures until circuit opens.
    - Expected: accepted jobs remain accepted/deferred, not failed.

@@ -463,7 +463,7 @@ func (s *Server) getReleaseReadiness(w http.ResponseWriter, r *http.Request) {
 	add("active_mfa_admin_operator", activeMFAAdmin, production, "At least one active admin operator account must have MFA enabled before production release.")
 	add("identity_admin_store", s.identityAdmin != nil, true, "User moderation and audit APIs require an identity admin store.")
 	add("operations_store", s.operations != nil, true, "DLQ, poison-message, and compensation operations require an operations store.")
-	add("kafka_transport_enabled", s.kafkaEnabled, production, "Production asynchronous transport must use Kafka.")
+	add("kafka_horizontal_scaling", s.kafkaEnabled, false, "Kafka is optional and should be enabled only when database dispatch needs horizontal-scale offload.")
 	add("https_web_origin", !production || strings.HasPrefix(strings.TrimSpace(s.webOrigin), "https://"), production, "Production WEB_ORIGIN must use https://.")
 	add("security_headers_enabled", true, true, "Global security headers are installed on all HTTP responses.")
 	add("model_provider_configured", modelProvider != "development", production, "Production should configure an approved non-development model provider.")

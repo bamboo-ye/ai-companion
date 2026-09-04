@@ -145,7 +145,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
 	chatTools := chattool.New(ledgerService, plannerService, documentService, skillService, memoryService)
 	conversationService.SetToolExecutor(chatTools)
-	if durable, ok := conversationStore.(interface{ DurableChatDispatch() bool }); ok && cfg.KafkaEnabled && durable.DurableChatDispatch() {
+	if durable, ok := conversationStore.(interface{ DurableChatDispatch() bool }); ok && durable.DurableChatDispatch() {
 		conversationService.SetAsyncDispatch(true)
 	}
 	presenceTTL := cfg.PresenceTTL

@@ -37,6 +37,8 @@ Implemented:
 
 ## Slice 2: Kafka Outbox delivery foundation
 
+Historical note (2026-09-04): ADR 0005 supersedes the Kafka-mandatory deployment decision below. The implementation and verification remain valid as the optional `kafka-scale` path; database leases and reconciliation are now the default dispatcher.
+
 Implemented:
 
 - Accepted ADR 0004: Kafka is the only production asynchronous transport; MySQL remains transactional state, Outbox/Inbox, lease, retry, DLQ, and recovery storage.
