@@ -882,7 +882,7 @@ _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
 _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
 _DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
 _PARALLEL_NARRATIVE_BATCH_MAX_CHARS = 8_800
-_PARALLEL_NARRATIVE_MAX_BATCHES = 8
+_PARALLEL_NARRATIVE_MAX_BATCHES = 12
 _PARALLEL_COMPOSITION_MAX_RETRY_ROUNDS = 1
 _STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 10_000
 _STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 12
@@ -2361,10 +2361,8 @@ def _validate_parallel_composition_arguments(
     if not isinstance(brief, str) or not brief.strip():
         raise ComposerBranchContractError("narrative Composer branch requires brief")
     blocks = _presentation_brief_blocks(brief)
-    if not 1 <= len(blocks) <= 2:
-        raise ComposerBranchContractError(
-            "narrative Composer branch must contain one or two sections"
-        )
+    if not blocks:
+        raise ComposerBranchContractError("narrative Composer branch requires a section")
     for block in blocks:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if not lines or re.fullmatch(r"##\s+\S.*", lines[0]) is None:
