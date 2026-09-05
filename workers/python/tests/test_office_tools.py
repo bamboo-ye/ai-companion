@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -27,6 +28,7 @@ from ai_companion_worker.office_tools import (
     ModelBackedOperationError,
     PRESENTATION_BODY_FONT_FAMILY,
     _openrouter_translate,
+    _openrouter_generate_presentation_visual,
     _presentation_body_text_overflow_risk,
     _translate_layout_blocks,
     _translation_batches,
@@ -102,6 +104,113 @@ class OfficeToolsTest(unittest.TestCase):
             _presentation_topic_source_pages({"bullets": ["区间证据（来源：第17-18页）"]}),
             {17, 18},
         )
+
+    def test_source_rich_presentation_skips_generated_images(self) -> None:
+        extracted = [
+            {"kind": "source", "source_page": page, "source_locator": f"第 {page} 页"}
+            for page in range(1, 5)
+        ]
+        payload = {
+            "visual_mode": "auto",
+            "source_documents": [
+                {
+                    "filename": "source.pdf",
+                    "media_type": "application/pdf",
+                    "data_base64": base64.b64encode(b"pdf-placeholder").decode(),
+                }
+            ],
+        }
+        topics = [
+            {"title": f"主题 {page}", "bullets": [f"事实（来源：第{page}页）"]}
+            for page in range(1, 5)
+        ]
+
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
+                "MODEL_PRESENTATION_SOURCE_SUFFICIENT_COUNT": "4",
+            },
+        ), patch(
+            "ai_companion_worker.office_tools._extract_pdf_presentation_visuals",
+            return_value=extracted,
+        ), patch(
+            "ai_companion_worker.office_tools._openrouter_generate_presentation_visual",
+            side_effect=AssertionError("source-rich deck must not generate an image"),
+        ):
+            assignments, report, usage = _presentation_visuals(
+                payload,
+                topics,
+                include_file=True,
+                allow_generated=True,
+            )
+
+        self.assertEqual(len([item for item in assignments if item]), 4)
+        self.assertTrue(report["source_material_sufficient"])
+        self.assertEqual(report["generation_skipped_reason"], "source_material_sufficient")
+        self.assertEqual(report["generation_attempt_count"], 0)
+        self.assertEqual(usage["cost_micros"], 0)
+
+    def test_generated_images_run_as_independent_bounded_parallel_calls(self) -> None:
+        active = 0
+        peak_active = 0
+        lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def generate(topic: dict[str, object], *, remaining_cost_micros: int):
+            nonlocal active, peak_active
+            with lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            try:
+                barrier.wait(timeout=1)
+                time.sleep(0.01)
+                return {
+                    "kind": "generated",
+                    "source_locator": "AI 生成配图",
+                    "title": topic["title"],
+                }, {
+                    "requested_model": "openai/gpt-image-2",
+                    "returned_model": "openai/gpt-image-2",
+                    "upstream_provider": "OpenAI",
+                    "cost_micros": min(80_000, remaining_cost_micros),
+                    "cost_accounting": "reported",
+                    "latency_ms": 10,
+                    "cache_hit": False,
+                }
+            finally:
+                with lock:
+                    active -= 1
+
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
+                "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "2",
+                "MODEL_PRESENTATION_IMAGE_CONCURRENCY": "2",
+            },
+        ), patch(
+            "ai_companion_worker.office_tools._openrouter_generate_presentation_visual",
+            side_effect=generate,
+        ):
+            assignments, report, _usage = _presentation_visuals(
+                {"visual_mode": "auto"},
+                [
+                    {"title": "主题一", "bullets": ["事实一"]},
+                    {"title": "主题二", "bullets": ["事实二"]},
+                ],
+                include_file=True,
+                allow_generated=True,
+            )
+
+        self.assertEqual(peak_active, 2)
+        self.assertEqual(len([item for item in assignments if item]), 2)
+        self.assertEqual(report["generation_attempt_count"], 2)
+        self.assertEqual(report["generated_visual_count"], 2)
 
     def test_translation_normalization_removes_unrenderable_inline_bullets(self) -> None:
         normalized = _normalize_translation("• 第一项 •\n• 第二项")
@@ -1095,6 +1204,47 @@ class OfficeToolsTest(unittest.TestCase):
 
         self.assertTrue(_presentation_body_text_overflow_risk(body))
 
+    @patch("urllib.request.urlopen")
+    def test_presentation_image_result_is_reused_across_retry(self, urlopen: Mock) -> None:
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (1600, 900), (31, 95, 152)).save(image_bytes, format="JPEG")
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = json.dumps(
+            {
+                "data": [{"b64_json": base64.b64encode(image_bytes.getvalue()).decode()}],
+                "model": "openai/gpt-image-2",
+                "provider": "OpenAI",
+                "usage": {"cost": 0.08},
+            }
+        ).encode()
+        topic = {"title": "并行生成", "bullets": ["结果应跨重试复用"]}
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "MODEL_PROVIDER": "openrouter",
+                "MODEL_BASE_URL": "https://openrouter.ai/api/v1",
+                "MODEL_API_KEY": "test-key",
+                "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
+                "WORKER_RESULT_CACHE_ENABLED": "true",
+                "WORKER_RESULT_CACHE_DIR": directory,
+            },
+        ):
+            first_visual, first_usage = _openrouter_generate_presentation_visual(
+                topic,
+                remaining_cost_micros=100_000,
+            )
+            second_visual, second_usage = _openrouter_generate_presentation_visual(
+                topic,
+                remaining_cost_micros=100_000,
+            )
+
+        urlopen.assert_called_once()
+        self.assertEqual(first_visual["data"], second_visual["data"])
+        self.assertEqual(first_usage["cost_micros"], 80_000)
+        self.assertTrue(second_usage["cache_hit"])
+        self.assertEqual(second_usage["cost_micros"], 0)
+
     @patch("urllib.request.urlopen", side_effect=OSError("network unavailable"))
     def test_pptx_image_generation_failure_safely_falls_back_to_text(self, urlopen: Mock) -> None:
         with patch.dict(
@@ -1105,6 +1255,7 @@ class OfficeToolsTest(unittest.TestCase):
                 "MODEL_API_KEY": "test-key",
                 "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-1",
                 "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+                "WORKER_RESULT_CACHE_ENABLED": "false",
             },
         ):
             result = execute(
@@ -1148,6 +1299,7 @@ class OfficeToolsTest(unittest.TestCase):
                 "MODEL_API_KEY": "test-key",
                 "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
                 "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+                "WORKER_RESULT_CACHE_ENABLED": "false",
             },
         ):
             result = execute(
@@ -1196,6 +1348,7 @@ class OfficeToolsTest(unittest.TestCase):
                 "MODEL_API_KEY": "test-key",
                 "MODEL_PRESENTATION_IMAGE_NAME": "openai/gpt-image-2",
                 "MODEL_PRESENTATION_IMAGE_MAX_COUNT": "1",
+                "WORKER_RESULT_CACHE_ENABLED": "false",
             },
         ):
             result = execute(

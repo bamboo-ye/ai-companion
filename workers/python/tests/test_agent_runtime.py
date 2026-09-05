@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 import unittest
@@ -213,7 +214,7 @@ def email_tool_definition() -> dict[str, Any]:
 
 
 class AgentRuntimeTest(unittest.TestCase):
-    def test_ppt_planning_selects_narrative_before_router_and_skips_table_gate(self) -> None:
+    def test_single_tool_ppt_bypasses_planner_and_uses_deterministic_narrative(self) -> None:
         class NarrativeDecisions(FakeDecisions):
             def __init__(self) -> None:
                 super().__init__(ModelDecision(intent="unused"))
@@ -292,7 +293,8 @@ class AgentRuntimeTest(unittest.TestCase):
             }
         ]
         result = AgentRuntime(graph).start(payload)
-        self.assertEqual(decisions.calls[:3], ["plan", "decide", "compose"])
+        self.assertEqual(decisions.calls[:2], ["decide", "compose"])
+        self.assertNotIn("plan", decisions.calls)
         self.assertEqual(result["task_contract"]["presentation_mode"], "narrative")
         self.assertEqual(result["task_contract"]["presentation_capabilities"], ["narrative"])
         self.assertEqual(result["task_contract"]["requested_fields"], [])
@@ -524,7 +526,7 @@ class AgentRuntimeTest(unittest.TestCase):
                     )
                 ).start({**payload, "run_id": "run-narrative-document-rounds-serial"})
                 serial_elapsed = time.perf_counter() - serial_started
-            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "2"}):
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "3"}):
                 parallel_started = time.perf_counter()
                 result = AgentRuntime(
                     build_graph(
@@ -548,13 +550,12 @@ class AgentRuntimeTest(unittest.TestCase):
             },
         )
         structured_batches.assert_not_called()
-        self.assertEqual(decisions.peak_active, 2)
+        self.assertEqual(decisions.peak_active, 3)
         self.assertLess(parallel_elapsed, serial_elapsed * 0.8)
-        self.assertGreater(len(decisions.composed_batches), 5)
-        self.assertLessEqual(len(decisions.composed_batches), 8)
+        self.assertEqual(len(decisions.composed_batches), 5)
         self.assertTrue(any(value.startswith("a1:r1:s") for value in decisions.composed_batches))
         self.assertTrue(any(value.startswith("a1:r5:s") for value in decisions.composed_batches))
-        self.assertTrue(all(size <= 10_200 for size in decisions.observation_sizes))
+        self.assertTrue(all(size <= 13_300 for size in decisions.observation_sizes))
         self.assertTrue(all(pages for pages in decisions.source_pages))
         generated = next(
             item["arguments"]
@@ -567,11 +568,11 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertIn("（来源：第5页）", generated["brief"])
         self.assertNotIn("table", generated)
         self.assertEqual(generated["slide_count"], generated["brief"].count("## ") + 2)
-        self.assertLess(generated["slide_count"], len(decisions.composed_batches) + 2)
+        self.assertLessEqual(generated["slide_count"], len(decisions.composed_batches) + 2)
         self.assertTrue(result["document_processing"]["complete"])
         self.assertTrue(result["document_processing"]["parallel"])
         self.assertEqual(result["document_processing"]["parallel_mode"], "narrative")
-        self.assertEqual(result["document_processing"]["concurrency"], 2)
+        self.assertEqual(result["document_processing"]["concurrency"], 3)
         self.assertEqual(
             result["document_processing"]["parallel_eligibility"],
             {
@@ -588,6 +589,64 @@ class AgentRuntimeTest(unittest.TestCase):
         trace_nodes = [event["node"] for event in result["node_trace"]]
         self.assertIn("fanout_composition", trace_nodes)
         self.assertIn("join_composition", trace_nodes)
+
+        class CachedNarrativeRoundDecisions(NarrativeRoundDecisions):
+            def model_manifest(self) -> dict[str, Any]:
+                return {
+                    "provider": "openrouter",
+                    "config_version": "composer-cache-test-v1",
+                    "pinned": True,
+                    "roles": {
+                        "composer": {
+                            "models": ["deepseek/deepseek-v4-flash-0731"]
+                        }
+                    },
+                }
+
+        cached_decisions = CachedNarrativeRoundDecisions()
+        cached_tools = NarrativeRoundTools(ToolPreparation(status="completed", tool_name=""))
+        with tempfile.TemporaryDirectory() as directory, (
+            patch.dict(
+                os.environ,
+                {
+                    "AGENT_MODEL_FANOUT_CONCURRENCY": "3",
+                    "WORKER_RESULT_CACHE_ENABLED": "true",
+                    "WORKER_RESULT_CACHE_DIR": directory,
+                },
+            )
+        ), patch(
+            "ai_companion_worker.agent_runtime.validate_artifact_observation",
+            return_value={
+                "policy_version": "test",
+                "applicable": True,
+                "passed": True,
+                "violations": [],
+            },
+        ), patch(
+            "ai_companion_worker.agent_runtime._presentation_structured_batches",
+            return_value=[incidental_structured_batch],
+        ):
+            cache_runtime = AgentRuntime(
+                build_graph(
+                    checkpointer=InMemorySaver(),
+                    decisions=cached_decisions,
+                    tools=cached_tools,
+                )
+            )
+            cache_runtime.start({**payload, "run_id": "run-composer-cache-first"})
+            first_call_count = len(cached_decisions.composed_batches)
+            cached_result = cache_runtime.start(
+                {**payload, "run_id": "run-composer-cache-retry"}
+            )
+
+        self.assertEqual(first_call_count, 5)
+        self.assertEqual(len(cached_decisions.composed_batches), first_call_count)
+        join_trace = next(
+            event
+            for event in reversed(cached_result["node_trace"])
+            if event["node"] == "join_composition" and event["status"] == "succeeded"
+        )
+        self.assertEqual(join_trace["details"]["cache_hit_count"], 5)
 
     def test_parallel_narrative_batches_coalesce_small_tail_in_source_order(self) -> None:
         source_batches = [
@@ -616,7 +675,7 @@ class AgentRuntimeTest(unittest.TestCase):
             [batch["batch_id"] for batch in source_batches],
         )
         self.assertIn("a1:r20:s1", batches[-1]["source_batch_ids"])
-        self.assertTrue(all(len(batch["processing_text"]) <= 10_200 for batch in batches))
+        self.assertTrue(all(len(batch["processing_text"]) <= 13_300 for batch in batches))
 
     def test_narrative_branch_contract_rejects_incomplete_model_output(self) -> None:
         job = {
@@ -753,6 +812,9 @@ class AgentRuntimeTest(unittest.TestCase):
         )
 
     def test_runtime_config_bounds_model_fanout_concurrency(self) -> None:
+        with patch.dict(os.environ):
+            os.environ.pop("AGENT_MODEL_FANOUT_CONCURRENCY", None)
+            self.assertEqual(runtime_config("run-fanout")["max_concurrency"], 3)
         with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "4"}):
             self.assertEqual(runtime_config("run-fanout")["max_concurrency"], 4)
         with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "5"}):
@@ -1005,7 +1067,7 @@ class AgentRuntimeTest(unittest.TestCase):
             decisions.peak_active = 0
             decisions.composed_batches.clear()
             tools.prepared.clear()
-            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "2"}):
+            with patch.dict(os.environ, {"AGENT_MODEL_FANOUT_CONCURRENCY": "3"}):
                 runtime = AgentRuntime(
                     build_graph(
                         checkpointer=InMemorySaver(),
@@ -1018,7 +1080,7 @@ class AgentRuntimeTest(unittest.TestCase):
                 elapsed_ms = (time.perf_counter() - started) * 1000
 
         self.assertEqual(result["outcome"], "completed")
-        self.assertEqual(decisions.peak_active, 2)
+        self.assertEqual(decisions.peak_active, 3)
         self.assertEqual(
             sorted(decisions.composed_batches),
             ["logical-entities:b1", "logical-entities:b2", "logical-entities:b3"],
@@ -1034,7 +1096,7 @@ class AgentRuntimeTest(unittest.TestCase):
         )
         self.assertTrue(result["document_processing"]["parallel"])
         self.assertTrue(result["document_processing"]["complete"])
-        self.assertEqual(result["document_processing"]["concurrency"], 2)
+        self.assertEqual(result["document_processing"]["concurrency"], 3)
         self.assertEqual(result["document_processing"]["parallel_mode"], "structured")
         self.assertLess(
             result["document_processing"]["wall_latency_ms"],
@@ -2155,11 +2217,11 @@ class AgentRuntimeTest(unittest.TestCase):
 
         self.assertEqual(
             [item["batch_id"] for item in batches],
-            ["a1:r1:s1", "a1:r1:s2", "a1:r1:s3"],
+            ["a1:r1:s1", "a1:r1:s2"],
         )
-        self.assertTrue(all(item["segment_count"] == 3 for item in batches))
-        self.assertTrue(all(len(item["text"]) <= 9_000 for item in batches))
-        self.assertTrue(all(item["token_count"] <= 1_400 for item in batches))
+        self.assertTrue(all(item["segment_count"] == 2 for item in batches))
+        self.assertTrue(all(len(item["text"]) <= 12_000 for item in batches))
+        self.assertTrue(all(item["token_count"] <= 2_000 for item in batches))
         for index in range(1, 121):
             code = f"PED{1100 + index}"
             self.assertEqual(sum(code in item["text"] for item in batches), 1)

@@ -17,10 +17,12 @@ from typing import Any
 from pypdf import PdfReader
 
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
+from ai_companion_worker.result_cache import load_json_result, store_json_result
 
 PARSER_VERSION = "pypdf-6.14.2-markdown-v4"
 TEXT_PARSER_VERSION = "text-markdown-v3"
 SOURCE_IR_VERSION = "document-source-ir-v1"
+DOCUMENT_PARSE_CACHE_VERSION = "document-parse-cache-v1"
 MAX_CHUNK_TOKENS = 800
 OVERLAP_TOKENS = 80
 MAX_PAGES = 1000
@@ -64,11 +66,17 @@ def parse_document(
     *,
     max_pages: int = MAX_PAGES,
 ) -> ParseResult:
+    normalized_data = normalize_pdf_bytes(data) if media_type == "application/pdf" else data
+    cache_key = _document_parse_cache_key(normalized_data, media_type, max_pages)
+    cached = load_json_result("document-parses", cache_key)
+    restored = _restore_parse_result(cached)
+    if restored is not None:
+        return restored
     if media_type == "application/pdf":
-        parser_version, pages = _parse_pdf(data, max_pages=max_pages)
+        parser_version, pages = _parse_pdf(normalized_data, max_pages=max_pages)
     elif media_type == "text/plain":
         parser_version = TEXT_PARSER_VERSION
-        pages = [_page(1, _normalize_markdown(data.decode("utf-8-sig")))]
+        pages = [_page(1, _normalize_markdown(normalized_data.decode("utf-8-sig")))]
     else:
         raise ValueError("unsupported_media_type")
     if not any(page.text.strip() for page in pages):
@@ -76,7 +84,87 @@ def parse_document(
     chunks = _chunk_pages(pages)
     if not chunks:
         raise ValueError("no_extractable_text")
-    return ParseResult(parser_version, pages, chunks, _build_source_ir(pages, chunks))
+    result = ParseResult(parser_version, pages, chunks, _build_source_ir(pages, chunks))
+    store_json_result("document-parses", cache_key, asdict(result))
+    return result
+
+
+def _document_parse_cache_key(data: bytes, media_type: str, max_pages: int) -> str:
+    backend = os.environ.get("PDF_PARSER_BACKEND", "auto").strip().lower()
+    docling_version = ""
+    if backend in {"auto", "docling"} and _docling_available():
+        try:
+            docling_version = importlib.metadata.version("docling")
+        except importlib.metadata.PackageNotFoundError:
+            docling_version = ""
+    identity = json.dumps(
+        {
+            "version": DOCUMENT_PARSE_CACHE_VERSION,
+            "media_type": media_type,
+            "max_pages": max_pages,
+            "backend": backend,
+            "pypdf_parser": PARSER_VERSION,
+            "text_parser": TEXT_PARSER_VERSION,
+            "source_ir": SOURCE_IR_VERSION,
+            "docling": docling_version,
+            "content_sha256": hashlib.sha256(data).hexdigest(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _restore_parse_result(value: Any) -> ParseResult | None:
+    if not isinstance(value, dict):
+        return None
+    raw_pages = value.get("pages")
+    raw_chunks = value.get("chunks")
+    source_ir = value.get("source_ir")
+    parser_version = value.get("parser_version")
+    if (
+        not isinstance(parser_version, str)
+        or not parser_version
+        or not isinstance(raw_pages, list)
+        or not isinstance(raw_chunks, list)
+        or not isinstance(source_ir, dict)
+        or source_ir.get("version") != SOURCE_IR_VERSION
+    ):
+        return None
+    try:
+        pages = [
+            Page(
+                page_no=int(item["page_no"]),
+                text=str(item["text"]),
+                quality=float(item["quality"]),
+                content_hash=str(item["content_hash"]),
+            )
+            for item in raw_pages
+            if isinstance(item, dict)
+        ]
+        chunks = [
+            Chunk(
+                ordinal=int(item["ordinal"]),
+                page_start=int(item["page_start"]),
+                page_end=int(item["page_end"]),
+                section_path=str(item["section_path"]),
+                content=str(item["content"]),
+                token_count=int(item["token_count"]),
+                content_hash=str(item["content_hash"]),
+            )
+            for item in raw_chunks
+            if isinstance(item, dict)
+        ]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(pages) != len(raw_pages) or len(chunks) != len(raw_chunks) or not pages or not chunks:
+        return None
+    if any(page.page_no <= 0 or not page.content_hash for page in pages):
+        return None
+    if any(chunk.ordinal <= 0 or chunk.token_count <= 0 or not chunk.content_hash for chunk in chunks):
+        return None
+    return ParseResult(parser_version, pages, chunks, dict(source_ir))
 
 
 def count_tokens(value: str) -> int:

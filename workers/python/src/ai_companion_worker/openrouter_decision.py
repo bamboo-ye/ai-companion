@@ -44,6 +44,7 @@ _PRESENTATION_TOOLS = frozenset(
 )
 _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
 _PRESENTATION_SUBTOOLS = frozenset(("work_generate_table_pptx", "work_generate_visual_pptx"))
+_MAX_COMPOSER_CONTRACT_BREAKER_SCOPES = 256
 
 
 def _presentation_capabilities(context: Mapping[str, Any]) -> tuple[str, ...]:
@@ -457,6 +458,8 @@ class OpenRouterDecisionPort:
         self._config = config
         self._monotonic = monotonic
         self._observability_local = threading.local()
+        self._composer_contract_breaker_lock = threading.Lock()
+        self._composer_contract_breakers: dict[str, set[str]] = {}
 
     @classmethod
     def from_env(cls) -> OpenRouterDecisionPort:
@@ -1124,12 +1127,14 @@ class OpenRouterDecisionPort:
             "composer",
         )
         model_order = self._config.models_for("composer")
+        circuit_scope = str(context.get("composer_circuit_scope") or "").strip()
         raw_exclusions = context.get("composer_model_exclusions")
         exclusions = (
             {str(value) for value in raw_exclusions if str(value)}
             if isinstance(raw_exclusions, list)
             else set()
         )
+        exclusions.update(self._composer_contract_exclusions(circuit_scope))
         if exclusions:
             healthy_order = tuple(model for model in model_order if model not in exclusions)
             if healthy_order:
@@ -1155,6 +1160,7 @@ class OpenRouterDecisionPort:
             role="composer",
             max_attempts=max_attempts,
             model_order=model_order,
+            circuit_scope=circuit_scope,
             argument_contract=lambda value: _validated_composer_arguments(
                 tool_name,
                 value,
@@ -1534,6 +1540,7 @@ class OpenRouterDecisionPort:
         role: str,
         max_attempts: int,
         model_order: tuple[str, ...] | None = None,
+        circuit_scope: str = "",
         argument_contract: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         last_error: OpenRouterError | None = None
@@ -1542,6 +1549,8 @@ class OpenRouterDecisionPort:
             max_attempts=max_attempts,
             model_order=model_order,
         ):
+            if role == "composer" and model in self._composer_contract_exclusions(circuit_scope):
+                continue
             attempt = self._attempt_payload(
                 payload,
                 role=role,
@@ -1563,6 +1572,8 @@ class OpenRouterDecisionPort:
                 return name, arguments
             except OpenRouterError as exc:
                 self._annotate_latest_contract_error(exc)
+                if role == "composer" and exc.status_code == 0:
+                    self._open_composer_contract_breaker(circuit_scope, model)
                 last_error = exc
                 # Authentication and authorization failures apply to every
                 # model. Other 4xx responses can be model-specific (for
@@ -1573,6 +1584,36 @@ class OpenRouterDecisionPort:
         if last_error is not None:
             raise last_error
         raise OpenRouterError("OpenRouter model fallback list is empty")
+
+    def _composer_contract_exclusions(self, scope: str) -> set[str]:
+        if not scope:
+            return set()
+        with self._composer_contract_breaker_lock:
+            return set(self._composer_contract_breakers.get(scope, set()))
+
+    def _open_composer_contract_breaker(self, scope: str, model: str) -> None:
+        if not scope or not model:
+            return
+        events = self._observability_buffer()
+        if not events:
+            return
+        latest = events[-1]
+        if (
+            latest.get("kind") != "model_call"
+            or latest.get("status") != "succeeded"
+            or latest.get("contract_valid") is not False
+        ):
+            return
+        with self._composer_contract_breaker_lock:
+            self._composer_contract_breakers.setdefault(scope, set()).add(model)
+            while (
+                len(self._composer_contract_breakers)
+                > _MAX_COMPOSER_CONTRACT_BREAKER_SCOPES
+            ):
+                oldest_scope = next(iter(self._composer_contract_breakers))
+                self._composer_contract_breakers.pop(oldest_scope, None)
+        latest["contract_circuit_opened"] = True
+        latest["contract_circuit_scope"] = scope
 
     def _json_object_with_fallback(
         self,
