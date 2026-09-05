@@ -85,18 +85,38 @@ The PDF translation tool is an independently persisted Skill Run, so its model u
 
 ## Node and recovery contract
 
-Graph version `3.62.0` makes presentation capability selection a planner-owned
-semantic decision. Work-module PPT requests now enter `plan` before routing. The
-planner returns a composable capability set containing `narrative` and, only
-when required, `table` and/or `visual`; the Harness then refines the task
-contract without allowing the
-model to relax source, language, exhaustiveness, or artifact requirements.
-Structured large-document composition uses LangGraph `Send` fan-out/fan-in for
-independent logical-entity batches. `AGENT_MODEL_FANOUT_CONCURRENCY` defaults to
-`2` and is capped at `4`; free-text and focused batches remain serial and are
-bounded before Composer dispatch because their composition can depend on
-previously merged context. Narrative batches merge Markdown slide sections in
-source order and deterministically recalculate the final slide count. Before rendering,
+Graph version `3.69.0` routes before planning. A trusted single-action tool can
+therefore bypass the Planner, while repeatable, multi-step and explicit
+`requires_plan` tools still enter the Planner after the exact action is known.
+The Supervisor establishes deterministic narrative/table/visual defaults first;
+a later plan may refine ambiguous intent but cannot relax source, language,
+exhaustiveness or artifact requirements.
+
+Structured and narrative large-document composition use LangGraph `Send`
+fan-out/fan-in for independent source batches.
+`AGENT_MODEL_FANOUT_CONCURRENCY` now defaults to `3` and remains capped at `4`.
+Adjacent narrative shards are coalesced up to the configured 2,000-token and
+12,000-source-character limits before dispatch, then merged in source order with
+a deterministic final slide count. Successful Composer branch arguments are
+cached by source content, task/tool/model contracts and conversation for 30
+minutes by default, so an exact retry reuses completed branches without another
+model call. Parsed documents, extracted source visuals and generated images use
+the same bounded, private, atomic disk cache.
+
+The Composer decision port has a processing-scope structured-capability circuit
+breaker. Once a model returns a response whose tool call or arguments violate
+the Composer contract, queued and later batches in that same document scope
+skip that model immediately. In-flight calls already admitted by the concurrency
+window are allowed to settle. Transport, timeout and authentication failures do
+not open this breaker; the existing two-timeout recovery policy remains
+independent.
+
+Presentation visual policy `presentation-visuals-v2` first places trusted PDF
+images only on topics citing the same source page. When the configured number
+of topic slots is covered by source material, AI image generation is skipped.
+Otherwise each required image is an independent minimal generator call, bounded
+by `MODEL_PRESENTATION_IMAGE_CONCURRENCY`, and all calls run in parallel before
+deterministic placement. Before rendering,
 the narrative finalizer removes narrowly recognized production-only illustration
 notes, folds adjacent two-fact sections only when they cite an overlapping source
 page, and preserves the folded heading in the visible bullet text. Source PDF

@@ -30,7 +30,6 @@ from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Inches, Pt
-from PIL import Image
 from ai_companion_worker.document_parser import ParseResult, count_tokens, parse_document
 from ai_companion_worker.pdf_translation_layout import (
     PdfLayout,
@@ -38,6 +37,12 @@ from ai_companion_worker.pdf_translation_layout import (
     extract_pdf_layout,
     render_layout_translation,
 )
+from ai_companion_worker.presentation_images import (
+    PresentationImageConfig,
+    generate_presentation_visual,
+    normalize_visual_image,
+)
+from ai_companion_worker.result_cache import load_json_result, store_json_result
 from ai_companion_worker.task_quality import (
     presentation_audience_content_violations,
     presentation_exhaustive_scope_violations,
@@ -66,7 +71,6 @@ MAX_PRESENTATION_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_PRESENTATION_SOURCE_DOCUMENTS = 3
 MAX_PRESENTATION_SOURCE_VISUALS = 12
 MAX_PRESENTATION_VISUAL_BYTES = 2 * 1024 * 1024
-MAX_PRESENTATION_IMAGE_RESPONSE_BYTES = 12 * 1024 * 1024
 MAX_PRESENTATION_IMAGE_COST_MICROS = 250_000
 PRESENTATION_DISPLAY_CELL_CHARS = 42
 PRESENTATION_ROWS_PER_SLIDE = 6
@@ -1748,7 +1752,7 @@ def _presentation_visuals(
         return (
             [None] * len(topics),
             {
-                "policy_version": "presentation-visuals-v1",
+                "policy_version": "presentation-visuals-v2",
                 "mode": "outline",
                 "requested_slot_count": len(topics),
                 "source_document_count": 0,
@@ -1758,7 +1762,13 @@ def _presentation_visuals(
                 "source_visual_count": 0,
                 "fallback_text_only_count": 0,
                 "generation_attempt_count": 0,
+                "generation_cache_hit_count": 0,
                 "generation_errors": [],
+                "generation_skipped_reason": "outline_only",
+                "source_material_sufficient": False,
+                "source_sufficiency_required_count": (
+                    _presentation_source_sufficiency_required_count(len(topics))
+                ),
             },
             empty_usage,
         )
@@ -1787,6 +1797,11 @@ def _presentation_visuals(
         if matching_index is not None:
             assignments[index] = unused_visuals.pop(matching_index)
 
+    source_visual_count = sum(
+        visual is not None and visual.get("kind") == "source" for visual in assignments
+    )
+    required_source_count = _presentation_source_sufficiency_required_count(len(topics))
+    source_sufficient = bool(source_documents) and source_visual_count >= required_source_count
     usages: list[dict[str, Any]] = []
     generation_errors: list[str] = []
     generation_attempts = 0
@@ -1800,44 +1815,58 @@ def _presentation_visuals(
     can_generate = (
         mode == "auto"
         and allow_generated
+        and not source_sufficient
         and bool(model)
         and os.environ.get("MODEL_PROVIDER", "development").strip().lower() == "openrouter"
         and bool(os.environ.get("MODEL_API_KEY", "").strip())
     )
     if can_generate:
-        for index, topic in enumerate(topics):
-            if assignments[index] is not None:
-                continue
-            if generated_count >= maximum_generated or generation_attempts >= maximum_generated:
-                break
-            used_cost = sum(_non_negative_int(item.get("cost_micros")) for item in usages)
-            remaining_cost = cost_limit - used_cost
-            if remaining_cost <= 0:
-                generation_errors.append("presentation_image_budget_exhausted")
-                break
-            generation_attempts += 1
-            try:
-                visual, usage = _openrouter_generate_presentation_visual(
-                    topic,
-                    remaining_cost_micros=remaining_cost,
-                )
-            except Exception as exc:
-                code = str(exc).strip()
-                generation_errors.append(
-                    code if code.startswith("presentation_image_") else "presentation_image_failed"
-                )
-                continue
-            assignments[index] = visual
-            usages.append(usage)
-            generated_count += 1
+        candidates = [
+            (index, topic)
+            for index, topic in enumerate(topics)
+            if assignments[index] is None
+        ][:maximum_generated]
+        generation_attempts = len(candidates)
+        if candidates:
+            reserved_cost = max(1, cost_limit // len(candidates))
+            concurrency = min(_presentation_image_concurrency(), len(candidates))
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = {
+                    index: executor.submit(
+                        _openrouter_generate_presentation_visual,
+                        topic,
+                        remaining_cost_micros=reserved_cost,
+                    )
+                    for index, topic in candidates
+                }
+                # Await in source order so assignments, usage records and
+                # error reports remain deterministic while calls run in parallel.
+                for index, _topic in candidates:
+                    try:
+                        visual, usage = futures[index].result()
+                    except Exception as exc:
+                        code = str(exc).strip()
+                        generation_errors.append(
+                            code
+                            if code.startswith("presentation_image_")
+                            else "presentation_image_failed"
+                        )
+                        continue
+                    assignments[index] = visual
+                    usages.append(usage)
+                    generated_count += 1
 
-    source_visual_count = sum(
-        visual is not None and visual.get("kind") == "source" for visual in assignments
-    )
     placed_count = sum(visual is not None for visual in assignments)
     fallback_count = sum(visual is None for visual in assignments) if mode != "none" else 0
+    skipped_reason = ""
+    if source_sufficient and mode == "auto" and allow_generated:
+        skipped_reason = "source_material_sufficient"
+    elif mode == "source_only":
+        skipped_reason = "source_only"
+    elif mode == "none":
+        skipped_reason = "visuals_disabled"
     report = {
-        "policy_version": "presentation-visuals-v1",
+        "policy_version": "presentation-visuals-v2",
         "mode": mode,
         "requested_slot_count": len(topics),
         "source_document_count": len(source_documents),
@@ -1847,7 +1876,13 @@ def _presentation_visuals(
         "source_visual_count": source_visual_count,
         "fallback_text_only_count": fallback_count,
         "generation_attempt_count": generation_attempts,
+        "generation_cache_hit_count": sum(
+            usage.get("cache_hit") is True for usage in usages
+        ),
         "generation_errors": list(dict.fromkeys(generation_errors))[:8],
+        "generation_skipped_reason": skipped_reason,
+        "source_material_sufficient": source_sufficient,
+        "source_sufficiency_required_count": required_source_count,
     }
     return assignments, report, _presentation_visual_model_usage(usages, cost_limit, model)
 
@@ -1884,6 +1919,42 @@ def _presentation_source_documents(value: Any) -> list[dict[str, Any]]:
 
 
 def _extract_pdf_presentation_visuals(document: dict[str, Any]) -> list[dict[str, Any]]:
+    cache_key = hashlib.sha256(
+        b"presentation-source-visuals-v2\0" + document["data"]
+    ).hexdigest()
+    cached = load_json_result("presentation-source-visuals", cache_key)
+    if isinstance(cached, list):
+        restored: list[dict[str, Any]] = []
+        cache_valid = True
+        for item in cached:
+            if not isinstance(item, Mapping):
+                cache_valid = False
+                break
+            try:
+                data = base64.b64decode(str(item["data_base64"]), validate=True)
+                source_page = int(item["source_page"])
+                width = int(item["width"])
+                height = int(item["height"])
+            except (KeyError, TypeError, ValueError):
+                cache_valid = False
+                break
+            if not data or source_page <= 0 or width <= 0 or height <= 0:
+                cache_valid = False
+                break
+            restored.append(
+                {
+                    "kind": "source",
+                    "data": data,
+                    "media_type": str(item.get("media_type") or "image/jpeg"),
+                    "width": width,
+                    "height": height,
+                    "source_filename": document["filename"],
+                    "source_page": source_page,
+                    "source_locator": f"{document['filename']} · 第 {source_page} 页",
+                }
+            )
+        if cache_valid:
+            return restored
     pdf = pymupdf.open(stream=document["data"], filetype="pdf")
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1945,6 +2016,20 @@ def _extract_pdf_presentation_visuals(document: dict[str, Any]) -> list[dict[str
         pdf.close()
     for candidate in candidates:
         candidate.pop("score", None)
+    store_json_result(
+        "presentation-source-visuals",
+        cache_key,
+        [
+            {
+                "data_base64": base64.b64encode(candidate["data"]).decode("ascii"),
+                "media_type": candidate["media_type"],
+                "width": candidate["width"],
+                "height": candidate["height"],
+                "source_page": candidate["source_page"],
+            }
+            for candidate in candidates
+        ],
+    )
     return candidates
 
 
@@ -1953,113 +2038,30 @@ def _openrouter_generate_presentation_visual(
     *,
     remaining_cost_micros: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    base_url = os.environ.get("MODEL_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
-    if base_url != "https://openrouter.ai/api/v1":
-        raise ValueError("presentation_image_endpoint_is_invalid")
-    api_key = os.environ.get("MODEL_API_KEY", "").strip()
-    model = os.environ.get("MODEL_PRESENTATION_IMAGE_NAME", "").strip()
-    if not api_key or not model or _dynamic_model(model):
-        raise ValueError("presentation_image_model_is_not_configured")
-    title = re.sub(r"\s+", " ", str(topic.get("title") or "")).strip()[:160]
-    bullets = [
-        re.sub(r"\s+", " ", str(value or "")).strip()[:220]
-        for value in topic.get("bullets", [])
-        if str(value or "").strip()
-    ][:4]
-    prompt = (
-        "Create one clean 16:9 editorial presentation illustration. "
-        "Use a coherent professional visual metaphor, realistic or polished 3D style, "
-        "ample negative space, and no words, letters, numerals, logos, watermarks, UI, "
-        f"or decorative borders. Topic: {title}. Context: {'; '.join(bullets)}"
+    return generate_presentation_visual(
+        topic,
+        config=PresentationImageConfig.from_env(),
+        reserved_cost_micros=remaining_cost_micros,
     )
-    body = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "n": 1,
-            "aspect_ratio": "16:9",
-            "quality": "medium",
-            "output_format": "jpeg",
-            "output_compression": 84,
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        base_url + "/images",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-            "HTTP-Referer": os.environ.get("MODEL_HTTP_REFERER", "http://localhost:3000"),
-            "X-OpenRouter-Title": os.environ.get("MODEL_APP_TITLE", "伴AI"),
-        },
-    )
-    started_ns = time.perf_counter_ns()
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = response.read(MAX_PRESENTATION_IMAGE_RESPONSE_BYTES + 1)
-    except urllib.error.HTTPError as exc:
-        raise ValueError(f"presentation_image_http_{exc.code}") from exc
-    except Exception as exc:
-        raise ValueError("presentation_image_request_failed") from exc
-    latency_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
-    if len(raw) > MAX_PRESENTATION_IMAGE_RESPONSE_BYTES:
-        raise ValueError("presentation_image_response_too_large")
-    try:
-        response_payload = json.loads(raw)
-        image_item = response_payload["data"][0]
-        image_data = base64.b64decode(image_item["b64_json"], validate=True)
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("presentation_image_response_invalid") from exc
-    image_data, media_type, width, height = _normalize_presentation_visual_image(image_data)
-    usage = response_payload.get("usage")
-    usage = usage if isinstance(usage, dict) else {}
-    reported_cost = _reported_cost_micros(usage.get("cost"))
-    cost_micros = reported_cost if reported_cost is not None else remaining_cost_micros
-    return {
-        "kind": "generated",
-        "data": image_data,
-        "media_type": media_type,
-        "width": width,
-        "height": height,
-        "model": model,
-        "prompt": prompt,
-        "source_locator": "AI 生成配图",
-    }, {
-        "provider": "openrouter",
-        "requested_model": model,
-        "returned_model": str(response_payload.get("model") or model),
-        "upstream_provider": str(response_payload.get("provider") or ""),
-        "prompt_tokens": _non_negative_int(usage.get("prompt_tokens")),
-        "completion_tokens": _non_negative_int(usage.get("completion_tokens")),
-        "cost_micros": cost_micros,
-        "cost_accounting": "reported" if reported_cost is not None else "reserved_upper_bound",
-        "latency_ms": latency_ms,
-    }
 
 
 def _normalize_presentation_visual_image(data: bytes) -> tuple[bytes, str, int, int]:
-    try:
-        with Image.open(io.BytesIO(data)) as image:
-            width, height = image.size
-            if width < 320 or height < 180 or width * height > 25_000_000:
-                raise ValueError("presentation_image_dimensions_are_invalid")
-            image.load()
-            image_format = str(image.format or "").upper()
-            if image_format in {"JPEG", "PNG"} and len(data) <= MAX_PRESENTATION_VISUAL_BYTES:
-                return data, "image/jpeg" if image_format == "JPEG" else "image/png", width, height
-            converted = image.convert("RGB")
-            output = io.BytesIO()
-            converted.save(output, format="JPEG", quality=84, optimize=True)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError("presentation_image_is_invalid") from exc
-    normalized = output.getvalue()
-    if len(normalized) > MAX_PRESENTATION_VISUAL_BYTES:
-        raise ValueError("presentation_image_is_too_large")
-    return normalized, "image/jpeg", width, height
+    return normalize_visual_image(data)
+
+
+def _presentation_source_sufficiency_required_count(topic_count: int) -> int:
+    if topic_count <= 0:
+        return 0
+    configured = _bounded_positive_int(
+        "MODEL_PRESENTATION_SOURCE_SUFFICIENT_COUNT",
+        4,
+        MAX_PRESENTATION_SOURCE_VISUALS,
+    )
+    return min(topic_count, configured)
+
+
+def _presentation_image_concurrency() -> int:
+    return _bounded_positive_int("MODEL_PRESENTATION_IMAGE_CONCURRENCY", 2, 4)
 
 
 def _presentation_image_cost_limit() -> int:
@@ -2103,8 +2105,12 @@ def _presentation_visual_model_usage(
         ),
         "cost_micros": sum(_non_negative_int(item.get("cost_micros")) for item in usages),
         "cost_accounting": (
-            "reported"
-            if usages and all(item.get("cost_accounting") == "reported" for item in usages)
+            "cache_hit"
+            if usages and all(item.get("cost_accounting") == "cache_hit" for item in usages)
+            else "reported"
+            if usages and all(
+                item.get("cost_accounting") in {"reported", "cache_hit"} for item in usages
+            )
             else "reserved_upper_bound"
             if usages
             else "none"
@@ -2112,6 +2118,7 @@ def _presentation_visual_model_usage(
         "latency_ms": sum(_non_negative_int(item.get("latency_ms")) for item in usages),
         "max_cost_micros": cost_limit,
         "round_count": len(usages),
+        "cache_hit_count": sum(item.get("cache_hit") is True for item in usages),
     }
 
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from pypdf import PdfReader, PdfWriter
 
@@ -65,6 +68,24 @@ class DocumentParserTest(unittest.TestCase):
         self.assertGreater(len(result.chunks), 1)
         self.assertTrue(all(chunk.token_count <= MAX_CHUNK_TOKENS for chunk in result.chunks))
         self.assertGreater(sum(chunk.token_count for chunk in result.chunks), 1_000)
+
+    def test_parse_result_is_reused_across_subprocess_retry_cache(self) -> None:
+        source = "缓存验证：同一份文档在重试时不应重新分片。".encode()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "WORKER_RESULT_CACHE_ENABLED": "true",
+                "WORKER_RESULT_CACHE_DIR": directory,
+            },
+        ):
+            first = parse_document(source, "text/plain")
+            with patch(
+                "ai_companion_worker.document_parser._chunk_pages",
+                side_effect=AssertionError("cache miss"),
+            ):
+                second = parse_document(source, "text/plain")
+
+        self.assertEqual(second, first)
 
     def test_heading_context_carries_across_page_boundaries(self) -> None:
         chunks = _chunk_pages(

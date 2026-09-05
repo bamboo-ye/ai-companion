@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -23,6 +24,11 @@ from ai_companion_worker.email_quality import (
     validate_email_arguments,
 )
 from ai_companion_worker.response_quality import inspect_and_repair_response
+from ai_companion_worker.result_cache import (
+    delete_json_result,
+    load_json_result,
+    store_json_result,
+)
 from ai_companion_worker.task_quality import (
     apply_planned_task_intent,
     artifact_observation_applicable,
@@ -122,6 +128,10 @@ def _presentation_capabilities(value: Mapping[str, Any]) -> tuple[str, ...]:
         if mode in ("structured_table", "composed"):
             capabilities.append("table")
         if mode in ("illustrated", "composed"):
+            capabilities.append("visual")
+        if value.get("table_requested") is True and "table" not in capabilities:
+            capabilities.append("table")
+        if value.get("visual_requested") is True and "visual" not in capabilities:
             capabilities.append("visual")
     if "narrative" not in capabilities:
         capabilities.insert(0, "narrative")
@@ -447,7 +457,7 @@ def runtime_config(run_id: str) -> dict[str, Any]:
 
 
 def _model_fanout_concurrency() -> int:
-    raw = os.environ.get("AGENT_MODEL_FANOUT_CONCURRENCY", "2").strip()
+    raw = os.environ.get("AGENT_MODEL_FANOUT_CONCURRENCY", "3").strip()
     try:
         value = int(raw)
     except ValueError as exc:
@@ -879,10 +889,55 @@ def _presentation_source_locator(cells: list[str], state: AgentState) -> str:
 
 _DOCUMENT_ROUND_MARKER = re.compile(r"(?m)^\[\[DOCUMENT ROUND (?P<round>\d+)\]\]\s*$")
 _DOCUMENT_PROCESSING_OVERLAP_CHARS = 1_200
-_DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 1_400
-_DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 9_000
-_PARALLEL_NARRATIVE_BATCH_MAX_CHARS = 8_800
+_DOCUMENT_COMPOSER_BATCH_MAX_TOKENS = 2_000
+_DOCUMENT_COMPOSER_BATCH_MAX_CHARS = 12_000
+_PARALLEL_NARRATIVE_BATCH_MAX_CHARS = 12_000
 _PARALLEL_NARRATIVE_MAX_BATCHES = 12
+_COMPOSER_RESULT_CACHE_VERSION = "composer-result-cache-v1"
+
+
+def _bounded_composer_batch_limit(
+    name: str,
+    fallback: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else fallback
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _document_composer_batch_max_tokens() -> int:
+    return _bounded_composer_batch_limit(
+        "AGENT_COMPOSER_SOURCE_BATCH_MAX_TOKENS",
+        _DOCUMENT_COMPOSER_BATCH_MAX_TOKENS,
+        minimum=800,
+        maximum=2_400,
+    )
+
+
+def _document_composer_batch_max_chars() -> int:
+    return _bounded_composer_batch_limit(
+        "AGENT_COMPOSER_SOURCE_BATCH_MAX_CHARS",
+        _DOCUMENT_COMPOSER_BATCH_MAX_CHARS,
+        minimum=6_000,
+        maximum=16_000,
+    )
+
+
+def _parallel_narrative_batch_max_chars() -> int:
+    return _bounded_composer_batch_limit(
+        "AGENT_COMPOSER_NARRATIVE_BATCH_MAX_CHARS",
+        _PARALLEL_NARRATIVE_BATCH_MAX_CHARS,
+        minimum=6_000,
+        maximum=16_000,
+    )
 _PARALLEL_COMPOSITION_MAX_RETRY_ROUNDS = 1
 _STRUCTURED_COMPOSER_BATCH_MAX_CHARS = 10_000
 _STRUCTURED_COMPOSER_BATCH_MAX_ROWS = 12
@@ -1096,13 +1151,13 @@ def _split_document_round_for_composer(text: str, token_count: int) -> list[str]
     normalized = text.strip()
     if not normalized:
         return []
-    max_characters = _DOCUMENT_COMPOSER_BATCH_MAX_CHARS
+    max_characters = _document_composer_batch_max_chars()
     if token_count > 0:
         max_characters = min(
             max_characters,
             max(
                 1,
-                (_DOCUMENT_COMPOSER_BATCH_MAX_TOKENS * len(normalized)) // token_count,
+                (_document_composer_batch_max_tokens() * len(normalized)) // token_count,
             ),
         )
     if len(normalized) <= max_characters:
@@ -1278,7 +1333,7 @@ def _coalesce_parallel_narrative_batches(
         )
         joined_characters = active_characters + (2 if active else 0) + len(text)
         if active and (
-            source != active_source or joined_characters > _PARALLEL_NARRATIVE_BATCH_MAX_CHARS
+            source != active_source or joined_characters > _parallel_narrative_batch_max_chars()
         ):
             grouped.append(active)
             active = []
@@ -3178,6 +3233,16 @@ def _supervise(
     context = state.get("context", {})
     catalog = context.get("tools", []) if isinstance(context, dict) else []
     catalog_fingerprint = tool_catalog_fingerprint(catalog)
+    task_contract = compile_task_contract(
+        state["user_message"],
+        state["module"],
+        context.get("history") if isinstance(context, dict) else None,
+    )
+    # Establish deterministic presentation defaults before routing. A model
+    # Planner may still refine ambiguous multi-step requests, while a trusted
+    # single-action tool no longer pays for a planning call merely to select
+    # the narrative/table/visual fallback already present in the contract.
+    task_contract = apply_planned_task_intent(task_contract, {})
     return {
         "graph_name": GRAPH_NAME,
         "graph_version": GRAPH_VERSION,
@@ -3187,11 +3252,7 @@ def _supervise(
         "pending_task_id": "",
         "task_polls": 0,
         "assessment": {},
-        "task_contract": compile_task_contract(
-            state["user_message"],
-            state["module"],
-            context.get("history") if isinstance(context, dict) else None,
-        ),
+        "task_contract": task_contract,
         "artifact_validation": {},
         "document_processing": {},
         "composition_plan": {},
@@ -3246,17 +3307,9 @@ def _supervise(
 
 
 def _after_supervisor(state: AgentState) -> str:
-    task_contract = state.get("task_contract")
-    artifact_types = (
-        task_contract.get("artifact_types") if isinstance(task_contract, Mapping) else None
-    )
-    if (
-        state.get("module") == "work"
-        and isinstance(artifact_types, list)
-        and "pptx" in artifact_types
-        and not state.get("plan")
-    ):
-        return "plan"
+    # Route first so a trusted single-action tool can bypass the Planner.
+    # Multi-step, repeatable and explicit requires_plan tools still enter the
+    # Planner through after_decision once the exact tool is known.
     return state["module"]
 
 
@@ -3958,18 +4011,26 @@ def build_graph(
             base_arguments["mapping_contract"] = structural_mapping
         processing_key = canonical_arguments_hash(
             {
-                "version": "document-processing-fanout-v3",
+                "version": "document-processing-fanout-v4",
                 "tool_name": tool_name,
                 "mode": mode,
                 "rewrite_attempt": rewrite_attempt,
-                "batches": [batch.get("batch_id") for batch in batches],
+                "batches": [
+                    {
+                        "batch_id": batch.get("batch_id"),
+                        "content_sha256": hashlib.sha256(
+                            str(batch.get("processing_text") or "").encode("utf-8")
+                        ).hexdigest(),
+                    }
+                    for batch in batches
+                ],
             }
         )
         return {
             "eligible": True,
             "reason": "independent_batches",
             "mode": mode,
-            "version": "composer-fanout-v3",
+            "version": "composer-fanout-v4",
             "processing_key": processing_key,
             "tool_name": tool_name,
             "rewrite_attempt": rewrite_attempt,
@@ -4046,7 +4107,7 @@ def build_graph(
             "composition_plan": plan,
             "composition_results": [{"reset": True}],
             "document_processing": {
-                "version": "document-processing-fanout-v3",
+                "version": "document-processing-fanout-v4",
                 "processing_key": spec["processing_key"],
                 "tool_name": spec["tool_name"],
                 "parallel_mode": spec["mode"],
@@ -4136,6 +4197,9 @@ def build_graph(
         context["previous_arguments"] = _composer_previous_arguments(base_arguments)
         context["previous_merged_record_count"] = 0
         context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
+        context["composer_circuit_scope"] = (
+            f"{state['run_id']}:{str(spec.get('processing_key') or '')}"
+        )
         structural_mapping = spec.get("structural_mapping")
         if isinstance(structural_mapping, Mapping) and structural_mapping:
             context["locked_mapping_contract"] = dict(structural_mapping)
@@ -4163,7 +4227,7 @@ def build_graph(
             ],
         }
         context["document_processing_round"] = {
-            "version": "document-processing-fanout-v3",
+            "version": "document-processing-fanout-v4",
             "batch_id": batch.get("batch_id"),
             "source_batch_ids": list(batch.get("source_batch_ids") or []),
             "round_number": batch_index + 1,
@@ -4212,12 +4276,40 @@ def build_graph(
             allocation = allocations[index]
             if batch is None or not isinstance(allocation, Mapping):
                 raise ValueError("parallel Composer batch plan is invalid")
+            composition_context = parallel_composition_context(
+                state,
+                plan,
+                batch,
+                index,
+                allocation,
+            )
+            cache_key = canonical_arguments_hash(
+                {
+                    "version": _COMPOSER_RESULT_CACHE_VERSION,
+                    "graph_version": GRAPH_VERSION,
+                    "user_id": state["user_id"],
+                    "conversation_id": state["conversation_id"],
+                    "message": state["user_message"],
+                    "tool_name": plan["tool_name"],
+                    "batch_id": batch_id,
+                    "batch_content_sha256": hashlib.sha256(
+                        str(batch.get("processing_text") or "").encode("utf-8")
+                    ).hexdigest(),
+                    "task_contract": state.get("task_contract", {}),
+                    "previous_arguments": composition_context.get("previous_arguments", {}),
+                    "model_manifest_fingerprint": state.get("model_manifest", {}).get(
+                        "fingerprint", ""
+                    ),
+                    "tool_catalog_fingerprint": state.get("tool_catalog_fingerprint", ""),
+                    "rewrite_attempt": plan.get("rewrite_attempt", 0),
+                }
+            )
             sends.append(
                 Send(
                     "compose_document_batch",
                     {
                         "composition_job": {
-                            "version": "composer-fanout-job-v3",
+                            "version": "composer-fanout-job-v4",
                             "processing_key": plan["processing_key"],
                             "batch_index": index,
                             "batch_count": len(batch_ids),
@@ -4226,14 +4318,10 @@ def build_graph(
                             "module": state["module"],
                             "message": state["user_message"],
                             "tool_name": plan["tool_name"],
-                            "context": parallel_composition_context(
-                                state,
-                                plan,
-                                batch,
-                                index,
-                                allocation,
-                            ),
+                            "context": composition_context,
                             "allocation": dict(allocation),
+                            "cache_key": cache_key,
+                            "cache_enabled": manifest.get("provider") == "openrouter",
                         }
                     },
                 )
@@ -4281,15 +4369,57 @@ def build_graph(
 
     def compose_document_batch(state: AgentState) -> dict[str, Any]:
         job = state.get("composition_job", {})
-        if job.get("version") != "composer-fanout-job-v3":
+        if job.get("version") != "composer-fanout-job-v4":
             raise ValueError("parallel Composer job version is invalid")
         composer = getattr(decisions, "compose_arguments", None)
         if not callable(composer):
             raise ValueError("decision port must implement compose_arguments for marked tools")
         started_ns = time.perf_counter_ns()
         batch_id = str(job.get("batch_id") or "")
+        cache_key = str(job.get("cache_key") or "")
         error: dict[str, Any] = {}
         arguments: dict[str, Any] = {}
+        if job.get("cache_enabled") is True and cache_key:
+            cached = load_json_result("composer-results", cache_key)
+            cached_arguments = cached.get("arguments") if isinstance(cached, Mapping) else None
+            if isinstance(cached_arguments, Mapping):
+                arguments = dict(cached_arguments)
+                try:
+                    _validate_parallel_composition_arguments(arguments, job)
+                except Exception:
+                    arguments = {}
+                    delete_json_result("composer-results", cache_key)
+                else:
+                    return {
+                        "composition_results": [
+                            {
+                                "version": "composer-fanout-result-v4",
+                                "processing_key": job["processing_key"],
+                                "batch_index": int(job["batch_index"]),
+                                "batch_id": batch_id,
+                                "retry_round": int(job.get("retry_round") or 0),
+                                "arguments": arguments,
+                                "events": [
+                                    {
+                                        "kind": "cache_hit",
+                                        "role": "composer",
+                                        "status": "succeeded",
+                                        "graph_node": "compose_document_batch",
+                                        "batch_id": batch_id,
+                                        "processing_key": job["processing_key"],
+                                        "branch_retry_attempt": int(
+                                            job.get("retry_round") or 0
+                                        ),
+                                        "cache_key": cache_key,
+                                    }
+                                ],
+                                "allocation": dict(job.get("allocation", {})),
+                                "elapsed_ms": _elapsed_ms(started_ns),
+                                "cache_hit": True,
+                                "error": {},
+                            }
+                        ]
+                    }
         try:
             composed = composer(
                 module=cast(ModuleKey, job["module"]),
@@ -4348,10 +4478,16 @@ def build_graph(
                 processing_key=str(job.get("processing_key") or ""),
                 retry_round=int(job.get("retry_round") or 0),
             )
+            if job.get("cache_enabled") is True and cache_key:
+                store_json_result(
+                    "composer-results",
+                    cache_key,
+                    {"arguments": arguments},
+                )
         return {
             "composition_results": [
                 {
-                    "version": "composer-fanout-result-v3",
+                    "version": "composer-fanout-result-v4",
                     "processing_key": job["processing_key"],
                     "batch_index": int(job["batch_index"]),
                     "batch_id": batch_id,
@@ -4360,6 +4496,7 @@ def build_graph(
                     "events": events,
                     "allocation": dict(job.get("allocation", {})),
                     "elapsed_ms": _elapsed_ms(started_ns),
+                    "cache_hit": False,
                     "error": error,
                 }
             ]
@@ -4411,6 +4548,7 @@ def build_graph(
                         if isinstance(event, Mapping) and event.get("kind") == "model_call"
                     ),
                     "elapsed_ms": int(result.get("elapsed_ms") or 0),
+                    "cache_hit": result.get("cache_hit") is True,
                     "error": dict(result.get("error", {})),
                 },
             )
@@ -4737,6 +4875,9 @@ def build_graph(
                         ),
                         "provider_latency_ms": provider_latency_ms,
                         "wall_latency_ms": wall_latency_ms,
+                        "cache_hit_count": sum(
+                            result.get("cache_hit") is True for result in results
+                        ),
                     },
                 ),
             ],
@@ -4999,6 +5140,7 @@ def build_graph(
         else:
             composition_context["previous_arguments"] = base_arguments
         composition_context["composer_model_exclusions"] = _composer_circuit_breaker_models(state)
+        composition_context["composer_circuit_scope"] = f"{state['run_id']}:{processing_key}"
         locked_mapping = base_arguments.get("mapping_contract")
         if isinstance(locked_mapping, Mapping):
             composition_context["locked_mapping_contract"] = dict(locked_mapping)

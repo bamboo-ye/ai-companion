@@ -1339,7 +1339,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         events = port.consume_observability()
         self.assertEqual([event["status"] for event in events], ["error", "succeeded"])
 
-    def test_composer_falls_back_when_first_tool_arguments_violate_contract(self) -> None:
+    def test_composer_contract_failure_opens_scope_breaker_after_first_failure(self) -> None:
         valid = {
             "title": "课程重点",
             "audience": "学生",
@@ -1352,6 +1352,10 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         port = StubOpenRouter(
             [
                 tool_response("work_generate_pptx", '{"audience":"学生"}'),
+                tool_response(
+                    "work_generate_pptx",
+                    json.dumps(valid, ensure_ascii=False),
+                ),
                 tool_response(
                     "work_generate_pptx",
                     json.dumps(valid, ensure_ascii=False),
@@ -1388,6 +1392,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
                 "round_count": 2,
                 "structured": False,
             },
+            "composer_circuit_scope": "document-processing-scope",
             "observations": [],
         }
 
@@ -1403,7 +1408,103 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         events = port.consume_observability()
         self.assertFalse(events[0]["contract_valid"])
         self.assertEqual(events[0]["contract_error"], "model_tool_arguments_invalid")
+        self.assertTrue(events[0]["contract_circuit_opened"])
+        self.assertEqual(events[0]["contract_circuit_scope"], "document-processing-scope")
         self.assertEqual(events[1]["status"], "succeeded")
+
+        second = port.compose_arguments(
+            module="work",
+            message="生成课程 PPT",
+            tool_name="work_generate_pptx",
+            context={
+                **context,
+                "document_processing_round": {
+                    **context["document_processing_round"],
+                    "batch_id": "a1:r2",
+                    "round_number": 2,
+                },
+            },
+        )
+
+        self.assertEqual(second, valid)
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback", "free/fallback"],
+        )
+        second_events = port.consume_observability()
+        self.assertEqual(len(second_events), 1)
+        self.assertEqual(second_events[0]["requested_model"], "free/fallback")
+
+    def test_composer_transport_failure_does_not_open_contract_breaker(self) -> None:
+        valid = {
+            "title": "课程重点",
+            "audience": "学生",
+            "style": "简洁图文",
+            "brief": "## 核心概念\n- 感知连接输入与系统\n- 推理支持后续决策",
+            "slide_count": 5,
+        }
+        port = StubOpenRouter(
+            [
+                OpenRouterError("OpenRouter is unavailable"),
+                tool_response("work_generate_pptx", json.dumps(valid, ensure_ascii=False)),
+                tool_response("work_generate_pptx", json.dumps(valid, ensure_ascii=False)),
+            ]
+        )
+        composer_context = {
+            "tools": [
+                {
+                    "name": "work_generate_pptx",
+                    "description": "生成叙事型 PPTX",
+                    "compose_arguments": True,
+                    "parameters": {
+                        "type": "object",
+                        "required": ["title", "audience", "style", "brief", "slide_count"],
+                        "properties": {
+                            "title": {"type": "string"},
+                            "audience": {"type": "string"},
+                            "style": {"type": "string"},
+                            "brief": {"type": "string"},
+                            "slide_count": {"type": "integer"},
+                        },
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+            "task_contract": {
+                "artifact_types": ["pptx"],
+                "presentation_capabilities": ["narrative"],
+            },
+            "document_processing_round": {
+                "batch_id": "a1:r1",
+                "round_number": 1,
+                "round_count": 2,
+                "structured": False,
+            },
+            "composer_circuit_scope": "transport-failure-scope",
+            "observations": [],
+        }
+
+        first = port.compose_arguments(
+            module="work",
+            message="生成课程 PPT",
+            tool_name="work_generate_pptx",
+            context=composer_context,
+        )
+        first_events = port.consume_observability()
+        second = port.compose_arguments(
+            module="work",
+            message="生成课程 PPT",
+            tool_name="work_generate_pptx",
+            context=composer_context,
+        )
+
+        self.assertEqual(first, valid)
+        self.assertEqual(second, valid)
+        self.assertNotIn("contract_circuit_opened", first_events[0])
+        self.assertEqual(
+            [request["model"] for request in port.requests],
+            ["openrouter/free", "free/fallback", "openrouter/free"],
+        )
 
     def test_narrative_batch_allows_extra_valid_sections_for_final_merge(self) -> None:
         brief = "\n\n".join(
