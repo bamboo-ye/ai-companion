@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Isolated document, spreadsheet, finance, and media worker for 伴AI."
 requires-python = ">=3.12"
 dependencies = [
-  "cryptography==50.0.0",
+  "cryptography==50.0.1",
   "opencc-python-reimplemented==0.1.7",
   "openpyxl==3.1.5",
   "pymupdf==1.28.2",
