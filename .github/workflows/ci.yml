@@ -22,7 +22,7 @@ jobs:
       - run: go test ./...
       - run: make eval-agent-runtime
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-runtime-eval
           path: artifacts/agent-eval/runtime.jsonl
@@ -50,14 +50,14 @@ jobs:
       - run: make eval-agent-retry
       - run: make eval-observability-release
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-eval
           path: artifacts/agent-eval/
           # The release metrics comparison is an independent, sanitized artifact.
           retention-days: 14
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: observability-eval
           path: artifacts/observability-eval/
@@ -170,7 +170,7 @@ jobs:
           OBSERVABILITY_ENVIRONMENT_ID=ci-agent-observability
           make observability-release-trend
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-observability-canary
           path: |
