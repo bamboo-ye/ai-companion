@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/twmb/franz-go v1.21.0
 )
@@ -20,7 +20,6 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 )
