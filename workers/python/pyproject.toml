@@ -24,7 +24,7 @@ document = ["docling==2.119.0"]
 agent = [
   "langgraph==1.2.9",
   "langgraph-checkpoint-postgres==3.1.0",
-  "psycopg[binary,pool]==3.3.4",
+  "psycopg[binary,pool]==3.3.5",
 ]
 dev = ["mypy>=1.16", "pytest>=8.4", "ruff>=0.12"]
 
