@@ -18,6 +18,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
+	"github.com/windcry1/ai-companion/internal/opslog"
 	"github.com/windcry1/ai-companion/internal/persistence"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
@@ -28,12 +29,14 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	baseLogHandler := slog.NewJSONHandler(os.Stdout, nil)
+	logger := slog.New(baseLogHandler)
 	cfg, err := config.Load("ai-companion-worker")
 	if err != nil {
 		logger.Error("load configuration", "error", err)
 		os.Exit(1)
 	}
+	logger = opslog.NewLogger(baseLogHandler, nil, cfg.ServiceName, cfg.Environment)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -48,6 +51,11 @@ func main() {
 			os.Exit(1)
 		}
 		defer store.Close()
+		if durableLogs, ok := any(store).(opslog.Store); ok {
+			logger = opslog.NewLogger(baseLogHandler, durableLogs, cfg.ServiceName, cfg.Environment)
+			workerLogger = logger.With("environment", cfg.Environment, "service", cfg.ServiceName)
+			logger.Info("system log capture enabled", "event", "opslog.capture.enabled")
+		}
 		blobs, blobErr := document.NewLocalBlobStore(cfg.DocumentStorageDir)
 		if blobErr != nil {
 			logger.Error("initialize document storage", "error", blobErr)

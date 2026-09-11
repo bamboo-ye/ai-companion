@@ -76,6 +76,22 @@ Kafka scale mode, `agent.run.requested.v1` and
 database reconciler remains the recovery path. Start it alongside the app with
 `make agent-worker-up`.
 
+Langfuse is the optional, fail-open LLM/Agent observability backend. When
+`LANGFUSE_ENABLED=true`, the Agent Worker exports deterministic Agent traces,
+per-attempt model generations, node observations, token/cost data, immutable
+Agent/model version correlation, and quality scores. Content capture is off by
+default; the local PostgreSQL run record remains authoritative. Configuration,
+privacy rules, self-hosting boundaries, and acceptance steps are in
+[`docs/runbooks/langfuse-agent-observability.md`](docs/runbooks/langfuse-agent-observability.md).
+
+Loki is the optional system-log query backend. Grafana Alloy captures the
+application's redacted JSON stdout, keeps only low-cardinality Loki labels, and
+stores Run/Trace/Agent Trace identifiers as structured metadata. The `/admin`
+log center queries Loki through the API and visibly falls back to the durable
+PostgreSQL audit log if ingestion is unavailable or delayed. Configuration,
+retention, privacy rules, and smoke queries are in
+[`docs/runbooks/loki-structured-logging.md`](docs/runbooks/loki-structured-logging.md).
+
 Chat cutover is module-scoped and disabled by default in development. Staging
 can set `AGENT_CHAT_MODULES=life` for a narrow canary; production must set
 `AGENT_CHAT_MODULES=companion,life,work`, so every user-facing model workflow
@@ -623,6 +639,6 @@ pnpm dev
 
 M0-M4, M6, and the M8 Web/backend platform scope are complete. M5 financial research and M7 native Android/iOS client expansion are skipped by explicit product decision for this completion pass.
 
-The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, reliability/degradation controls, team workspaces, email delivery/replay operations, billing quota guards, minor-mode safety gating, operator MFA/RBAC/admin APIs, audit CSV export, release-readiness checks, and automated release evidence collection/validation.
+The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, cross-Kafka Trace correlation, reliability/degradation controls, team workspaces, email delivery/replay operations, unified billing/Agent/model-cost quota guards with append-only corrections, minor-mode safety gating, operator MFA/RBAC/admin APIs, an independent `/admin` Operations Console, Loki-backed redacted structured logs with PostgreSQL fallback and Run/Trace/Langfuse correlation, incident workflows, runtime configuration convergence, visual Agent Studio with node debugging and Prompt versioning, cost/quality budgets and review exports, audit CSV export, release-readiness checks, automated release evidence collection/validation, and fail-open Langfuse export for LLM/Agent traces, generations, node observations and scores. Langfuse and Loki remain optional at runtime; Tempo remains a future scale integration.
 
 See [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md), [`docs/M6_STATUS.md`](docs/M6_STATUS.md), and [`docs/M8_STATUS.md`](docs/M8_STATUS.md) for acceptance evidence and remaining deployment-only prerequisites.

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type ExecutionResult struct {
@@ -25,6 +27,7 @@ type ToolReadinessProbe interface {
 
 type RuntimeRetryObservation struct {
 	RunID             string
+	TraceID           string
 	Attempt           int
 	MaximumAttempts   int
 	Delay             time.Duration
@@ -124,7 +127,7 @@ func (w *RuntimeWorker) ProcessRun(ctx context.Context, runID string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return true, w.executeClaimed(ctx, run)
+	return true, w.executeClaimed(agentRunContext(ctx, run.ID), run)
 }
 
 func (w *RuntimeWorker) RunNext(ctx context.Context) (bool, error) {
@@ -142,7 +145,15 @@ func (w *RuntimeWorker) RunNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, w.executeClaimed(ctx, run)
+	return true, w.executeClaimed(agentRunContext(ctx, run.ID), run)
+}
+
+func agentRunContext(ctx context.Context, runID string) context.Context {
+	ctx = tracectx.WithRunID(ctx, runID)
+	if tracectx.ID(ctx) == "" {
+		ctx = tracectx.WithID(ctx, tracectx.AgentRunTraceID(runID))
+	}
+	return ctx
 }
 
 func (w *RuntimeWorker) RunReconciler(ctx context.Context, interval time.Duration) error {
@@ -417,7 +428,7 @@ func (w *RuntimeWorker) finishExecution(ctx context.Context, run Run, result Exe
 				deadlineRemaining = run.DeadlineAt.Sub(now)
 			}
 			w.onRetry(RuntimeRetryObservation{
-				RunID: run.ID, Attempt: attempt, MaximumAttempts: maximum,
+				RunID: run.ID, TraceID: tracectx.ID(ctx), Attempt: attempt, MaximumAttempts: maximum,
 				Delay: delay, AdvisedDelay: decision.AdvisedDelay,
 				BaseDelay: w.retryDelay, MaximumDelay: w.retryMaxDelay,
 				JitterPercent: w.retryJitterPercent, Policy: decision.Policy,

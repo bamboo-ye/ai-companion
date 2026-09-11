@@ -20,7 +20,7 @@ from .direct_traffic_certification import (
     verify_certification,
 )
 from .direct_traffic_preproduction import HTTPSPreproductionConfig, PreproductionProviderError
-from .direct_traffic_production import _validate_production_environment, production_namespace_sha256
+from .direct_traffic_production import _validate_production_environment
 from .direct_traffic_production_expansion_25_sandbox import (
     SQLiteProductionExpansion25Platform,
 )

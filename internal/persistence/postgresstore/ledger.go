@@ -126,9 +126,9 @@ func (s *Store) ConfirmCandidate(ctx context.Context, candidate ledger.Candidate
 	})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'ledger_entry',$2,'ledger.entry.created.v1',1,$3,$4)`,
-		eventID, entry.ID, payload, now,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'ledger_entry',$2,'ledger.entry.created.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, entry.ID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return ledger.Entry{}, false, err
 	}
@@ -256,9 +256,9 @@ func (s *Store) CreateExport(ctx context.Context, job ledger.ExportJob, requestK
 	payload, _ := json.Marshal(map[string]string{"export_id": job.ID, "user_id": job.UserID})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'ledger_export',$2,'ledger.export.v1',1,$3,$4)`,
-		eventID, job.ID, payload, job.CreatedAt,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'ledger_export',$2,'ledger.export.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, job.ID, payload, job.CreatedAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return ledger.ExportJob{}, false, err
 	}

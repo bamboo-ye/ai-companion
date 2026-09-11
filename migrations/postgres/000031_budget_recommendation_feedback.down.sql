@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS ops.performance_budget_recommendation_decisions;

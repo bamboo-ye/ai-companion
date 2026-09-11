@@ -402,9 +402,9 @@ func (s *Store) ConfirmReminder(ctx context.Context, item planner.Reminder, key 
 	})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'reminder',$2,'reminder.confirmed.v1',1,$3,$4)`,
-		eventID, item.ID, payload, now,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'reminder',$2,'reminder.confirmed.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, item.ID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return planner.Reminder{}, false, err
 	}
@@ -599,9 +599,9 @@ func (s *Store) RescheduleReminder(ctx context.Context, updated planner.Reminder
 	})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'reminder',$2,'reminder.rescheduled.v1',1,$3,$4)`,
-		eventID, updated.ID, payload, now,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'reminder',$2,'reminder.rescheduled.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, updated.ID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return planner.Reminder{}, err
 	}
@@ -722,9 +722,9 @@ func (s *Store) EnqueueDueNotifications(ctx context.Context, now time.Time, limi
 		})
 		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO eventing.outbox_events (
-				id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-			) VALUES ($1,'user',$2,'notification.deliver.v1',1,$3,$4)`,
-			eventID, item.userID, payload, now,
+				id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+			) VALUES ($1,'user',$2,'notification.deliver.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+			eventID, item.userID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 		); err != nil {
 			return 0, err
 		}

@@ -3,8 +3,11 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -13,17 +16,22 @@ import (
 	"github.com/windcry1/ai-companion/internal/buildinfo"
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/chattool"
+	"github.com/windcry1/ai-companion/internal/controlplane"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/identity"
+	"github.com/windcry1/ai-companion/internal/incident"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/mcpclient"
 	"github.com/windcry1/ai-companion/internal/memory"
 	"github.com/windcry1/ai-companion/internal/opsauth"
+	"github.com/windcry1/ai-companion/internal/opslog"
+	"github.com/windcry1/ai-companion/internal/performance"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 	"github.com/windcry1/ai-companion/internal/realtime"
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/router"
@@ -33,45 +41,60 @@ import (
 )
 
 type Server struct {
-	httpServer          *http.Server
-	ready               atomic.Bool
-	identity            *identity.Service
-	identityAdmin       *identity.AdminService
-	characters          *character.Service
-	conversations       *conversation.Service
-	memories            *memory.Service
-	documents           *document.Service
-	ledger              *ledger.Service
-	planner             *planner.Service
-	skills              *skill.Service
-	teams               *team.Service
-	emails              *email.Service
-	billing             *billing.Service
-	userSafety          *safety.Service
-	intentRouter        *router.Router
-	mcp                 *mcpclient.Registry
-	reliability         *reliability.Controller
-	metrics             *reliability.Metrics
-	operations          eventbus.OperationsStore
-	environment         string
-	webOrigin           string
-	kafkaEnabled        bool
-	modelProvider       string
-	operatorToken       string
-	operatorMFARequired bool
-	operatorAuth        *opsauth.Service
-	realtime            realtime.Gateway
-	presenceTTL         time.Duration
-	chatRateLimit       int
-	chatRateWindow      time.Duration
-	agentRuns           *agent.Service
-	agentGateway        *agent.ToolGateway
-	agentToolExecutor   conversation.ModelToolExecutor
-	agentGatewayToken   string
-	agentConfirmSecret  string
-	agentConfirmTTL     time.Duration
-	agentRunTimeout     time.Duration
-	agentChatModules    map[string]bool
+	httpServer           *http.Server
+	ready                atomic.Bool
+	identity             *identity.Service
+	identityAdmin        *identity.AdminService
+	characters           *character.Service
+	conversations        *conversation.Service
+	memories             *memory.Service
+	documents            *document.Service
+	ledger               *ledger.Service
+	planner              *planner.Service
+	skills               *skill.Service
+	teams                *team.Service
+	emails               *email.Service
+	billing              *billing.Service
+	configuration        *controlplane.Service
+	agentSandbox         controlplane.AgentSandbox
+	userSafety           *safety.Service
+	intentRouter         *router.Router
+	mcp                  *mcpclient.Registry
+	reliability          *reliability.Controller
+	metrics              *reliability.Metrics
+	operations           eventbus.OperationsStore
+	systemLogs           opslog.Store
+	incidents            *incident.Service
+	performance          *performance.Service
+	environment          string
+	webOrigin            string
+	kafkaEnabled         bool
+	modelProvider        string
+	operatorToken        string
+	operatorMFARequired  bool
+	operatorAuth         *opsauth.Service
+	realtime             realtime.Gateway
+	presenceTTL          time.Duration
+	chatRateLimit        int
+	chatRateWindow       time.Duration
+	billingQuotaDisabled bool
+	langfuseEnabled      bool
+	langfuseConfigured   bool
+	langfuseBaseURL      string
+	langfuseCapture      bool
+	langfuseSampleRate   float64
+	lokiEnabled          bool
+	lokiConfigured       bool
+	lokiBaseURL          string
+	agentRuns            *agent.Service
+	agentOperations      agent.OperationsStore
+	agentGateway         *agent.ToolGateway
+	agentToolExecutor    conversation.ModelToolExecutor
+	agentGatewayToken    string
+	agentConfirmSecret   string
+	agentConfirmTTL      time.Duration
+	agentRunTimeout      time.Duration
+	agentChatModules     map[string]bool
 }
 
 func New(cfg config.Config, logger *slog.Logger) *Server {
@@ -176,16 +199,35 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	if agentConfirmSecret == "" {
 		agentConfirmSecret = "development-agent-confirmation-secret"
 	}
+	billingService := billing.NewService(billing.NewMemoryStore(), billing.DefaultPlans())
+	billingService.SetQuotaDisabled(cfg.BillingQuotaDisabled)
 	server := &Server{
 		identity:      identity.NewService(identityStore, secret, accessTTL, refreshTTL),
 		identityAdmin: identityAdmin,
 		characters:    characterService,
-		conversations: conversationService, memories: memoryService, documents: documentService, ledger: ledgerService, planner: plannerService, skills: skillService, teams: team.NewService(team.NewMemoryStore()), emails: email.NewService(email.NewMemoryStore(), email.NoopSender{}), billing: billing.NewService(billing.NewMemoryStore(), billing.DefaultPlans()), userSafety: safety.NewService(safety.NewMemoryStore()),
+		conversations: conversationService, memories: memoryService, documents: documentService, ledger: ledgerService, planner: plannerService, skills: skillService, teams: team.NewService(team.NewMemoryStore()), emails: email.NewService(email.NewMemoryStore(), email.NoopSender{}), billing: billingService, userSafety: safety.NewService(safety.NewMemoryStore()),
 		intentRouter: router.New(), mcp: mcpRegistry,
 		reliability: reliabilityController, metrics: reliability.NewMetrics(),
+		systemLogs:  opslog.NewMemoryStore(),
+		incidents:   incident.NewService(incident.NewMemoryStore()),
+		performance: performance.NewService(performance.NewMemoryStore()),
 		environment: cfg.Environment, webOrigin: cfg.WebOrigin, kafkaEnabled: cfg.KafkaEnabled, modelProvider: cfg.ModelProvider,
 		operatorToken: cfg.OperatorToken, operatorMFARequired: cfg.OperatorMFARequired, operatorAuth: operatorAuth,
 		realtime: gateway, presenceTTL: presenceTTL, chatRateLimit: rateLimit, chatRateWindow: rateWindow,
+		billingQuotaDisabled: cfg.BillingQuotaDisabled,
+		langfuseEnabled:      cfg.LangfuseEnabled,
+		langfuseConfigured:   cfg.LangfuseConfigured,
+		langfuseBaseURL:      cfg.LangfuseBaseURL,
+		langfuseCapture:      cfg.LangfuseCaptureContent,
+		langfuseSampleRate:   cfg.LangfuseSampleRate,
+		lokiEnabled:          cfg.LokiEnabled,
+		lokiConfigured:       cfg.LokiConfigured,
+		lokiBaseURL:          cfg.LokiBaseURL,
+		agentSandbox: controlplane.PythonAgentSandbox{
+			Executable: cfg.PythonExecutable,
+			ModulePath: cfg.PythonWorkerPath,
+			Timeout:    10 * time.Second,
+		},
 		agentToolExecutor: chatTools, agentGatewayToken: agentGatewayToken,
 		agentConfirmSecret: agentConfirmSecret, agentConfirmTTL: cfg.AgentConfirmationTTL,
 		agentRunTimeout:  cfg.AgentRunTimeout,
@@ -316,6 +358,70 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("POST /v1/ops/operators/{operator_id}/reset-mfa", server.requireOperator(http.HandlerFunc(server.resetOperatorAccountMFA)))
 	mux.Handle("GET /v1/ops/release-readiness", server.requireOperator(http.HandlerFunc(server.getReleaseReadiness)))
 	mux.Handle("GET /v1/ops/console/bootstrap", server.requireOperator(http.HandlerFunc(server.getOperatorConsoleBootstrap)))
+	mux.Handle("GET /v1/ops/reliability", server.requireOperator(http.HandlerFunc(server.getReliability)))
+	mux.Handle("GET /v1/ops/agent-runs", server.requireOperator(http.HandlerFunc(server.listOperatorAgentRuns)))
+	mux.Handle("GET /v1/ops/agent-runs/{run_id}", server.requireOperator(http.HandlerFunc(server.getOperatorAgentRun)))
+	mux.Handle("GET /v1/ops/performance/versions", server.requireOperator(http.HandlerFunc(server.listOperatorVersionPerformance)))
+	mux.Handle("GET /v1/ops/performance/models", server.requireOperator(http.HandlerFunc(server.listOperatorModelPerformance)))
+	mux.Handle("GET /v1/ops/performance/anomalies", server.requireOperator(http.HandlerFunc(server.getOperatorPerformanceAnomalies)))
+	mux.Handle("GET /v1/ops/performance/trend", server.requireOperator(http.HandlerFunc(server.listOperatorPerformanceTrend)))
+	mux.Handle("GET /v1/ops/performance/forecast", server.requireOperator(http.HandlerFunc(server.getOperatorPerformanceForecast)))
+	mux.Handle("GET /v1/ops/performance/budgets", server.requireOperator(http.HandlerFunc(server.listOperatorPerformanceBudgets)))
+	mux.Handle("GET /v1/ops/performance/budgets/forecast-history", server.requireOperator(http.HandlerFunc(server.getOperatorPerformanceBudgetForecastHistory)))
+	mux.Handle("GET /v1/ops/performance/budgets/report", server.requireOperator(http.HandlerFunc(server.exportOperatorPerformanceBudgetReview)))
+	mux.Handle("POST /v1/ops/performance/budgets", server.requireOperator(http.HandlerFunc(server.createOperatorPerformanceBudget)))
+	mux.Handle("PATCH /v1/ops/performance/budgets/{budget_id}", server.requireOperator(http.HandlerFunc(server.updateOperatorPerformanceBudget)))
+	mux.Handle("POST /v1/ops/performance/budgets/{budget_id}/preview", server.requireOperator(http.HandlerFunc(server.previewOperatorPerformanceBudget)))
+	mux.Handle("POST /v1/ops/performance/budgets/{budget_id}/recommendations/{recommendation_key}/decision", server.requireOperator(http.HandlerFunc(server.decideOperatorPerformanceBudgetRecommendation)))
+	mux.Handle("POST /v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/acknowledge", server.requireOperator(http.HandlerFunc(server.acknowledgeOperatorPerformanceBudgetEffect)))
+	mux.Handle("POST /v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/close", server.requireOperator(http.HandlerFunc(server.closeOperatorPerformanceBudgetEffect)))
+	mux.Handle("POST /v1/ops/performance/budgets/evaluate", server.requireOperator(http.HandlerFunc(server.evaluateOperatorPerformanceBudgets)))
+	mux.Handle("GET /v1/ops/logs", server.requireOperator(http.HandlerFunc(server.listOperatorSystemLogs)))
+	mux.Handle("GET /v1/ops/alert-rules", server.requireOperator(http.HandlerFunc(server.listOperatorAlertRules)))
+	mux.Handle("POST /v1/ops/alert-rules", server.requireOperator(http.HandlerFunc(server.createOperatorAlertRule)))
+	mux.Handle("PATCH /v1/ops/alert-rules/{rule_id}", server.requireOperator(http.HandlerFunc(server.updateOperatorAlertRule)))
+	mux.Handle("GET /v1/ops/alert-subscriptions", server.requireOperator(http.HandlerFunc(server.listOperatorAlertSubscriptions)))
+	mux.Handle("POST /v1/ops/alert-subscriptions", server.requireOperator(http.HandlerFunc(server.createOperatorAlertSubscription)))
+	mux.Handle("PATCH /v1/ops/alert-subscriptions/{subscription_id}", server.requireOperator(http.HandlerFunc(server.updateOperatorAlertSubscription)))
+	mux.Handle("POST /v1/ops/alerts/evaluate", server.requireOperator(http.HandlerFunc(server.evaluateOperatorAlerts)))
+	mux.Handle("GET /v1/ops/incidents", server.requireOperator(http.HandlerFunc(server.listOperatorIncidents)))
+	mux.Handle("GET /v1/ops/incidents/{incident_id}", server.requireOperator(http.HandlerFunc(server.getOperatorIncident)))
+	mux.Handle("GET /v1/ops/incidents/{incident_id}/notifications", server.requireOperator(http.HandlerFunc(server.listOperatorIncidentNotifications)))
+	mux.Handle("GET /v1/ops/incidents/{incident_id}/evidence", server.requireOperator(http.HandlerFunc(server.exportOperatorIncidentEvidence)))
+	mux.Handle("POST /v1/ops/incidents/{incident_id}/acknowledge", server.requireOperator(http.HandlerFunc(server.acknowledgeOperatorIncident)))
+	mux.Handle("POST /v1/ops/incidents/{incident_id}/resolve", server.requireOperator(http.HandlerFunc(server.resolveOperatorIncident)))
+	mux.Handle("GET /v1/ops/billing/plans", server.requireOperator(http.HandlerFunc(server.listOperatorBillingPlans)))
+	mux.Handle("GET /v1/ops/configuration/convergence", server.requireOperator(http.HandlerFunc(server.getOperatorRuntimeConvergence)))
+	mux.Handle("GET /v1/ops/billing/users/{user_id}/usage", server.requireOperator(http.HandlerFunc(server.getOperatorBillingUsage)))
+	mux.Handle("GET /v1/ops/billing/users/{user_id}/adjustments", server.requireOperator(http.HandlerFunc(server.listOperatorBillingAdjustments)))
+	mux.Handle("POST /v1/ops/billing/users/{user_id}/adjustments", server.requireOperator(http.HandlerFunc(server.createOperatorBillingAdjustment)))
+	mux.Handle("POST /v1/ops/billing/plans/{config_key}/versions", server.requireOperator(http.HandlerFunc(server.createOperatorBillingPlanVersion)))
+	mux.Handle("POST /v1/ops/billing/plans/{config_key}/rollback", server.requireOperator(http.HandlerFunc(server.rollbackOperatorBillingPlan)))
+	mux.Handle("GET /v1/ops/model/providers", server.requireOperator(http.HandlerFunc(server.listOperatorModelProviders)))
+	mux.Handle("GET /v1/ops/model/catalog", server.requireOperator(http.HandlerFunc(server.listOperatorModelCatalog)))
+	mux.Handle("GET /v1/ops/model-profiles", server.requireOperator(http.HandlerFunc(server.listOperatorModelProfiles)))
+	mux.Handle("POST /v1/ops/model-profiles/{config_key}/versions", server.requireOperator(http.HandlerFunc(server.createOperatorModelProfileVersion)))
+	mux.Handle("POST /v1/ops/model-profiles/{config_key}/rollback", server.requireOperator(http.HandlerFunc(server.rollbackOperatorModelProfile)))
+	mux.Handle("GET /v1/ops/prompts", server.requireOperator(http.HandlerFunc(server.listOperatorPrompts)))
+	mux.Handle("POST /v1/ops/prompts/{config_key}/versions", server.requireOperator(http.HandlerFunc(server.createOperatorPromptVersion)))
+	mux.Handle("POST /v1/ops/prompts/{config_key}/rollback", server.requireOperator(http.HandlerFunc(server.rollbackOperatorPrompt)))
+	mux.Handle("GET /v1/ops/agents", server.requireOperator(http.HandlerFunc(server.listOperatorAgentDefinitions)))
+	mux.Handle("POST /v1/ops/agents/{config_key}/compile", server.requireOperator(http.HandlerFunc(server.compileOperatorAgentDefinition)))
+	mux.Handle("POST /v1/ops/agents/{config_key}/dry-run", server.requireOperator(http.HandlerFunc(server.dryRunOperatorAgentDefinition)))
+	mux.Handle("POST /v1/ops/agents/{config_key}/versions", server.requireOperator(http.HandlerFunc(server.createOperatorAgentDefinitionVersion)))
+	mux.Handle("POST /v1/ops/agents/{config_key}/rollback", server.requireOperator(http.HandlerFunc(server.rollbackOperatorAgentDefinition)))
+	mux.Handle("POST /v1/ops/agent-versions/{version_id}/dry-runs", server.requireOperator(http.HandlerFunc(server.dryRunOperatorAgentDefinitionVersion)))
+	mux.Handle("POST /v1/ops/agent-versions/{version_id}/evaluations", server.requireOperator(http.HandlerFunc(server.evaluateOperatorAgentDefinitionVersion)))
+	mux.Handle("GET /v1/ops/agent-versions/{version_id}/evaluations", server.requireOperator(http.HandlerFunc(server.listOperatorAgentEvaluationRuns)))
+	mux.Handle("GET /v1/ops/evaluation-runs/{run_id}", server.requireOperator(http.HandlerFunc(server.getOperatorAgentEvaluationRun)))
+	mux.Handle("POST /v1/ops/agent-versions/{version_id}/rollouts", server.requireOperator(http.HandlerFunc(server.startOperatorAgentRollout)))
+	mux.Handle("GET /v1/ops/agents/{config_key}/rollouts", server.requireOperator(http.HandlerFunc(server.listOperatorAgentRollouts)))
+	mux.Handle("GET /v1/ops/agent-rollouts/{rollout_id}", server.requireOperator(http.HandlerFunc(server.getOperatorAgentRollout)))
+	mux.Handle("POST /v1/ops/agent-rollouts/{rollout_id}/refresh", server.requireOperator(http.HandlerFunc(server.refreshOperatorAgentRollout)))
+	mux.Handle("POST /v1/ops/agent-rollouts/{rollout_id}/abort", server.requireOperator(http.HandlerFunc(server.abortOperatorAgentRollout)))
+	mux.Handle("POST /v1/ops/config-versions/{version_id}/validate", server.requireOperator(http.HandlerFunc(server.validateOperatorConfigVersion)))
+	mux.Handle("POST /v1/ops/config-versions/{version_id}/submit", server.requireOperator(http.HandlerFunc(server.submitOperatorConfigVersion)))
+	mux.Handle("POST /v1/ops/config-versions/{version_id}/publish", server.requireOperator(http.HandlerFunc(server.publishOperatorConfigVersion)))
 	mux.Handle("GET /v1/ops/audit-logs", server.requireOperator(http.HandlerFunc(server.listAuditLogs)))
 	mux.Handle("GET /v1/ops/audit-logs/export", server.requireOperator(http.HandlerFunc(server.exportAuditLogs)))
 	mux.Handle("GET /v1/ops/compensations", server.requireOperator(http.HandlerFunc(server.listCompensationRecords)))
@@ -349,6 +455,32 @@ func (s *Server) SetLedgerExportFileStore(files ledger.ExportFileStore) {
 }
 func (s *Server) SetOperationsStore(store eventbus.OperationsStore) { s.operations = store }
 
+func (s *Server) SetSystemLogStore(store opslog.Store) {
+	if store != nil {
+		s.systemLogs = store
+	}
+}
+
+func (s *Server) SetIncidentStore(store incident.Store) {
+	if store != nil {
+		s.incidents = incident.NewService(store)
+	}
+}
+
+func (s *Server) SetPerformanceStore(store performance.Store) {
+	if store != nil {
+		s.performance = performance.NewService(store)
+	}
+}
+
+func (s *Server) EvaluateAlerts(ctx context.Context, now time.Time) (incident.Evaluation, error) {
+	return s.incidents.Evaluate(ctx, now)
+}
+
+func (s *Server) EvaluatePerformanceBudgets(ctx context.Context, now time.Time) (performance.BudgetEvaluation, error) {
+	return s.performance.EvaluateBudgets(ctx, now)
+}
+
 func (s *Server) SetOperatorAuthStore(store opsauth.Store) {
 	s.operatorAuth = opsauth.NewService(store)
 }
@@ -361,6 +493,58 @@ func (s *Server) SetEmailStore(store email.Store) {
 
 func (s *Server) SetBillingStore(store billing.Store) {
 	s.billing = billing.NewService(store, billing.DefaultPlans())
+	s.billing.SetQuotaDisabled(s.billingQuotaDisabled)
+}
+
+func (s *Server) SetControlPlaneStore(store controlplane.Store) error {
+	s.configuration = controlplane.NewService(store, s.environment)
+	s.bindAgentModelProfileResolver()
+	return s.reloadBillingCatalog(context.Background())
+}
+
+func (s *Server) SetAgentSandbox(sandbox controlplane.AgentSandbox) {
+	s.agentSandbox = sandbox
+}
+
+func (s *Server) reloadBillingCatalog(ctx context.Context) error {
+	if s.configuration == nil || s.billing == nil {
+		return nil
+	}
+	deployments, err := s.configuration.Active(ctx, controlplane.KindBillingPlan)
+	if err != nil {
+		return err
+	}
+	plans, err := controlplane.BillingPlans(deployments)
+	if err != nil {
+		return err
+	}
+	if len(plans) == 0 {
+		return nil
+	}
+	return s.billing.ReplaceCatalog(plans)
+}
+
+// SyncRuntimeConfiguration refreshes every cached API-side configuration and
+// persists proof of the exact immutable revisions loaded by this instance.
+func (s *Server) SyncRuntimeConfiguration(ctx context.Context, instanceID, serviceName string, startedAt time.Time) error {
+	if err := s.reloadBillingCatalog(ctx); err != nil {
+		return err
+	}
+	deployments, err := s.configuration.Active(ctx, controlplane.KindBillingPlan)
+	if err != nil {
+		return err
+	}
+	for _, deployment := range deployments {
+		if _, err = s.configuration.ReportRuntimeConfig(ctx, controlplane.RuntimeConfigReport{
+			InstanceID: instanceID, Service: serviceName, Kind: deployment.Kind, Key: deployment.Key,
+			VersionID: deployment.Version.ID, Revision: deployment.Revision,
+			Fingerprint: deployment.Version.Fingerprint, Status: controlplane.RuntimeStatusApplied,
+			StartedAt: startedAt,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) SetSafetyStore(store safety.Store) {
@@ -374,10 +558,62 @@ func (s *Server) SetIdentityAdminStore(store identity.AdminStore) {
 func (s *Server) SetAgentStore(store agent.Store) {
 	s.agentRuns = agent.NewService(store)
 	s.agentRuns.SetRunTimeout(s.agentRunTimeout)
+	s.bindAgentModelProfileResolver()
+	if operations, ok := any(store).(agent.OperationsStore); ok {
+		s.agentOperations = operations
+	}
 	s.agentGateway = agent.NewToolGateway(
 		s.agentRuns, s.agentToolExecutor, s.ledger, s.planner, s.skills,
 		s.agentConfirmSecret, s.agentConfirmTTL,
 	)
+}
+
+func (s *Server) bindAgentModelProfileResolver() {
+	if s == nil || s.agentRuns == nil || s.configuration == nil {
+		return
+	}
+	s.agentRuns.SetAgentDefinitionResolver(func(ctx context.Context, module, routingKey string) (agent.RunAgentDefinitionSnapshot, bool, error) {
+		snapshot, err := s.configuration.RoutedAgentRuntime(ctx, module, routingKey)
+		if errors.Is(err, controlplane.ErrNotFound) {
+			return agent.RunAgentDefinitionSnapshot{}, false, nil
+		}
+		if err != nil {
+			return agent.RunAgentDefinitionSnapshot{}, false, err
+		}
+		definition, err := json.Marshal(snapshot.Definition)
+		if err != nil {
+			return agent.RunAgentDefinitionSnapshot{}, false, err
+		}
+		return agent.RunAgentDefinitionSnapshot{
+			Key: snapshot.Key, VersionID: snapshot.VersionID, Version: snapshot.Version,
+			Revision: snapshot.Revision, Fingerprint: snapshot.Fingerprint,
+			ModelProfile: snapshot.ModelProfile, Definition: definition,
+		}, true, nil
+	})
+	if strings.ToLower(strings.TrimSpace(s.modelProvider)) != "openrouter" {
+		s.agentRuns.SetModelProfileKeyResolver(nil)
+		return
+	}
+	s.agentRuns.SetModelProfileKeyResolver(func(ctx context.Context, profileKey string) (agent.RunModelProfileSnapshot, error) {
+		if strings.TrimSpace(profileKey) == "" {
+			profileKey = controlplane.DefaultModelProfileKey
+		}
+		snapshot, err := s.configuration.ActiveModelRuntime(ctx, profileKey)
+		if err != nil {
+			return agent.RunModelProfileSnapshot{}, err
+		}
+		return agent.RunModelProfileSnapshot{
+			ProfileKey: snapshot.Key, VersionID: snapshot.VersionID, Version: snapshot.Version,
+			Revision: snapshot.Revision, ConfigVersion: snapshot.ConfigVersion,
+			Fingerprint: snapshot.Fingerprint, Variables: snapshot.Variables,
+		}, nil
+	})
+}
+
+// SetAgentOperationsStore allows a read-only operator projection to be wired
+// independently from the runtime store, including in tests and split services.
+func (s *Server) SetAgentOperationsStore(store agent.OperationsStore) {
+	s.agentOperations = store
 }
 
 func (s *Server) ObserveReliability(sample reliability.Sample, now time.Time) reliability.Snapshot {
@@ -386,9 +622,11 @@ func (s *Server) ObserveReliability(sample reliability.Sample, now time.Time) re
 
 func cors(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin != "" && r.Header.Get("Origin") == origin {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Operator-ID, X-Operator-TOTP")
+		requestOrigin := r.Header.Get("Origin")
+		if corsOriginAllowed(origin, requestOrigin) {
+			w.Header().Set("Access-Control-Allow-Origin", requestOrigin)
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Operator-ID, X-Operator-TOTP, X-Trace-ID, traceparent, tracestate")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Trace-ID, traceparent, tracestate")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Vary", "Origin")
 		}
@@ -398,6 +636,22 @@ func cors(origin string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func corsOriginAllowed(configuredOrigin, requestOrigin string) bool {
+	if configuredOrigin == "" || requestOrigin == "" {
+		return false
+	}
+	if requestOrigin == configuredOrigin {
+		return true
+	}
+	configured, configuredErr := url.Parse(configuredOrigin)
+	requested, requestedErr := url.Parse(requestOrigin)
+	if configuredErr != nil || requestedErr != nil || configured.Scheme != "http" || requested.Scheme != "http" || configured.Port() != requested.Port() {
+		return false
+	}
+	localHost := func(host string) bool { return host == "localhost" || host == "127.0.0.1" || host == "::1" }
+	return localHost(configured.Hostname()) && localHost(requested.Hostname())
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -459,6 +713,7 @@ func requestLog(logger *slog.Logger, metrics *reliability.Metrics, next http.Han
 			route = "unmatched"
 		}
 		metrics.ObserveRequest(r.Method, route, response.status, duration)
-		logger.Info("http request", "trace_id", requestTraceID(r.Context()), "method", r.Method, "route", route, "status", response.status, "duration", duration)
+		logCtx := tracectx.WithRunID(r.Context(), r.PathValue("run_id"))
+		logger.InfoContext(logCtx, "http request", "event", "http.request", "trace_id", requestTraceID(r.Context()), "span_id", tracectx.SpanID(r.Context()), "trace_flags", tracectx.TraceFlags(r.Context()), "run_id", tracectx.RunID(logCtx), "method", r.Method, "route", route, "status", response.status, "duration_ms", duration.Milliseconds())
 	})
 }

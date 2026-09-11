@@ -20,6 +20,11 @@ func TestAgentWorkerMetricsPrometheusContract(t *testing.T) {
 	metrics.observeDispatchCompletion(agent.RunDispatchObservation{RunID: "canary-run", Replay: true})
 	metrics.observePythonRuntime(agent.PythonRuntimeObservation{Success: true, ModelCalls: 2})
 	metrics.observePythonRuntime(agent.PythonRuntimeObservation{Success: false, ModelCalls: 1})
+	metrics.observeModelConfiguration(modelConfigurationObservation{Outcome: "error"})
+	metrics.observeModelConfiguration(modelConfigurationObservation{
+		Outcome: "applied", Revision: 3, VersionID: "version-3",
+		ConfigVersion: "routing-v3", Fingerprint: "abc123",
+	})
 	metrics.trackCanaryRun("canary-exec", true)
 	metrics.observePythonRuntime(agent.PythonRuntimeObservation{RunID: "canary-exec", Success: true, ModelCalls: 2})
 	metrics.observeDispatchCompletion(agent.RunDispatchObservation{RunID: "canary-exec", Processed: true})
@@ -45,6 +50,10 @@ func TestAgentWorkerMetricsPrometheusContract(t *testing.T) {
 		`ai_companion_agent_python_executions_total{outcome="succeeded"} 2`,
 		`ai_companion_agent_python_executions_total{outcome="failed"} 1`,
 		`ai_companion_agent_python_model_calls_total 5`,
+		`ai_companion_agent_model_config_reloads_total{outcome="applied"} 1`,
+		`ai_companion_agent_model_config_reloads_total{outcome="error"} 1`,
+		`ai_companion_agent_model_config_revision 3`,
+		`ai_companion_agent_model_config_info{config_version="routing-v3",version_id="version-3",fingerprint="abc123"} 1`,
 		`ai_companion_agent_canary_dispatch_hints_total{outcome="coalesced"} 1`,
 		`ai_companion_agent_canary_dispatch_hints_total{outcome="replay_requested"} 1`,
 		`ai_companion_agent_canary_dispatch_completions_total{outcome="not_claimed"} 1`,

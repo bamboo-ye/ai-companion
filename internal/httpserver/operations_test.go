@@ -194,7 +194,7 @@ func TestOperatorCanModerateUsersAndInspectAuditLogs(t *testing.T) {
 }
 
 func TestOperatorConsoleBootstrapAndAuditCSVExport(t *testing.T) {
-	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-console-secret-with-enough-entropy", OperatorToken: "ops-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "ops-console-secret-with-enough-entropy", OperatorToken: "ops-token", LangfuseEnabled: true, LangfuseConfigured: true, LangfuseBaseURL: "https://langfuse.example.com", LangfuseSampleRate: 0.5, LokiEnabled: true, LokiConfigured: true, LokiBaseURL: "http://loki:3100"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
 		"email": "audit-export-target@example.com", "password": "correct-horse-battery", "display_name": "Audit Export Target", "timezone": "Asia/Shanghai",
 		"device": map[string]any{"device_key": "audit-export-target", "name": "web", "platform": "web"},
@@ -208,7 +208,7 @@ func TestOperatorConsoleBootstrapAndAuditCSVExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrap := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/console/bootstrap", "ops-token", "console-admin", nil)
-	if bootstrap.Code != http.StatusOK || !strings.Contains(bootstrap.Body.String(), `"manage_operator_accounts":true`) || !strings.Contains(bootstrap.Body.String(), `"export_audit_logs":true`) || !strings.Contains(bootstrap.Body.String(), `"key":"audit"`) {
+	if bootstrap.Code != http.StatusOK || !strings.Contains(bootstrap.Body.String(), `"manage_operator_accounts":true`) || !strings.Contains(bootstrap.Body.String(), `"export_audit_logs":true`) || !strings.Contains(bootstrap.Body.String(), `"key":"audit"`) || !strings.Contains(bootstrap.Body.String(), `"responsibility":"llm_agent_observability"`) || !strings.Contains(bootstrap.Body.String(), `"base_url":"https://langfuse.example.com"`) || !strings.Contains(bootstrap.Body.String(), `"responsibility":"structured_system_logs"`) || !strings.Contains(bootstrap.Body.String(), `"fallback":"postgres"`) {
 		t.Fatalf("bootstrap=%d %s", bootstrap.Code, bootstrap.Body.String())
 	}
 	disabled := performOperatorJSON(t, server, http.MethodPost, "/v1/ops/users/"+tokens.User.ID+"/disable", "ops-token", "console-admin", map[string]string{"reason": "audit export coverage"})

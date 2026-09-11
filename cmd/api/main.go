@@ -13,16 +13,21 @@ import (
 	"github.com/windcry1/ai-companion/internal/agent"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/controlplane"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/httpserver"
 	"github.com/windcry1/ai-companion/internal/identity"
+	"github.com/windcry1/ai-companion/internal/incident"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
+	"github.com/windcry1/ai-companion/internal/opslog"
+	"github.com/windcry1/ai-companion/internal/performance"
 	"github.com/windcry1/ai-companion/internal/persistence"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/config"
+	"github.com/windcry1/ai-companion/internal/platform/id"
 	"github.com/windcry1/ai-companion/internal/realtime"
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/safety"
@@ -31,12 +36,14 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	baseLogHandler := slog.NewJSONHandler(os.Stdout, nil)
+	logger := slog.New(baseLogHandler)
 	cfg, err := config.Load("ai-companion-api")
 	if err != nil {
 		logger.Error("load configuration", "error", err)
 		os.Exit(1)
 	}
+	logger = opslog.NewLogger(baseLogHandler, nil, cfg.ServiceName, cfg.Environment)
 
 	identityStore := identity.Store(identity.NewMemoryStore())
 	characterStore := character.Store(character.NewMemoryStore())
@@ -57,6 +64,9 @@ func main() {
 	}
 	documentBlobs := document.BlobStore(localBlobs)
 	var persistentStore persistence.ApplicationStore
+	var systemLogStore opslog.Store
+	var incidentStore incident.Store
+	var performanceStore performance.Store
 	if cfg.DatabaseDriver != "memory" {
 		connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		persistentStore, err = persistence.Open(connectCtx, cfg.DatabaseDriver, cfg.MySQLDSN, cfg.PostgresDSN)
@@ -85,6 +95,34 @@ func main() {
 			cfg.SkillWorkerEnabled = false
 			logger.Warn("durable Skill queue disabled because API and Worker cannot share the in-memory store")
 		}
+	}
+	if persistentStore != nil {
+		if durableLogs, ok := any(persistentStore).(opslog.Store); ok {
+			systemLogStore = durableLogs
+			logger = opslog.NewLogger(baseLogHandler, durableLogs, cfg.ServiceName, cfg.Environment)
+			logger.Info("system log capture enabled", "event", "opslog.capture.enabled")
+		}
+		if durableIncidents, ok := any(persistentStore).(incident.Store); ok {
+			incidentStore = durableIncidents
+		}
+	}
+	if systemLogStore == nil {
+		systemLogStore = opslog.NewMemoryStore()
+		logger = opslog.NewLogger(baseLogHandler, systemLogStore, cfg.ServiceName, cfg.Environment)
+		logger.Info("system log capture enabled", "event", "opslog.capture.enabled", "storage", "memory")
+	}
+	systemLogQueryStore := systemLogStore
+	if cfg.LokiEnabled {
+		lokiStore, lokiErr := opslog.NewLokiStore(opslog.LokiOptions{
+			BaseURL: cfg.LokiBaseURL, Environment: cfg.Environment, Job: "ai-companion",
+			TenantID: cfg.LokiTenantID, BearerToken: cfg.LokiBearerToken, Timeout: cfg.LokiQueryTimeout,
+		})
+		if lokiErr != nil {
+			logger.Error("initialize Loki query client", "event", "loki.client.failed", "error", lokiErr)
+			os.Exit(1)
+		}
+		systemLogQueryStore = opslog.NewQueryFallbackStore(systemLogStore, lokiStore)
+		logger.Info("Loki log query enabled", "event", "loki.query.enabled", "base_url", cfg.LokiBaseURL)
 	}
 
 	provider := conversation.Provider(conversation.DevelopmentProvider{})
@@ -121,9 +159,25 @@ func main() {
 	server.SetTeamStore(teamStore)
 	server.SetEmailStore(emailStore)
 	server.SetBillingStore(billingStore)
+	controlPlaneStore := controlplane.Store(controlplane.NewMemoryStore())
+	if persistentStore != nil {
+		if configured, ok := any(persistentStore).(controlplane.Store); ok {
+			controlPlaneStore = configured
+		}
+	}
+	if err = server.SetControlPlaneStore(controlPlaneStore); err != nil {
+		logger.Error("initialize configuration control plane", "error", err)
+		os.Exit(1)
+	}
 	server.SetSafetyStore(safetyStore)
+	server.SetSystemLogStore(systemLogQueryStore)
 	if persistentStore != nil {
 		server.SetOperationsStore(persistentStore)
+		server.SetIncidentStore(incidentStore)
+		if durablePerformance, ok := any(persistentStore).(performance.Store); ok {
+			performanceStore = durablePerformance
+			server.SetPerformanceStore(durablePerformance)
+		}
 		server.SetOperatorAuthStore(persistentStore)
 		server.SetIdentityAdminStore(persistentStore)
 		if agentStore, ok := any(persistentStore).(agent.Store); ok {
@@ -147,6 +201,29 @@ func main() {
 	recoveryCancel()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	runtimeInstanceID, runtimeIDErr := id.New()
+	if runtimeIDErr != nil {
+		logger.Error("create API runtime instance id", "error", runtimeIDErr)
+		os.Exit(1)
+	}
+	runtimeStartedAt := time.Now().UTC()
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			syncCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			syncErr := server.SyncRuntimeConfiguration(syncCtx, runtimeInstanceID, cfg.ServiceName, runtimeStartedAt)
+			cancel()
+			if syncErr != nil {
+				logger.Warn("synchronize runtime configuration", "instance_id", runtimeInstanceID, "error", syncErr)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	if persistentStore != nil {
 		go func() {
 			ticker := time.NewTicker(cfg.ReliabilityPollInterval)
@@ -164,6 +241,48 @@ func main() {
 						logger.Info("degradation level", "level", snapshot.Level, "reason", snapshot.Reason, "queue_lag", snapshot.QueueLag)
 						lastLevel = snapshot.Level
 					}
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
+	if incidentStore != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				evaluationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				report, evaluationErr := server.EvaluateAlerts(evaluationCtx, time.Now().UTC())
+				cancel()
+				if evaluationErr != nil {
+					logger.Warn("evaluate alert rules", "event", "alerts.evaluation.failed", "error", evaluationErr)
+				} else if report.Opened > 0 || report.Resolved > 0 {
+					logger.Info("alert incident transitions", "event", "alerts.evaluation.transition", "opened", report.Opened, "resolved", report.Resolved, "triggered", report.Triggered)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
+	if performanceStore != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				evaluationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				report, evaluationErr := server.EvaluatePerformanceBudgets(evaluationCtx, time.Now().UTC())
+				cancel()
+				if evaluationErr != nil && !errors.Is(evaluationErr, performance.ErrConflict) {
+					logger.Warn("evaluate performance budgets", "event", "performance.budgets.evaluation.failed", "error", evaluationErr)
+				} else if report.Opened > 0 || report.Escalated > 0 || report.Resolved > 0 {
+					logger.Info("performance budget transitions", "event", "performance.budgets.evaluation.transition", "projected_exceeded", report.ProjectedExceeded, "opened", report.Opened, "escalated", report.Escalated, "resolved", report.Resolved)
 				}
 				select {
 				case <-ctx.Done():

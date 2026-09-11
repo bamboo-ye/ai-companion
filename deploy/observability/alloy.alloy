@@ -1,0 +1,96 @@
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+discovery.docker "ai_companion" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "ai_companion" {
+  targets = discovery.docker.ai_companion.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "ai-companion"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(api|worker|agent-worker)"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    regex  = "service_name"
+    action = "labeldrop"
+  }
+}
+
+loki.source.docker "ai_companion" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.ai_companion.output
+  labels     = {
+    job         = "ai-companion",
+    environment = sys.env("APP_ENV"),
+  }
+  forward_to = [loki.process.ai_companion.receiver]
+}
+
+loki.process "ai_companion" {
+  stage.json {
+    expressions = {
+      level          = "",
+      service        = "",
+      environment    = "",
+      event          = "",
+      trace_id       = "",
+      span_id        = "",
+      trace_flags    = "",
+      run_id         = "",
+      agent_trace_id = "",
+      node            = "",
+      graph_node      = "",
+      error_code      = "",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+      service = "",
+      environment = "",
+    }
+  }
+
+  // Correlation identifiers deliberately remain structured metadata rather
+  // than indexed labels because they are unbounded/high-cardinality values.
+  stage.structured_metadata {
+    values = {
+      event          = "",
+      trace_id       = "",
+      span_id        = "",
+      trace_flags    = "",
+      run_id         = "",
+      agent_trace_id = "",
+      node            = "",
+      graph_node      = "",
+      error_code      = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

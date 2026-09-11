@@ -442,7 +442,7 @@ _ALLOWED_TOOL_PREFIXES: dict[ModuleKey, tuple[str, ...]] = {
 }
 
 
-def runtime_config(run_id: str) -> dict[str, Any]:
+def runtime_config(run_id: str, recursion_limit: int = 256) -> dict[str, Any]:
     normalized = run_id.strip()
     if not normalized:
         raise ValueError("run_id is required")
@@ -451,7 +451,7 @@ def runtime_config(run_id: str) -> dict[str, Any]:
         # checkpoint_ns values are reserved for compiled subgraphs. Version
         # compatibility is enforced by the persisted graph identity instead.
         "configurable": {"thread_id": normalized},
-        "recursion_limit": 256,
+        "recursion_limit": recursion_limit,
         "max_concurrency": _model_fanout_concurrency(),
     }
 
@@ -1059,7 +1059,9 @@ def _presentation_focused_document_batches(state: AgentState) -> list[dict[str, 
         )
         data = observation.get("data")
         output = data.get("output") if isinstance(data, Mapping) else None
-        text = output.get("text") if isinstance(output, Mapping) else None
+        if not isinstance(output, Mapping):
+            continue
+        text = output.get("text")
         if not isinstance(text, str) or not text.strip():
             continue
         markers = list(_PRESENTATION_PAGE_MARKER.finditer(text))
@@ -1417,7 +1419,9 @@ def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
         )
         data = observation.get("data")
         output = data.get("output") if isinstance(data, Mapping) else None
-        source_ir = output.get("source_ir") if isinstance(output, Mapping) else None
+        if not isinstance(output, Mapping):
+            continue
+        source_ir = output.get("source_ir")
         if not isinstance(source_ir, Mapping):
             continue
         filename = str(output.get("source_filename") or "")
@@ -1451,7 +1455,7 @@ def _presentation_source_ir(state: AgentState) -> dict[str, Any]:
             group_map = {
                 str(item.get("id") or ""): item
                 for item in target.get("row_groups", [])
-                if isinstance(item, Mapping)
+                if isinstance(item, dict)
             }
             for raw_group in table.get("row_groups", []):
                 if not isinstance(raw_group, Mapping):
@@ -1858,7 +1862,7 @@ def _presentation_logical_fields(
 ) -> list[dict[str, Any]]:
     requested = _presentation_requested_columns(task_contract)
     by_target = {
-        int(item.get("target_index")): item
+        int(item["target_index"]): item
         for item in mapping.get("field_mappings", [])
         if isinstance(item, Mapping)
         and isinstance(item.get("target_index"), int)
@@ -2120,7 +2124,7 @@ def _document_batch_observation(batch: Mapping[str, Any]) -> dict[str, Any]:
     if int(batch.get("segment_count") or 1) > 1:
         locator += f" segment:{batch.get('segment_no', 1)}/{batch.get('segment_count', 1)}"
     structured = batch.get("structured") is True
-    output = {
+    output: dict[str, Any] = {
         "source_filename": source_filename,
         "format": "json" if structured else "markdown",
         "text": str(batch.get("processing_text") or batch.get("text") or ""),
@@ -3432,6 +3436,12 @@ def build_graph(
             "remaining_completion_tokens": max(
                 0,
                 int(limits.get("max_completion_tokens", policy.max_completion_tokens))
+                - int(usage.get("completion_tokens", 0)),
+            ),
+            "remaining_total_tokens": max(
+                0,
+                int(limits.get("max_total_tokens", policy.max_total_tokens))
+                - int(usage.get("prompt_tokens", 0))
                 - int(usage.get("completion_tokens", 0)),
             ),
             "remaining_cost_micros": max(
@@ -4904,7 +4914,7 @@ def build_graph(
         definition = _trusted_tool_definition(state, normalized_tool_name)
         if definition is None:
             raise ValueError("argument composition requires a trusted tool definition")
-        parallel_assessment = (
+        parallel_assessment: Mapping[str, Any] = (
             parallel_composition_assessment(state)
             if presentation_tool
             else {
@@ -7701,6 +7711,7 @@ def _validate_checkpoint_identity(
     *,
     run_id: str,
     initial: Mapping[str, Any] | None,
+    expected: Mapping[str, str] | None = None,
 ) -> None:
     graph_name = values.get("graph_name")
     graph_version = values.get("graph_version")
@@ -7717,6 +7728,10 @@ def _validate_checkpoint_identity(
     # bound to the exact Go-owned catalog used to make its model decisions.
     if graph_version != GRAPH_VERSION:
         return
+    for identity_field, expected_value in (expected or {}).items():
+        recorded_value = values.get(identity_field)
+        if not isinstance(recorded_value, str) or recorded_value != expected_value:
+            raise ValueError(f"checkpoint {identity_field} is incompatible with this runtime")
     recorded = values.get("tool_catalog_fingerprint")
     if not isinstance(recorded, str) or not recorded:
         raise ValueError("checkpoint is missing its trusted tool catalog fingerprint")
@@ -7728,7 +7743,7 @@ def _validate_checkpoint_identity(
         raise ValueError("checkpoint trusted tool catalog fingerprint is invalid")
     if initial is None:
         return
-    normalized = _validate_input(initial)
+    normalized: Mapping[str, Any] = _validate_input(initial)
     if normalized["run_id"] != run_id:
         raise ValueError("initial Agent input run_id does not match checkpoint")
     # The catalog is immutable checkpoint state, not resume input. Production
@@ -7751,8 +7766,16 @@ def _validate_checkpoint_identity(
 
 
 class AgentRuntime:
-    def __init__(self, graph: Any) -> None:
+    def __init__(
+        self,
+        graph: Any,
+        *,
+        recursion_limit: int = 256,
+        checkpoint_identity: Mapping[str, str] | None = None,
+    ) -> None:
         self._graph = graph
+        self._recursion_limit = recursion_limit
+        self._checkpoint_identity = dict(checkpoint_identity or {})
 
     def start(self, value: Mapping[str, Any]) -> dict[str, Any]:
         initial = _validate_input(value)
@@ -7768,7 +7791,7 @@ class AgentRuntime:
         initial: Mapping[str, Any] | None = None,
         resolution: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        config = runtime_config(run_id)
+        config = runtime_config(run_id, self._recursion_limit)
         snapshot = self._graph.get_state(config)
         values = getattr(snapshot, "values", {})
         values = dict(values) if isinstance(values, Mapping) else {}
@@ -7787,6 +7810,7 @@ class AgentRuntime:
             values,
             run_id=run_id,
             initial=initial,
+            expected=self._checkpoint_identity,
         )
         pending = _snapshot_interrupt_payloads(snapshot)
         if pending:

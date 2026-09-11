@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type runProcessorFunc func(context.Context, string) (bool, error)
@@ -101,7 +103,9 @@ func TestRunDispatcherAppliesBoundedBackpressure(t *testing.T) {
 }
 
 func TestRunDispatcherEmitsCompletionObservation(t *testing.T) {
-	dispatcher := NewRunDispatcher(runProcessorFunc(func(context.Context, string) (bool, error) {
+	processorCorrelation := make(chan [2]string, 1)
+	dispatcher := NewRunDispatcher(runProcessorFunc(func(ctx context.Context, _ string) (bool, error) {
+		processorCorrelation <- [2]string{tracectx.ID(ctx), tracectx.RunID(ctx)}
 		time.Sleep(time.Millisecond)
 		return true, nil
 	}), 1, 1)
@@ -112,12 +116,14 @@ func TestRunDispatcherEmitsCompletionObservation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- dispatcher.Run(ctx) }()
-	if err := dispatcher.Dispatch(ctx, "observed-run"); err != nil {
+	dispatchCtx := tracectx.WithID(ctx, "trace-dispatch-1234567890")
+	traceID := tracectx.ID(dispatchCtx)
+	if err := dispatcher.Dispatch(dispatchCtx, "observed-run"); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case observation := <-observed:
-		if observation.RunID != "observed-run" || !observation.Processed || observation.Err != nil {
+		if observation.RunID != "observed-run" || observation.TraceID != traceID || !observation.Processed || observation.Err != nil {
 			t.Fatalf("completion observation = %#v", observation)
 		}
 		if observation.QueueWait < 0 || observation.ExecutionDuration < time.Millisecond {
@@ -125,6 +131,9 @@ func TestRunDispatcherEmitsCompletionObservation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("completion observation was not emitted")
+	}
+	if got := <-processorCorrelation; got != ([2]string{traceID, "observed-run"}) {
+		t.Fatalf("processor correlation=%q", got)
 	}
 	cancel()
 	if err := <-done; err != nil {

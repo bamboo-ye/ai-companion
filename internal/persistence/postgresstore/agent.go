@@ -24,14 +24,27 @@ func (s *Store) CreateAgentRun(ctx context.Context, item agent.Run) (agent.Run, 
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO agent.runs (
 			id,thread_id,user_id,conversation_id,character_id,module_key,
-			graph_name,graph_version,status,idempotency_key,input,available_at,
+			graph_name,graph_version,agent_definition_key,agent_definition_version_id,
+			agent_definition_version,agent_definition_revision,agent_definition_fingerprint,
+			agent_definition_model_profile,agent_definition_snapshot,
+			model_profile_key,model_profile_version_id,
+			model_profile_revision,model_profile_config_version,model_profile_fingerprint,
+			model_profile_snapshot,status,idempotency_key,input,available_at,
 			deadline_at,revision,created_at,updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13,$14,$15,$16
+			$1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,'')::uuid,
+			NULLIF($11,0),NULLIF($12,0),NULLIF($13,''),NULLIF($14,''),$15,
+			NULLIF($16,''),NULLIF($17,'')::uuid,NULLIF($18,0),NULLIF($19,''),
+			NULLIF($20,''),$21,$22,NULLIF($23,''),$24,$25,$26,$27,$28,$29
 		)
 		ON CONFLICT DO NOTHING`,
 		item.ID, item.ThreadID, item.UserID, item.ConversationID, item.CharacterID, item.Module,
-		item.GraphName, item.GraphVersion, item.Status, item.IdempotencyKey, item.Input,
+		item.GraphName, item.GraphVersion, item.AgentDefinitionKey, item.AgentDefinitionVersionID,
+		item.AgentDefinitionVersion, item.AgentDefinitionRevision, item.AgentDefinitionFingerprint,
+		item.AgentDefinitionModelProfile, item.AgentDefinitionSnapshot,
+		item.ModelProfileKey, item.ModelProfileVersionID,
+		item.ModelProfileRevision, item.ModelProfileConfigVersion, item.ModelProfileFingerprint,
+		item.ModelProfileSnapshot, item.Status, item.IdempotencyKey, item.Input,
 		item.AvailableAt, item.DeadlineAt, item.Revision, item.CreatedAt, item.UpdatedAt,
 	)
 	if err != nil {
@@ -63,6 +76,10 @@ func (s *Store) CreateAgentRun(ctx context.Context, item agent.Run) (agent.Run, 
 	}
 	if _, err = appendAgentEvent(ctx, tx, item.ID, "accepted", map[string]any{
 		"graph_name": item.GraphName, "graph_version": item.GraphVersion,
+		"agent_definition_version_id":  item.AgentDefinitionVersionID,
+		"agent_definition_fingerprint": item.AgentDefinitionFingerprint,
+		"model_profile_version_id":     item.ModelProfileVersionID,
+		"model_profile_fingerprint":    item.ModelProfileFingerprint,
 	}); err != nil {
 		return agent.Run{}, false, err
 	}
@@ -759,7 +776,14 @@ func (s *Store) ListAgentRunEvents(ctx context.Context, runID string, after int6
 
 const agentRunColumns = `
 	id::text,thread_id,user_id::text,conversation_id::text,character_id::text,
-	module_key,graph_name,graph_version,status,COALESCE(idempotency_key,''),
+	module_key,graph_name,graph_version,COALESCE(agent_definition_key,''),
+	COALESCE(agent_definition_version_id::text,''),COALESCE(agent_definition_version,0),
+	COALESCE(agent_definition_revision,0),COALESCE(agent_definition_fingerprint,''),
+	COALESCE(agent_definition_model_profile,''),
+	COALESCE(agent_definition_snapshot,'null'::jsonb),COALESCE(model_profile_key,''),
+	COALESCE(model_profile_version_id::text,''),COALESCE(model_profile_revision,0),
+	COALESCE(model_profile_config_version,''),COALESCE(model_profile_fingerprint,''),
+	COALESCE(model_profile_snapshot,'null'::jsonb),status,COALESCE(idempotency_key,''),
 	input,COALESCE(output,'null'::jsonb),COALESCE(resume_resolution,'null'::jsonb),
 	COALESCE(error_code,''),
 	COALESCE(error_message,''),available_at,deadline_at,COALESCE(lease_owner,''),
@@ -772,7 +796,12 @@ type agentRunScanner interface {
 func scanAgentRun(row agentRunScanner, item *agent.Run) error {
 	return row.Scan(
 		&item.ID, &item.ThreadID, &item.UserID, &item.ConversationID, &item.CharacterID,
-		&item.Module, &item.GraphName, &item.GraphVersion, &item.Status,
+		&item.Module, &item.GraphName, &item.GraphVersion, &item.AgentDefinitionKey,
+		&item.AgentDefinitionVersionID, &item.AgentDefinitionVersion,
+		&item.AgentDefinitionRevision, &item.AgentDefinitionFingerprint,
+		&item.AgentDefinitionModelProfile, &item.AgentDefinitionSnapshot, &item.ModelProfileKey,
+		&item.ModelProfileVersionID, &item.ModelProfileRevision, &item.ModelProfileConfigVersion,
+		&item.ModelProfileFingerprint, &item.ModelProfileSnapshot, &item.Status,
 		&item.IdempotencyKey, &item.Input, &item.Output, &item.Resume, &item.ErrorCode,
 		&item.ErrorMessage, &item.AvailableAt, &item.DeadlineAt, &item.LeaseOwner,
 		&item.LeaseExpiresAt, &item.Revision, &item.CreatedAt, &item.UpdatedAt,
@@ -822,9 +851,9 @@ func appendAgentDispatchEvent(ctx context.Context, tx *sql.Tx, runID, threadID, 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
 			id,aggregate_type,aggregate_id,event_type,event_version,payload,
-			occurred_at,available_at
-		) VALUES ($1,'agent_run',$2,$3,1,$4,$5,$5)`,
-		eventID, runID, eventType, payload, occurredAt,
+			occurred_at,available_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'agent_run',$2,$3,1,$4,$5,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
+		eventID, runID, eventType, payload, occurredAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	)
 	return err
 }

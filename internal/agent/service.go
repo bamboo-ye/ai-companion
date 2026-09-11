@@ -24,30 +24,76 @@ const (
 )
 
 type Run struct {
-	ID             string          `json:"id"`
-	ThreadID       string          `json:"thread_id"`
-	UserID         string          `json:"user_id"`
-	ConversationID string          `json:"conversation_id"`
-	CharacterID    string          `json:"character_id"`
-	Module         string          `json:"module"`
-	GraphName      string          `json:"graph_name"`
-	GraphVersion   string          `json:"graph_version"`
-	Status         string          `json:"status"`
-	IdempotencyKey string          `json:"-"`
-	Input          json.RawMessage `json:"input"`
-	Output         json.RawMessage `json:"output,omitempty"`
-	Resume         json.RawMessage `json:"resume_resolution,omitempty"`
-	ErrorCode      string          `json:"error_code,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	AvailableAt    time.Time       `json:"available_at"`
-	DeadlineAt     time.Time       `json:"deadline_at"`
-	LeaseOwner     string          `json:"-"`
-	LeaseExpiresAt *time.Time      `json:"-"`
-	Revision       int             `json:"revision"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
-	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	ID                          string          `json:"id"`
+	ThreadID                    string          `json:"thread_id"`
+	UserID                      string          `json:"user_id"`
+	ConversationID              string          `json:"conversation_id"`
+	CharacterID                 string          `json:"character_id"`
+	Module                      string          `json:"module"`
+	GraphName                   string          `json:"graph_name"`
+	GraphVersion                string          `json:"graph_version"`
+	AgentDefinitionKey          string          `json:"agent_definition_key,omitempty"`
+	AgentDefinitionVersionID    string          `json:"agent_definition_version_id,omitempty"`
+	AgentDefinitionVersion      int             `json:"agent_definition_version,omitempty"`
+	AgentDefinitionRevision     int             `json:"agent_definition_revision,omitempty"`
+	AgentDefinitionFingerprint  string          `json:"agent_definition_fingerprint,omitempty"`
+	AgentDefinitionModelProfile string          `json:"agent_definition_model_profile,omitempty"`
+	AgentDefinitionSnapshot     json.RawMessage `json:"agent_definition_snapshot,omitempty"`
+	ModelProfileKey             string          `json:"model_profile_key,omitempty"`
+	ModelProfileVersionID       string          `json:"model_profile_version_id,omitempty"`
+	ModelProfileRevision        int             `json:"model_profile_revision,omitempty"`
+	ModelProfileConfigVersion   string          `json:"model_profile_config_version,omitempty"`
+	ModelProfileFingerprint     string          `json:"model_profile_fingerprint,omitempty"`
+	ModelProfileSnapshot        json.RawMessage `json:"model_profile_snapshot,omitempty"`
+	Status                      string          `json:"status"`
+	IdempotencyKey              string          `json:"-"`
+	Input                       json.RawMessage `json:"input"`
+	Output                      json.RawMessage `json:"output,omitempty"`
+	Resume                      json.RawMessage `json:"resume_resolution,omitempty"`
+	ErrorCode                   string          `json:"error_code,omitempty"`
+	ErrorMessage                string          `json:"error_message,omitempty"`
+	AvailableAt                 time.Time       `json:"available_at"`
+	DeadlineAt                  time.Time       `json:"deadline_at"`
+	LeaseOwner                  string          `json:"-"`
+	LeaseExpiresAt              *time.Time      `json:"-"`
+	Revision                    int             `json:"revision"`
+	CreatedAt                   time.Time       `json:"created_at"`
+	UpdatedAt                   time.Time       `json:"updated_at"`
+	CompletedAt                 *time.Time      `json:"completed_at,omitempty"`
+	OTelTraceParent             string          `json:"otel_traceparent,omitempty"`
+	OTelTraceState              string          `json:"otel_tracestate,omitempty"`
 }
+
+// RunModelProfileSnapshot is the immutable, secret-free model routing contract
+// captured when a Run is accepted. A resumed Run keeps using this exact
+// snapshot even after the active control-plane deployment changes.
+type RunModelProfileSnapshot struct {
+	ProfileKey    string            `json:"profile_key"`
+	VersionID     string            `json:"version_id"`
+	Version       int               `json:"version"`
+	Revision      int               `json:"revision"`
+	ConfigVersion string            `json:"config_version"`
+	Fingerprint   string            `json:"fingerprint"`
+	Variables     map[string]string `json:"variables"`
+}
+
+type RunModelProfileResolver func(context.Context) (RunModelProfileSnapshot, error)
+
+// RunAgentDefinitionSnapshot is the immutable, validated Agent Studio DSL
+// captured when a Run is accepted. The worker may safely resume the Run after
+// a newer definition is published because it never re-resolves active state.
+type RunAgentDefinitionSnapshot struct {
+	Key          string          `json:"key"`
+	VersionID    string          `json:"version_id"`
+	Version      int             `json:"version"`
+	Revision     int             `json:"revision"`
+	Fingerprint  string          `json:"fingerprint"`
+	ModelProfile string          `json:"model_profile"`
+	Definition   json.RawMessage `json:"definition"`
+}
+
+type RunAgentDefinitionResolver func(context.Context, string, string) (RunAgentDefinitionSnapshot, bool, error)
+type RunModelProfileKeyResolver func(context.Context, string) (RunModelProfileSnapshot, error)
 
 type Event struct {
 	ID        int64           `json:"id"`
@@ -88,9 +134,12 @@ type Store interface {
 }
 
 type Service struct {
-	store      Store
-	now        func() time.Time
-	runTimeout time.Duration
+	store                   Store
+	now                     func() time.Time
+	runTimeout              time.Duration
+	modelProfileResolver    RunModelProfileResolver
+	modelProfileKeyResolver RunModelProfileKeyResolver
+	agentDefinitionResolver RunAgentDefinitionResolver
 }
 
 func NewService(store Store) *Service {
@@ -108,6 +157,20 @@ func (s *Service) SetRunTimeout(timeout time.Duration) {
 	if timeout > 0 {
 		s.runTimeout = timeout
 	}
+}
+
+func (s *Service) SetModelProfileResolver(resolver RunModelProfileResolver) {
+	s.modelProfileResolver = resolver
+	s.modelProfileKeyResolver = nil
+}
+
+func (s *Service) SetModelProfileKeyResolver(resolver RunModelProfileKeyResolver) {
+	s.modelProfileKeyResolver = resolver
+	s.modelProfileResolver = nil
+}
+
+func (s *Service) SetAgentDefinitionResolver(resolver RunAgentDefinitionResolver) {
+	s.agentDefinitionResolver = resolver
 }
 
 func (s *Service) ActiveForConversation(ctx context.Context, userID, conversationID string) (Run, error) {
@@ -148,7 +211,141 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Run, bool, err
 		AvailableAt: now, DeadlineAt: now.Add(s.runTimeout),
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
+	if err = s.captureAgentDefinition(ctx, &item); err != nil {
+		return Run{}, false, err
+	}
+	if err = s.captureModelProfile(ctx, &item); err != nil {
+		return Run{}, false, err
+	}
 	return s.store.CreateAgentRun(ctx, item)
+}
+
+func (s *Service) captureModelProfile(ctx context.Context, run *Run) error {
+	if s == nil || run == nil || (s.modelProfileResolver == nil && s.modelProfileKeyResolver == nil) {
+		return nil
+	}
+	var snapshot RunModelProfileSnapshot
+	var err error
+	if s.modelProfileKeyResolver != nil {
+		snapshot, err = s.modelProfileKeyResolver(ctx, run.AgentDefinitionModelProfile)
+	} else {
+		snapshot, err = s.modelProfileResolver(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve model profile for Agent Run: %w", err)
+	}
+	snapshot.ProfileKey = strings.TrimSpace(snapshot.ProfileKey)
+	snapshot.VersionID = strings.TrimSpace(snapshot.VersionID)
+	snapshot.ConfigVersion = strings.TrimSpace(snapshot.ConfigVersion)
+	snapshot.Fingerprint = strings.ToLower(strings.TrimSpace(snapshot.Fingerprint))
+	if snapshot.ProfileKey == "" || snapshot.VersionID == "" || snapshot.Version <= 0 ||
+		snapshot.Revision <= 0 || snapshot.ConfigVersion == "" ||
+		!validConfigurationFingerprint(snapshot.Fingerprint) {
+		return fmt.Errorf("%w: active model profile snapshot is incomplete", ErrValidation)
+	}
+	variables := make(map[string]string, len(snapshot.Variables))
+	for key, value := range snapshot.Variables {
+		key = strings.TrimSpace(key)
+		upper := strings.ToUpper(key)
+		if key == "" || !strings.HasPrefix(key, "MODEL_") ||
+			strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') ||
+			unsafeModelVariableName(upper) ||
+			len(key) > 128 || len(value) > 4096 {
+			return fmt.Errorf("%w: model profile snapshot contains an unsafe runtime variable", ErrValidation)
+		}
+		variables[key] = value
+	}
+	if variables["MODEL_CONFIG_VERSION"] != snapshot.ConfigVersion || len(variables) == 0 {
+		return fmt.Errorf("%w: model profile snapshot version does not match its variables", ErrValidation)
+	}
+	snapshot.Variables = variables
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("encode model profile snapshot: %w", err)
+	}
+	run.ModelProfileKey = snapshot.ProfileKey
+	run.ModelProfileVersionID = snapshot.VersionID
+	run.ModelProfileRevision = snapshot.Revision
+	run.ModelProfileConfigVersion = snapshot.ConfigVersion
+	run.ModelProfileFingerprint = snapshot.Fingerprint
+	run.ModelProfileSnapshot = encoded
+	return nil
+}
+
+func (s *Service) captureAgentDefinition(ctx context.Context, run *Run) error {
+	if s == nil || run == nil || s.agentDefinitionResolver == nil {
+		return nil
+	}
+	snapshot, found, err := s.agentDefinitionResolver(ctx, run.Module, run.UserID)
+	if err != nil {
+		return fmt.Errorf("resolve Agent definition for Run: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	snapshot.Key = strings.TrimSpace(snapshot.Key)
+	snapshot.VersionID = strings.TrimSpace(snapshot.VersionID)
+	snapshot.Fingerprint = strings.ToLower(strings.TrimSpace(snapshot.Fingerprint))
+	snapshot.ModelProfile = strings.TrimSpace(snapshot.ModelProfile)
+	if snapshot.Key == "" || snapshot.VersionID == "" || snapshot.Version <= 0 ||
+		snapshot.Revision <= 0 || snapshot.ModelProfile == "" ||
+		!validConfigurationFingerprint(snapshot.Fingerprint) || len(snapshot.Definition) == 0 ||
+		len(snapshot.Definition) > 1<<20 {
+		return fmt.Errorf("%w: active Agent definition snapshot is incomplete", ErrValidation)
+	}
+	var definition struct {
+		Modules      []string `json:"modules"`
+		ModelProfile string   `json:"model_profile"`
+		Budget       struct {
+			TimeoutMS int `json:"timeout_ms"`
+		} `json:"budget"`
+	}
+	if err = json.Unmarshal(snapshot.Definition, &definition); err != nil ||
+		strings.TrimSpace(definition.ModelProfile) != snapshot.ModelProfile ||
+		!containsString(definition.Modules, run.Module) ||
+		definition.Budget.TimeoutMS < 1000 || definition.Budget.TimeoutMS > 900000 {
+		return fmt.Errorf("%w: active Agent definition snapshot does not match the Run", ErrValidation)
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("%w: Agent definition snapshot is not serializable", ErrValidation)
+	}
+	run.AgentDefinitionKey = snapshot.Key
+	run.AgentDefinitionVersionID = snapshot.VersionID
+	run.AgentDefinitionVersion = snapshot.Version
+	run.AgentDefinitionRevision = snapshot.Revision
+	run.AgentDefinitionFingerprint = snapshot.Fingerprint
+	run.AgentDefinitionModelProfile = snapshot.ModelProfile
+	run.AgentDefinitionSnapshot = encoded
+	run.DeadlineAt = run.CreatedAt.Add(time.Duration(definition.Budget.TimeoutMS) * time.Millisecond)
+	return nil
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func unsafeModelVariableName(name string) bool {
+	return name == "MODEL_API_KEY" || strings.HasSuffix(name, "_SECRET") ||
+		strings.HasSuffix(name, "_PASSWORD") || strings.HasSuffix(name, "_ACCESS_TOKEN") ||
+		strings.HasSuffix(name, "_AUTH_TOKEN") || strings.HasSuffix(name, "_CREDENTIAL")
+}
+
+func validConfigurationFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) Get(ctx context.Context, runID string) (Run, error) {

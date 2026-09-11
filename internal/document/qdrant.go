@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type QdrantIndex struct {
@@ -196,6 +198,7 @@ func (q *QdrantIndex) do(ctx context.Context, method, path string, body any) (in
 	if q.apiKey != "" {
 		request.Header.Set("api-key", q.apiKey)
 	}
+	tracectx.InjectHTTP(ctx, request.Header)
 	response, err := q.client.Do(request)
 	if err != nil {
 		return 0, "", err

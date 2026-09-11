@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import unittest
 from typing import Any, Mapping
 
@@ -17,8 +18,13 @@ from ai_companion_worker.agent_runtime import (
     ToolPreparation,
 )
 from ai_companion_worker.agent_worker import (
+    _agent_runtime_key,
+    _agent_runtime_policy,
     _error_envelope,
+    _filter_agent_tool_definitions,
     _governance_output,
+    _model_environment_for_run,
+    _model_runtime_key,
     _ready_envelope,
     _requires_tool_definitions,
     _serve_requests,
@@ -108,7 +114,175 @@ def tool_definition(name: str) -> dict[str, Any]:
     }
 
 
+def bind_agent_definition(run: dict[str, Any], *, fingerprint: str = "c" * 64) -> None:
+    definition = {
+        "display_name": "Life Agent",
+        "description": "bounded runtime policy",
+        "modules": ["life"],
+        "model_profile": "production-default",
+        "entry_node": "query",
+        "nodes": [
+            {
+                "key": "query",
+                "type": "tool",
+                "tools": ["life_query_today_plan"],
+            },
+            {
+                "key": "answer",
+                "type": "model",
+                "model_role": "responder",
+                "prompt_template": "Answer from trusted observations.",
+            },
+            {"key": "done", "type": "end"},
+        ],
+        "edges": [
+            {"from": "query", "to": "answer"},
+            {"from": "answer", "to": "done"},
+        ],
+        "budget": {
+            "max_steps": 12,
+            "max_model_calls": 3,
+            "max_tool_calls": 1,
+            "max_total_tokens": 4096,
+            "timeout_ms": 120000,
+        },
+    }
+    run.update(
+        {
+            "agent_definition_key": "life-default",
+            "agent_definition_version_id": "agent-version-3",
+            "agent_definition_version": 3,
+            "agent_definition_revision": 7,
+            "agent_definition_fingerprint": fingerprint,
+            "agent_definition_model_profile": "production-default",
+            "agent_definition_snapshot": {
+                "key": "life-default",
+                "version_id": "agent-version-3",
+                "version": 3,
+                "revision": 7,
+                "fingerprint": fingerprint,
+                "model_profile": "production-default",
+                "definition": definition,
+            },
+        }
+    )
+
+
 class AgentWorkerTest(unittest.TestCase):
+    def test_agent_definition_snapshot_applies_budget_and_tool_allowlist(self) -> None:
+        run = run_payload("run-agent-definition")
+        bind_agent_definition(run)
+
+        policy, recursion_limit = _agent_runtime_policy(run)
+        filtered = _filter_agent_tool_definitions(
+            run,
+            [
+                tool_definition("life_query_today_plan"),
+                tool_definition("life_prepare_ledger_entry"),
+            ],
+        )
+
+        self.assertEqual(policy.max_model_calls, 3)
+        self.assertEqual(policy.max_actions, 1)
+        self.assertEqual(policy.max_total_tokens, 4096)
+        self.assertEqual(recursion_limit, 104)
+        self.assertEqual([item["name"] for item in filtered], ["life_query_today_plan"])
+        self.assertEqual(_agent_runtime_key(run), "snapshot:" + "c" * 64)
+
+    def test_agent_definition_snapshot_rejects_mutated_metadata(self) -> None:
+        run = run_payload("run-agent-definition-mutated")
+        bind_agent_definition(run)
+        run["agent_definition_revision"] = 8
+
+        with self.assertRaisesRegex(ValueError, "immutable snapshot"):
+            _agent_runtime_policy(run)
+
+    def test_agent_definition_metadata_is_exposed_in_completed_output(self) -> None:
+        run = run_payload("run-agent-definition-output")
+        bind_agent_definition(run)
+        result = execute_run(
+            run,
+            checkpointer=InMemorySaver(),
+            decisions=RecordingDecisions(
+                ModelDecision(intent="query", tool_name="life_query_today_plan")
+            ),
+            tools=StubTools(
+                ToolPreparation(
+                    status="completed",
+                    tool_name="life_query_today_plan",
+                    response="unused",
+                )
+            ),
+            definitions=[tool_definition("life_query_today_plan")],
+        )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["output"]["agent_definition"]["source"], "agent_studio")
+        self.assertEqual(result["output"]["agent_definition"]["version"], 3)
+        self.assertEqual(result["output"]["budget"]["limits"]["max_model_calls"], 3)
+
+    def test_run_model_snapshot_overrides_live_routing_without_persisting_secret(self) -> None:
+        run = run_payload("run-frozen-model")
+        run.update(
+            {
+                "model_profile_version_id": "version-7",
+                "model_profile_revision": 7,
+                "model_profile_config_version": "frozen-v7",
+                "model_profile_fingerprint": "a" * 64,
+                "model_profile_snapshot": {
+                    "profile_key": "production-default",
+                    "version_id": "version-7",
+                    "version": 7,
+                    "revision": 7,
+                    "config_version": "frozen-v7",
+                    "fingerprint": "a" * 64,
+                    "variables": {
+                        "MODEL_PROVIDER": "openrouter",
+                        "MODEL_CONFIG_VERSION": "frozen-v7",
+                        "MODEL_NAME": "approved/model-v7",
+                    },
+                },
+            }
+        )
+        previous_key = os.environ.get("MODEL_API_KEY")
+        os.environ["MODEL_API_KEY"] = "process-secret"
+        try:
+            environment = _model_environment_for_run(run)
+        finally:
+            if previous_key is None:
+                os.environ.pop("MODEL_API_KEY", None)
+            else:
+                os.environ["MODEL_API_KEY"] = previous_key
+
+        self.assertIsNotNone(environment)
+        assert environment is not None
+        self.assertEqual(environment["MODEL_CONFIG_VERSION"], "frozen-v7")
+        self.assertEqual(environment["MODEL_API_KEY"], "process-secret")
+        self.assertNotIn("MODEL_API_KEY", run["model_profile_snapshot"]["variables"])
+        self.assertEqual(_model_runtime_key(run), "snapshot:" + "a" * 64)
+
+    def test_run_model_snapshot_rejects_mutated_version_metadata(self) -> None:
+        run = run_payload("run-mutated-model")
+        run.update(
+            {
+                "model_profile_version_id": "version-8",
+                "model_profile_revision": 8,
+                "model_profile_config_version": "mutated-v8",
+                "model_profile_fingerprint": "b" * 64,
+                "model_profile_snapshot": {
+                    "profile_key": "production-default",
+                    "version_id": "version-7",
+                    "version": 7,
+                    "revision": 7,
+                    "config_version": "frozen-v7",
+                    "fingerprint": "a" * 64,
+                    "variables": {"MODEL_CONFIG_VERSION": "frozen-v7"},
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "immutable snapshot"):
+            _model_environment_for_run(run)
+
     def test_governance_output_preserves_non_sensitive_model_timeout(self) -> None:
         output = _governance_output(
             {

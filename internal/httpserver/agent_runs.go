@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/chatattachment"
 )
 
@@ -85,6 +86,9 @@ func (s *Server) retryAgentRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := currentAuth(r).User.ID
+	if !s.requireQuota(w, r, billing.ResourceModelCost) || !s.requireQuota(w, r, billing.ResourceAgentRuns) {
+		return
+	}
 	runID := r.PathValue("run_id")
 	idempotencyKey := r.Header.Get("Idempotency-Key")
 	if key := strings.TrimSpace(idempotencyKey); key == "" || len(key) > 128 {
@@ -194,6 +198,18 @@ func publicAgentRun(item agent.Run) map[string]any {
 		"status": item.Status, "revision": item.Revision,
 		"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
 		"deadline_at": item.DeadlineAt,
+	}
+	if item.ModelProfileVersionID != "" {
+		response["model_profile_version_id"] = item.ModelProfileVersionID
+		response["model_profile_config_version"] = item.ModelProfileConfigVersion
+		response["model_profile_fingerprint"] = item.ModelProfileFingerprint
+	}
+	if item.AgentDefinitionVersionID != "" {
+		response["agent_definition_key"] = item.AgentDefinitionKey
+		response["agent_definition_version_id"] = item.AgentDefinitionVersionID
+		response["agent_definition_version"] = item.AgentDefinitionVersion
+		response["agent_definition_revision"] = item.AgentDefinitionRevision
+		response["agent_definition_fingerprint"] = item.AgentDefinitionFingerprint
 	}
 	if item.ErrorCode != "" {
 		response["error_code"] = item.ErrorCode

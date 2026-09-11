@@ -14,7 +14,9 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath \
     -ldflags="-s -w -X github.com/windcry1/ai-companion/internal/buildinfo.Version=${VERSION} -X github.com/windcry1/ai-companion/internal/buildinfo.Commit=${COMMIT} -X github.com/windcry1/ai-companion/internal/buildinfo.Date=${BUILD_DATE}" \
-    -o /out/service ./cmd/${SERVICE}
+    -o /out/service ./cmd/${SERVICE} \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
 
 FROM ${BASE_REGISTRY}/python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -29,10 +31,11 @@ COPY workers/python/src ./workers/python/src
 RUN apt-get update \
     && apt-get install --no-install-recommends -y fonts-wqy-zenhei poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir ./workers/python \
+    && pip install --no-cache-dir "langgraph==1.2.9" ./workers/python \
     && useradd --create-home --uid 10001 app \
     && mkdir -p /app/.data/files /app/.data/skill-files /app/.data/ledger-exports \
     && chown -R app:app /app/.data
 COPY --from=build /out/service /service
+COPY --from=build /out/healthcheck /healthcheck
 USER app
 ENTRYPOINT ["/service"]

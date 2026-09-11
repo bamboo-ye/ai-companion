@@ -12,7 +12,7 @@ Implemented:
 - Consecutive-sample entry hysteresis, candidate reset when signals flap, minimum dwell time, and one-level-at-a-time recovery from L3 to L0.
 - Explicit policies for full RAG, memory extraction, model class, durable long-task queuing, and L3 accept-only behavior. This slice exposes policy state; later slices apply every policy to the relevant execution path.
 - Real MySQL sampling for expired/queued Skill and document leases, generation failures/timeouts, and model usage latency.
-- `X-Trace-ID` validation/generation and propagation on every HTTP response; request logs use trace ID, bounded route patterns, status, and duration without logging request bodies.
+- W3C/OpenTelemetry `traceparent`/`tracestate` extraction and propagation on every HTTP response, with normalized `X-Trace-ID` compatibility; request logs use canonical trace/span IDs, bounded route patterns, status, and duration without logging request bodies.
 - Prometheus text metrics for route/status counts, cumulative duration, degradation level, queue lag/age, model error ratio, and p95 latency.
 - Public `GET /metrics` for monitoring-network scraping and authenticated `GET /v1/reliability` for the current signal, hysteresis, and policy snapshot.
 - `RELIABILITY_POLL_INTERVAL` configuration with a ten-second default and bounded five-second sample timeout.

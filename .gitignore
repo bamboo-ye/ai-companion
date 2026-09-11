@@ -21,6 +21,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .venv/
 workers/python/dist/
 *.egg-info/
@@ -52,14 +53,9 @@ mobile/ios/*.xcodeproj/xcuserdata/
 # Runtime data
 .cache/
 .data/
+.docker-build/
+output/
 .release-evidence/
-artifacts/agent-eval/
-artifacts/observability-eval/
-artifacts/observability-deployment-authorizations/
-artifacts/observability-deployment-controller/
-artifacts/observability-deployment-resolutions/
-artifacts/observability-provider-sandbox/
-artifacts/observability-adapter-certifications/
-artifacts/observability-deployment-shadow/
+artifacts/
 tmp/
 dist/

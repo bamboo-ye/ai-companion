@@ -52,6 +52,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ContextRecentTokenBudget != 6000 || cfg.ContextSummaryTokenBudget != 1200 {
 		t.Fatalf("context budgets = %d/%d", cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
 	}
+	if cfg.BillingQuotaDisabled {
+		t.Fatal("billing quota bypass must be disabled by default")
+	}
+	if cfg.LangfuseEnabled || cfg.LangfuseConfigured || cfg.LangfuseCaptureContent || cfg.LangfuseSampleRate != 1 || cfg.LangfuseBaseURL != "https://cloud.langfuse.com" {
+		t.Fatalf("Langfuse defaults = enabled:%v configured:%v capture:%v sample:%v base:%q", cfg.LangfuseEnabled, cfg.LangfuseConfigured, cfg.LangfuseCaptureContent, cfg.LangfuseSampleRate, cfg.LangfuseBaseURL)
+	}
+	if cfg.LokiEnabled || cfg.LokiConfigured || cfg.LokiBaseURL != "http://loki:3100" || cfg.LokiQueryTimeout != 3*time.Second {
+		t.Fatalf("Loki defaults = enabled:%v configured:%v base:%q timeout:%s", cfg.LokiEnabled, cfg.LokiConfigured, cfg.LokiBaseURL, cfg.LokiQueryTimeout)
+	}
 	if cfg.SkillStorageDir != ".data/skill-files" {
 		t.Fatalf("SkillStorageDir = %q", cfg.SkillStorageDir)
 	}
@@ -98,9 +107,10 @@ func TestLoadDefaults(t *testing.T) {
 		cfg.AgentPythonPoolWarmSize != 1 ||
 		cfg.AgentWorkerTimeout != 12*time.Minute ||
 		cfg.AgentRunTimeout != 15*time.Minute ||
-		cfg.AgentControlPollInterval != 500*time.Millisecond {
+		cfg.AgentControlPollInterval != 500*time.Millisecond ||
+		cfg.AgentModelConfigPollInterval != 10*time.Second {
 		t.Fatalf(
-			"agent worker defaults = group:%q metrics:%q lease:%s poll:%s retry:%s max_retry:%s jitter:%d attempts:%d concurrency:%d queue:%d python_pool:%v warm:%d timeout:%s run:%s control:%s",
+			"agent worker defaults = group:%q metrics:%q lease:%s poll:%s retry:%s max_retry:%s jitter:%d attempts:%d concurrency:%d queue:%d python_pool:%v warm:%d timeout:%s run:%s control:%s model_config:%s",
 			cfg.AgentKafkaConsumerGroup,
 			cfg.AgentMetricsAddr,
 			cfg.AgentWorkerLeaseDuration,
@@ -116,6 +126,7 @@ func TestLoadDefaults(t *testing.T) {
 			cfg.AgentWorkerTimeout,
 			cfg.AgentRunTimeout,
 			cfg.AgentControlPollInterval,
+			cfg.AgentModelConfigPollInterval,
 		)
 	}
 	if len(cfg.AgentChatModules) != 0 {
@@ -137,6 +148,147 @@ func TestLoadRequiresBrokersOnlyWhenKafkaIsEnabled(t *testing.T) {
 	}
 	if !cfg.KafkaEnabled || len(cfg.KafkaBrokers) != 2 {
 		t.Fatalf("Kafka configuration = enabled:%v brokers:%#v", cfg.KafkaEnabled, cfg.KafkaBrokers)
+	}
+}
+
+func TestLoadAllowsBillingQuotaBypassOutsideProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("BILLING_QUOTA_DISABLED", "true")
+
+	cfg, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.BillingQuotaDisabled {
+		t.Fatal("BillingQuotaDisabled = false")
+	}
+}
+
+func TestLoadLangfuseConfiguration(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("LANGFUSE_ENABLED", "true")
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+	t.Setenv("LANGFUSE_SECRET_KEY", "sk-test")
+	t.Setenv("LANGFUSE_BASE_URL", "http://127.0.0.1:3100")
+	t.Setenv("LANGFUSE_CAPTURE_CONTENT", "true")
+	t.Setenv("LANGFUSE_SAMPLE_RATE", "0.25")
+
+	cfg, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.LangfuseEnabled || !cfg.LangfuseConfigured || !cfg.LangfuseCaptureContent || cfg.LangfuseSampleRate != 0.25 || cfg.LangfuseBaseURL != "http://127.0.0.1:3100" {
+		t.Fatalf("Langfuse configuration = %#v", cfg)
+	}
+}
+
+func TestLoadRejectsIncompleteLangfuseConfiguration(t *testing.T) {
+	t.Setenv("LANGFUSE_ENABLED", "true")
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+	t.Setenv("LANGFUSE_SECRET_KEY", "")
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_ENABLED=true" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadRejectsInsecureProductionLangfuseURL(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("LANGFUSE_ENABLED", "true")
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+	t.Setenv("LANGFUSE_SECRET_KEY", "sk-test")
+	t.Setenv("LANGFUSE_BASE_URL", "http://langfuse.internal")
+	setProductionOpenRouter(t)
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "LANGFUSE_BASE_URL must use https outside local development" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadRejectsLangfuseURLCredentials(t *testing.T) {
+	t.Setenv("LANGFUSE_ENABLED", "true")
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+	t.Setenv("LANGFUSE_SECRET_KEY", "sk-test")
+	t.Setenv("LANGFUSE_BASE_URL", "https://user:private@langfuse.example.com")
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "LANGFUSE_BASE_URL must be an absolute HTTP(S) URL without credentials, query or fragment" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadLokiConfiguration(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_BASE_URL", "http://127.0.0.1:3100")
+	t.Setenv("LOKI_TENANT_ID", "tenant-a")
+	t.Setenv("LOKI_BEARER_TOKEN", "private-token")
+	t.Setenv("LOKI_QUERY_TIMEOUT", "2500ms")
+
+	cfg, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.LokiEnabled || !cfg.LokiConfigured || cfg.LokiBaseURL != "http://127.0.0.1:3100" || cfg.LokiTenantID != "tenant-a" || cfg.LokiBearerToken != "private-token" || cfg.LokiQueryTimeout != 2500*time.Millisecond {
+		t.Fatalf("Loki configuration = %#v", cfg)
+	}
+}
+
+func TestLoadRejectsLokiURLCredentials(t *testing.T) {
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_BASE_URL", "https://user:private@loki.example.com")
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "LOKI_BASE_URL must be an absolute HTTP(S) URL without credentials, query or fragment" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadAllowsInternalHTTPProductionLoki(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_BASE_URL", "http://loki:3100")
+	t.Setenv("OPERATOR_MFA_REQUIRED", "true")
+	t.Setenv("AUTH_TOKEN_SECRET", "production-auth-token-secret")
+	t.Setenv("AGENT_GATEWAY_TOKEN", "production-agent-gateway-token")
+	t.Setenv("AGENT_CONFIRMATION_SECRET", "production-agent-confirmation-secret")
+	t.Setenv("OPERATOR_TOKEN", "production-operator-token")
+	t.Setenv("WEB_ORIGIN", "https://app.example.com")
+	setProductionOpenRouter(t)
+
+	cfg, err := Load("test-service")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.LokiConfigured {
+		t.Fatal("LokiConfigured = false")
+	}
+}
+
+func TestLoadRejectsExternalHTTPProductionLoki(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("LOKI_ENABLED", "true")
+	t.Setenv("LOKI_BASE_URL", "http://loki.example.com")
+	t.Setenv("OPERATOR_MFA_REQUIRED", "true")
+	setProductionOpenRouter(t)
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "LOKI_BASE_URL must use https outside the local service network" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidLokiTimeout(t *testing.T) {
+	t.Setenv("LOKI_QUERY_TIMEOUT", "31s")
+	if _, err := Load("test-service"); err == nil || err.Error() != "LOKI_QUERY_TIMEOUT must be positive and at most 30s" {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadRejectsBillingQuotaBypassInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("BILLING_QUOTA_DISABLED", "true")
+	setProductionOpenRouter(t)
+
+	if _, err := Load("test-service"); err == nil || err.Error() != "BILLING_QUOTA_DISABLED cannot be enabled in production" {
+		t.Fatalf("Load() error = %v", err)
 	}
 }
 
@@ -599,6 +751,11 @@ func TestLoadRejectsInvalidAgentRunControlDurations(t *testing.T) {
 	t.Setenv("AGENT_CONTROL_POLL_INTERVAL", "0s")
 	if _, err := Load("test-service"); err == nil {
 		t.Fatal("Load() expected an Agent control poll interval error")
+	}
+	t.Setenv("AGENT_CONTROL_POLL_INTERVAL", "500ms")
+	t.Setenv("AGENT_MODEL_CONFIG_POLL_INTERVAL", "500ms")
+	if _, err := Load("test-service"); err == nil {
+		t.Fatal("Load() expected an Agent model config poll interval error")
 	}
 }
 

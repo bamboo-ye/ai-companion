@@ -12,26 +12,29 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 const pythonRuntimeProtocolVersion = "agent-runtime-jsonl-v1"
 
 type PythonRuntimePool struct {
-	config          PythonRuntimeExecutor
-	args            []string
-	permits         chan struct{}
-	ctx             context.Context
-	cancel          context.CancelFunc
-	mu              sync.Mutex
-	processMu       sync.Mutex
-	idleProcesses   []*pythonRuntimeProcess
-	closed          bool
-	active          sync.WaitGroup
-	requests        atomic.Uint64
-	requestErrors   atomic.Uint64
-	processStarts   atomic.Uint64
-	processDiscards atomic.Uint64
-	onObserve       func(PythonRuntimeObservation)
+	config           PythonRuntimeExecutor
+	args             []string
+	permits          chan struct{}
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	processMu        sync.Mutex
+	idleProcesses    []*pythonRuntimeProcess
+	configGeneration uint64
+	closed           bool
+	active           sync.WaitGroup
+	requests         atomic.Uint64
+	requestErrors    atomic.Uint64
+	processStarts    atomic.Uint64
+	processDiscards  atomic.Uint64
+	onObserve        func(PythonRuntimeObservation)
 }
 
 type PythonRuntimePoolStats struct {
@@ -43,6 +46,7 @@ type PythonRuntimePoolStats struct {
 
 type PythonRuntimeObservation struct {
 	RunID           string
+	TraceID         string
 	ExecutionMode   string
 	ResultStatus    string
 	PoolWait        time.Duration
@@ -58,11 +62,12 @@ type PythonRuntimeObservation struct {
 }
 
 type pythonRuntimeProcess struct {
-	command  *exec.Cmd
-	stdin    *bufio.Writer
-	stdout   *bufio.Reader
-	stderr   *boundedProcessBuffer
-	stopOnce sync.Once
+	command    *exec.Cmd
+	stdin      *bufio.Writer
+	stdout     *bufio.Reader
+	stderr     *boundedProcessBuffer
+	generation uint64
+	stopOnce   sync.Once
 }
 
 type pythonRuntimeEnvelope struct {
@@ -125,7 +130,7 @@ func (p *PythonRuntimePool) Execute(ctx context.Context, run Run) (executionResu
 	p.requests.Add(1)
 	defer p.active.Done()
 	startedAt := time.Now()
-	observation := PythonRuntimeObservation{RunID: run.ID}
+	observation := PythonRuntimeObservation{RunID: run.ID, TraceID: tracectx.ID(ctx)}
 	defer func() {
 		observation.Duration = time.Since(startedAt)
 		observation.Success = executionErr == nil
@@ -165,8 +170,7 @@ func (p *PythonRuntimePool) Execute(ctx context.Context, run Run) (executionResu
 			process.stop()
 			process = nil
 		}
-		if process != nil && p.ctx.Err() == nil {
-			p.putIdleProcess(process)
+		if process != nil && p.ctx.Err() == nil && p.putIdleProcess(process) {
 			process = nil
 		}
 		if process != nil {
@@ -183,6 +187,7 @@ func (p *PythonRuntimePool) Execute(ctx context.Context, run Run) (executionResu
 			return ExecutionResult{}, err
 		}
 	}
+	run = runtimeRunWithTraceContext(ctx, run)
 	payload, err := json.Marshal(run)
 	if err != nil {
 		p.requestErrors.Add(1)
@@ -324,10 +329,15 @@ func (p *PythonRuntimePool) Warm(ctx context.Context, count int) (int, error) {
 		}
 		return 0, context.Canceled
 	}
+	warmed := 0
 	for _, process := range processes {
-		p.putIdleProcess(process)
+		if p.putIdleProcess(process) {
+			warmed++
+		} else {
+			process.stop()
+		}
 	}
-	return len(processes), errors.Join(warmupErrors...)
+	return warmed, errors.Join(warmupErrors...)
 }
 
 func (p *PythonRuntimePool) SetObservationHandler(handler func(PythonRuntimeObservation)) {
@@ -411,10 +421,40 @@ func (p *PythonRuntimePool) takeIdleProcess() *pythonRuntimeProcess {
 	return process
 }
 
-func (p *PythonRuntimePool) putIdleProcess(process *pythonRuntimeProcess) {
+func (p *PythonRuntimePool) putIdleProcess(process *pythonRuntimeProcess) bool {
 	p.processMu.Lock()
+	if process == nil || process.generation != p.configGeneration {
+		p.processMu.Unlock()
+		return false
+	}
 	p.idleProcesses = append(p.idleProcesses, process)
 	p.processMu.Unlock()
+	return true
+}
+
+// ReloadEnvironment atomically changes the environment inherited by newly
+// started Python runtimes. Idle processes are retired immediately; in-flight
+// processes finish their current run and are discarded when returned.
+func (p *PythonRuntimePool) ReloadEnvironment(environment map[string]string) bool {
+	if p == nil {
+		return false
+	}
+	next := cloneRuntimeEnvironment(environment)
+	p.processMu.Lock()
+	if equalRuntimeEnvironment(p.config.Environment, next) {
+		p.processMu.Unlock()
+		return false
+	}
+	p.config.Environment = next
+	p.configGeneration++
+	retired := p.idleProcesses
+	p.idleProcesses = nil
+	p.processMu.Unlock()
+	for _, process := range retired {
+		p.processDiscards.Add(1)
+		process.stop()
+	}
+	return true
 }
 
 func (p *PythonRuntimePool) beginExecution() error {
@@ -428,12 +468,17 @@ func (p *PythonRuntimePool) beginExecution() error {
 }
 
 func (p *PythonRuntimePool) startProcess(ctx context.Context) (*pythonRuntimeProcess, error) {
-	executable := strings.TrimSpace(p.config.Executable)
+	p.processMu.Lock()
+	config := p.config
+	config.Environment = cloneRuntimeEnvironment(p.config.Environment)
+	generation := p.configGeneration
+	p.processMu.Unlock()
+	executable := strings.TrimSpace(config.Executable)
 	if executable == "" {
 		executable = "python3"
 	}
 	command := exec.Command(executable, p.args...)
-	command.Env = p.config.commandEnv()
+	command.Env = config.commandEnv()
 	stdinPipe, err := command.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -452,10 +497,11 @@ func (p *PythonRuntimePool) startProcess(ctx context.Context) (*pythonRuntimePro
 	}
 	p.processStarts.Add(1)
 	process := &pythonRuntimeProcess{
-		command: command,
-		stdin:   bufio.NewWriter(stdinPipe),
-		stdout:  bufio.NewReaderSize(stdoutPipe, 64*1024),
-		stderr:  stderr,
+		command:    command,
+		stdin:      bufio.NewWriter(stdinPipe),
+		stdout:     bufio.NewReaderSize(stdoutPipe, 64*1024),
+		stderr:     stderr,
+		generation: generation,
 	}
 	readyCh := make(chan error, 1)
 	go func() { readyCh <- process.awaitReady() }()

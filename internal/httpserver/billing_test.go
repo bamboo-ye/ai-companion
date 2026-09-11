@@ -48,6 +48,43 @@ func TestFreePlanQuotaBlocksResourceCreation(t *testing.T) {
 	}
 }
 
+func TestDevelopmentQuotaBypassAllowsResourceCreationAndReportsUnlimited(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "development", AuthTokenSecret: "billing-bypass-secret-with-enough-entropy", BillingQuotaDisabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := billing.NewMemoryStore()
+	server.SetBillingStore(store)
+	token, userID := registerBillingUser(t, server, "billing-bypass@example.com", "billing-bypass")
+	store.SetUsage(userID, 10, 3, repeatTimes(time.Now().UTC(), 20))
+
+	documentUpload := performUpload(t, server, token, "unlimited.txt", []byte("quota bypassed"))
+	if documentUpload.Code != http.StatusAccepted {
+		t.Fatalf("document upload=%d %s", documentUpload.Code, documentUpload.Body.String())
+	}
+
+	response := performJSON(t, server, http.MethodGet, "/v1/billing/me", token, nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"limit":-1`) || !strings.Contains(response.Body.String(), `"remaining":-1`) {
+		t.Fatalf("billing summary=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperatorCanInspectAndAdjustUnifiedUsageLedger(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "development", AuthTokenSecret: "billing-ops-secret-with-enough-entropy", OperatorToken: "billing-ops-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := billing.NewMemoryStore()
+	server.SetBillingStore(store)
+	_, userID := registerBillingUser(t, server, "billing-ledger@example.com", "billing-ledger")
+	store.SetExtendedUsage(userID, []time.Time{time.Now().UTC()}, map[time.Time]int{time.Now().UTC(): 650_000})
+
+	created := performOperatorJSON(t, server, http.MethodPost, "/v1/ops/billing/users/"+userID+"/adjustments", "billing-ops-token", "finance-admin", map[string]any{
+		"resource": "model_cost_micros", "delta": -150_000, "reason": "service credit ticket FIN-42",
+	})
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), `"adjustment"`) || !strings.Contains(created.Body.String(), `"used":500000`) {
+		t.Fatalf("create adjustment=%d %s", created.Code, created.Body.String())
+	}
+	listed := performOperatorJSON(t, server, http.MethodGet, "/v1/ops/billing/users/"+userID+"/adjustments", "billing-ops-token", "finance-admin", nil)
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"actor":"finance-admin"`) || !strings.Contains(listed.Body.String(), `FIN-42`) {
+		t.Fatalf("list adjustments=%d %s", listed.Code, listed.Body.String())
+	}
+}
+
 func registerBillingUser(t *testing.T, server *Server, email, key string) (string, string) {
 	t.Helper()
 	response := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{

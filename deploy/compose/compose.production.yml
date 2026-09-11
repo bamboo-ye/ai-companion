@@ -6,6 +6,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+      start_interval: 5s
 
   migrate-postgres:
     image: ai-companion-migrate:${APP_IMAGE_TAG:-production}
@@ -33,6 +34,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+      start_interval: 5s
 
   caddy:
     profiles: ["app"]

@@ -51,13 +51,26 @@ func (s *Store) AcceptAgentMessage(ctx context.Context, message conversation.Mes
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO agent.runs (
 			id,thread_id,user_id,conversation_id,character_id,module_key,
-			graph_name,graph_version,status,idempotency_key,input,available_at,
+			graph_name,graph_version,agent_definition_key,agent_definition_version_id,
+			agent_definition_version,agent_definition_revision,agent_definition_fingerprint,
+			agent_definition_model_profile,agent_definition_snapshot,
+			model_profile_key,model_profile_version_id,
+			model_profile_revision,model_profile_config_version,model_profile_fingerprint,
+			model_profile_snapshot,status,idempotency_key,input,available_at,
 			deadline_at,revision,created_at,updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+			$1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,'')::uuid,
+			NULLIF($11,0),NULLIF($12,0),NULLIF($13,''),NULLIF($14,''),$15,
+			NULLIF($16,''),NULLIF($17,'')::uuid,NULLIF($18,0),NULLIF($19,''),
+			NULLIF($20,''),$21,$22,$23,$24,$25,$26,$27,$28,$29
 		)`,
 		run.ID, run.ThreadID, run.UserID, run.ConversationID, run.CharacterID,
-		run.Module, run.GraphName, run.GraphVersion, run.Status,
+		run.Module, run.GraphName, run.GraphVersion, run.AgentDefinitionKey,
+		run.AgentDefinitionVersionID, run.AgentDefinitionVersion, run.AgentDefinitionRevision,
+		run.AgentDefinitionFingerprint, run.AgentDefinitionModelProfile,
+		run.AgentDefinitionSnapshot, run.ModelProfileKey,
+		run.ModelProfileVersionID, run.ModelProfileRevision, run.ModelProfileConfigVersion,
+		run.ModelProfileFingerprint, run.ModelProfileSnapshot, run.Status,
 		run.IdempotencyKey, run.Input, run.AvailableAt, run.DeadlineAt,
 		run.Revision, run.CreatedAt, run.UpdatedAt,
 	); err != nil {
@@ -65,6 +78,10 @@ func (s *Store) AcceptAgentMessage(ctx context.Context, message conversation.Mes
 	}
 	if _, err = appendAgentEvent(ctx, tx, run.ID, "accepted", map[string]any{
 		"graph_name": run.GraphName, "graph_version": run.GraphVersion,
+		"agent_definition_version_id":  run.AgentDefinitionVersionID,
+		"agent_definition_fingerprint": run.AgentDefinitionFingerprint,
+		"model_profile_version_id":     run.ModelProfileVersionID,
+		"model_profile_fingerprint":    run.ModelProfileFingerprint,
 	}); err != nil {
 		return message, run, err
 	}

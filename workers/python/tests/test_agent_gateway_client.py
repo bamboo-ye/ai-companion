@@ -117,6 +117,28 @@ class HTTPToolGatewayTest(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("X-agent-run-revision"), "7")
 
+    @patch("urllib.request.urlopen")
+    def test_otel_trace_context_is_sent_to_gateway(self, urlopen: Any) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = b'{"items":[]}'
+        gateway = HTTPToolGateway("http://api:8080", "service-token")
+        gateway.bind_trace_context(
+            {
+                "otel_traceparent": (
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                ),
+                "otel_tracestate": "vendor=value",
+            }
+        )
+
+        self.assertEqual(gateway.definitions("run-1"), [])
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("Traceparent"),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+        self.assertEqual(request.get_header("Tracestate"), "vendor=value")
+
     def test_revision_fence_rejects_nonpositive_values(self) -> None:
         gateway = HTTPToolGateway("http://api:8080", "service-token")
         with self.assertRaises(ValueError):

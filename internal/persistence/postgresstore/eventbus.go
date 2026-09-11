@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/eventbus"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 var _ eventbus.Store = (*Store)(nil)
@@ -19,7 +20,8 @@ func (s *Store) ClaimOutboxEvents(ctx context.Context, workerID string, now time
 	rows, err := tx.QueryContext(ctx, `
 		SELECT
 			id::text,aggregate_type,aggregate_id::text,event_type,event_version,
-			payload,occurred_at,attempts
+			payload,occurred_at,attempts,COALESCE(trace_id,''),
+			COALESCE(traceparent,''),COALESCE(tracestate,'')
 		FROM eventing.outbox_events
 		WHERE available_at<=$1
 			AND (
@@ -40,7 +42,8 @@ func (s *Store) ClaimOutboxEvents(ctx context.Context, workerID string, now time
 		var payload []byte
 		if err = rows.Scan(
 			&event.ID, &event.AggregateType, &event.AggregateID, &event.Type,
-			&event.Version, &payload, &event.OccurredAt, &event.Attempts,
+			&event.Version, &payload, &event.OccurredAt, &event.Attempts, &event.TraceID,
+			&event.TraceParent, &event.TraceState,
 		); err != nil {
 			rows.Close()
 			return nil, err
@@ -80,6 +83,12 @@ func (s *Store) ClaimOutboxEvents(ctx context.Context, workerID string, now time
 	}
 	return events, nil
 }
+
+func outboxTraceID(ctx context.Context) string { return tracectx.ID(ctx) }
+
+func outboxTraceParent(ctx context.Context) string { return tracectx.TraceParent(ctx) }
+
+func outboxTraceState(ctx context.Context) string { return tracectx.TraceState(ctx) }
 
 func (s *Store) MarkOutboxPublished(ctx context.Context, eventID, workerID string, ack eventbus.PublishAck, now time.Time) error {
 	result, err := s.db.ExecContext(ctx, `

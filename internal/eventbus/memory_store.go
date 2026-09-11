@@ -207,7 +207,7 @@ func (s *MemoryStore) ListCompensationRecords(_ context.Context, limit int) ([]C
 func memoryOutboxRecord(item memoryEvent) OutboxRecord {
 	event := item.event
 	record := OutboxRecord{
-		ID: event.ID, AggregateType: event.AggregateType, AggregateID: event.AggregateID, Type: event.Type, Version: event.Version,
+		ID: event.ID, TraceID: event.TraceID, TraceParent: event.TraceParent, TraceState: event.TraceState, AggregateType: event.AggregateType, AggregateID: event.AggregateID, Type: event.Type, Version: event.Version,
 		Payload: append([]byte(nil), event.Payload...), OccurredAt: event.OccurredAt, Status: item.status, AvailableAt: item.availableAt,
 		Attempts: event.Attempts, LastError: item.lastError, WorkerID: item.workerID, PublishedTopic: item.ack.Topic,
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -84,6 +85,7 @@ type Config struct {
 	AgentWorkerTimeout                 time.Duration
 	AgentRunTimeout                    time.Duration
 	AgentControlPollInterval           time.Duration
+	AgentModelConfigPollInterval       time.Duration
 	AgentChatModules                   []string
 	OperatorToken                      string
 	OperatorMFARequired                bool
@@ -92,6 +94,18 @@ type Config struct {
 	PresenceTTL                        time.Duration
 	ChatRateLimit                      int
 	ChatRateWindow                     time.Duration
+	BillingQuotaDisabled               bool
+	LangfuseEnabled                    bool
+	LangfuseConfigured                 bool
+	LangfuseBaseURL                    string
+	LangfuseCaptureContent             bool
+	LangfuseSampleRate                 float64
+	LokiEnabled                        bool
+	LokiConfigured                     bool
+	LokiBaseURL                        string
+	LokiTenantID                       string
+	LokiBearerToken                    string
+	LokiQueryTimeout                   time.Duration
 	ContextRecentTokenBudget           int
 	ContextSummaryTokenBudget          int
 	ModelProvider                      string
@@ -236,6 +250,68 @@ func Load(serviceName string) (Config, error) {
 	if _, err := fmt.Sscanf(value("CHAT_RATE_LIMIT", "30"), "%d", &chatRateLimit); err != nil || chatRateLimit < 1 {
 		return Config{}, fmt.Errorf("CHAT_RATE_LIMIT must be a positive integer")
 	}
+	billingQuotaDisabled, err := strconv.ParseBool(value("BILLING_QUOTA_DISABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("BILLING_QUOTA_DISABLED must be true or false")
+	}
+	if production && billingQuotaDisabled {
+		return Config{}, fmt.Errorf("BILLING_QUOTA_DISABLED cannot be enabled in production")
+	}
+	langfuseEnabled, err := strconv.ParseBool(value("LANGFUSE_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("LANGFUSE_ENABLED must be true or false")
+	}
+	langfuseCaptureContent, err := strconv.ParseBool(value("LANGFUSE_CAPTURE_CONTENT", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("LANGFUSE_CAPTURE_CONTENT must be true or false")
+	}
+	langfusePublicKey := strings.TrimSpace(os.Getenv("LANGFUSE_PUBLIC_KEY"))
+	langfuseSecretKey := strings.TrimSpace(os.Getenv("LANGFUSE_SECRET_KEY"))
+	langfuseConfigured := langfusePublicKey != "" && langfuseSecretKey != ""
+	if langfuseEnabled && !langfuseConfigured {
+		return Config{}, fmt.Errorf("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are required when LANGFUSE_ENABLED=true")
+	}
+	langfuseBaseURL := value("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+	parsedLangfuseURL, parseLangfuseErr := url.Parse(langfuseBaseURL)
+	if parseLangfuseErr != nil || parsedLangfuseURL.Host == "" || parsedLangfuseURL.User != nil || parsedLangfuseURL.RawQuery != "" || parsedLangfuseURL.Fragment != "" || (parsedLangfuseURL.Scheme != "https" && parsedLangfuseURL.Scheme != "http") {
+		return Config{}, fmt.Errorf("LANGFUSE_BASE_URL must be an absolute HTTP(S) URL without credentials, query or fragment")
+	}
+	if langfuseEnabled && environment == "production" && parsedLangfuseURL.Scheme != "https" {
+		return Config{}, fmt.Errorf("LANGFUSE_BASE_URL must use https outside local development")
+	}
+	langfuseSampleRate, err := strconv.ParseFloat(value("LANGFUSE_SAMPLE_RATE", "1"), 64)
+	if err != nil || math.IsNaN(langfuseSampleRate) || math.IsInf(langfuseSampleRate, 0) || langfuseSampleRate < 0 || langfuseSampleRate > 1 {
+		return Config{}, fmt.Errorf("LANGFUSE_SAMPLE_RATE must be between 0 and 1")
+	}
+	langfuseFlushAt := 20
+	if _, err := fmt.Sscanf(value("LANGFUSE_FLUSH_AT", "20"), "%d", &langfuseFlushAt); err != nil || langfuseFlushAt < 1 || langfuseFlushAt > 1000 {
+		return Config{}, fmt.Errorf("LANGFUSE_FLUSH_AT must be between 1 and 1000")
+	}
+	langfuseFlushInterval, err := strconv.ParseFloat(value("LANGFUSE_FLUSH_INTERVAL", "5"), 64)
+	if err != nil || math.IsNaN(langfuseFlushInterval) || math.IsInf(langfuseFlushInterval, 0) || langfuseFlushInterval < 0.1 || langfuseFlushInterval > 300 {
+		return Config{}, fmt.Errorf("LANGFUSE_FLUSH_INTERVAL must be between 0.1 and 300")
+	}
+	langfuseTimeoutSeconds := 3
+	if _, err := fmt.Sscanf(value("LANGFUSE_TIMEOUT_SECONDS", "3"), "%d", &langfuseTimeoutSeconds); err != nil || langfuseTimeoutSeconds < 1 || langfuseTimeoutSeconds > 30 {
+		return Config{}, fmt.Errorf("LANGFUSE_TIMEOUT_SECONDS must be between 1 and 30")
+	}
+	lokiEnabled, err := strconv.ParseBool(value("LOKI_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("LOKI_ENABLED must be true or false")
+	}
+	lokiBaseURL := value("LOKI_BASE_URL", "http://loki:3100")
+	parsedLokiURL, parseLokiErr := url.Parse(lokiBaseURL)
+	if parseLokiErr != nil || parsedLokiURL.Host == "" || parsedLokiURL.User != nil || parsedLokiURL.RawQuery != "" || parsedLokiURL.Fragment != "" || (parsedLokiURL.Scheme != "https" && parsedLokiURL.Scheme != "http") {
+		return Config{}, fmt.Errorf("LOKI_BASE_URL must be an absolute HTTP(S) URL without credentials, query or fragment")
+	}
+	if lokiEnabled && production && parsedLokiURL.Scheme != "https" && !localServiceHost(parsedLokiURL.Hostname()) {
+		return Config{}, fmt.Errorf("LOKI_BASE_URL must use https outside the local service network")
+	}
+	lokiQueryTimeout, err := time.ParseDuration(value("LOKI_QUERY_TIMEOUT", "3s"))
+	if err != nil || lokiQueryTimeout <= 0 || lokiQueryTimeout > 30*time.Second {
+		return Config{}, fmt.Errorf("LOKI_QUERY_TIMEOUT must be positive and at most 30s")
+	}
+	lokiConfigured := lokiEnabled && lokiBaseURL != ""
 	contextRecentTokenBudget := 6000
 	if _, err := fmt.Sscanf(value("CONTEXT_RECENT_TOKEN_BUDGET", "6000"), "%d", &contextRecentTokenBudget); err != nil || contextRecentTokenBudget < 128 {
 		return Config{}, fmt.Errorf("CONTEXT_RECENT_TOKEN_BUDGET must be an integer of at least 128")
@@ -482,6 +558,10 @@ func Load(serviceName string) (Config, error) {
 	if err != nil || agentControlPollInterval <= 0 {
 		return Config{}, fmt.Errorf("AGENT_CONTROL_POLL_INTERVAL must be a positive duration")
 	}
+	agentModelConfigPollInterval, err := time.ParseDuration(value("AGENT_MODEL_CONFIG_POLL_INTERVAL", "10s"))
+	if err != nil || agentModelConfigPollInterval < time.Second {
+		return Config{}, fmt.Errorf("AGENT_MODEL_CONFIG_POLL_INTERVAL must be at least 1s")
+	}
 	agentChatModules := splitNonEmpty(value("AGENT_CHAT_MODULES", ""))
 	seenAgentModules := map[string]bool{}
 	for _, module := range agentChatModules {
@@ -593,6 +673,18 @@ func Load(serviceName string) (Config, error) {
 		SMTPPassword:                  os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                      value("SMTP_FROM", ""),
 		SMTPUseTLS:                    smtpUseTLS,
+		BillingQuotaDisabled:          billingQuotaDisabled,
+		LangfuseEnabled:               langfuseEnabled,
+		LangfuseConfigured:            langfuseConfigured,
+		LangfuseBaseURL:               langfuseBaseURL,
+		LangfuseCaptureContent:        langfuseCaptureContent,
+		LangfuseSampleRate:            langfuseSampleRate,
+		LokiEnabled:                   lokiEnabled,
+		LokiConfigured:                lokiConfigured,
+		LokiBaseURL:                   lokiBaseURL,
+		LokiTenantID:                  strings.TrimSpace(os.Getenv("LOKI_TENANT_ID")),
+		LokiBearerToken:               strings.TrimSpace(os.Getenv("LOKI_BEARER_TOKEN")),
+		LokiQueryTimeout:              lokiQueryTimeout,
 		MCPStdioServersJSON:           value("MCP_STDIO_SERVERS_JSON", "[]"),
 		WebOrigin:                     webOrigin,
 		AuthTokenSecret:               authTokenSecret,
@@ -612,6 +704,7 @@ func Load(serviceName string) (Config, error) {
 		AgentWorkerTimeout:            agentWorkerTimeout,
 		AgentRunTimeout:               agentRunTimeout,
 		AgentControlPollInterval:      agentControlPollInterval,
+		AgentModelConfigPollInterval:  agentModelConfigPollInterval,
 		AgentChatModules:              agentChatModules,
 		OperatorToken:                 operatorToken,
 		OperatorMFARequired:           operatorMFARequired,
@@ -655,6 +748,15 @@ func concreteFreeOpenRouterModel(model string) bool {
 		normalized != "openrouter/free" && normalized != "openrouter/auto" &&
 		!strings.HasPrefix(normalized, "~") && !strings.HasSuffix(base, "-latest") &&
 		strings.Contains(base, "/")
+}
+
+func localServiceHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "loki", "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func value(key, fallback string) string {

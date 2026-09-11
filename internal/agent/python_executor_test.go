@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,6 +58,28 @@ func TestPythonRuntimeExecutorObservesProcessExecution(t *testing.T) {
 	}
 }
 
+func TestPythonRuntimeExecutorEnvironmentOverridesParent(t *testing.T) {
+	t.Setenv("MODEL_CONFIG_VERSION", "parent")
+	executor := PythonRuntimeExecutor{Environment: map[string]string{
+		"MODEL_CONFIG_VERSION": "published-v2",
+		"MODEL_PROVIDER":       "openrouter",
+	}}
+	environment := executor.commandEnv()
+	seen := map[string][]string{}
+	for _, item := range environment {
+		key, value, ok := strings.Cut(item, "=")
+		if ok && (key == "MODEL_CONFIG_VERSION" || key == "MODEL_PROVIDER") {
+			seen[key] = append(seen[key], value)
+		}
+	}
+	if len(seen["MODEL_CONFIG_VERSION"]) != 1 || seen["MODEL_CONFIG_VERSION"][0] != "published-v2" {
+		t.Fatalf("MODEL_CONFIG_VERSION values = %#v", seen["MODEL_CONFIG_VERSION"])
+	}
+	if len(seen["MODEL_PROVIDER"]) != 1 || seen["MODEL_PROVIDER"][0] != "openrouter" {
+		t.Fatalf("MODEL_PROVIDER values = %#v", seen["MODEL_PROVIDER"])
+	}
+}
+
 func TestPythonRuntimePoolReusesHealthyProcess(t *testing.T) {
 	t.Setenv("GO_WANT_PYTHON_POOL_HELPER", "1")
 	pool := newPythonRuntimePool(
@@ -91,6 +114,39 @@ func TestPythonRuntimePoolReusesHealthyProcess(t *testing.T) {
 	if observations[0].RunID != "first" || observations[1].RunID != "second" ||
 		observations[0].Duration <= 0 || observations[1].Duration <= 0 {
 		t.Fatalf("pool observation metadata = %#v", observations)
+	}
+}
+
+func TestPythonRuntimePoolReloadEnvironmentRetiresIdleRuntime(t *testing.T) {
+	t.Setenv("GO_WANT_PYTHON_POOL_HELPER", "1")
+	pool := newPythonRuntimePool(
+		PythonRuntimeExecutor{Executable: os.Args[0], Timeout: time.Second, Environment: map[string]string{"MODEL_CONFIG_VERSION": "published-v1"}},
+		1,
+		[]string{"-test.run=^TestPythonRuntimePoolHelperProcess$"},
+	)
+	defer pool.Close()
+	first, err := pool.Execute(context.Background(), Run{ID: "before-reload"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed := pool.ReloadEnvironment(map[string]string{"MODEL_CONFIG_VERSION": "published-v2"}); !changed {
+		t.Fatal("ReloadEnvironment() did not observe a changed snapshot")
+	}
+	if changed := pool.ReloadEnvironment(map[string]string{"MODEL_CONFIG_VERSION": "published-v2"}); changed {
+		t.Fatal("ReloadEnvironment() reloaded an identical snapshot")
+	}
+	second, err := pool.Execute(context.Background(), Run{ID: "after-reload"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Output["model_config_version"] != "published-v1" || second.Output["model_config_version"] != "published-v2" {
+		t.Fatalf("runtime versions = first %#v, second %#v", first.Output, second.Output)
+	}
+	if first.Output["pid"] == second.Output["pid"] {
+		t.Fatalf("reload reused stale process: first=%#v second=%#v", first.Output, second.Output)
+	}
+	if stats := pool.Stats(); stats.ProcessStarts != 2 || stats.ProcessDiscards != 1 {
+		t.Fatalf("pool reload stats = %#v", stats)
 	}
 }
 
@@ -378,7 +434,7 @@ func TestPythonRuntimePoolHelperProcess(t *testing.T) {
 			"ok": true,
 			"result": map[string]any{
 				"status": "completed",
-				"output": map[string]any{"sequence": sequence, "pid": os.Getpid()},
+				"output": map[string]any{"sequence": sequence, "pid": os.Getpid(), "model_config_version": os.Getenv("MODEL_CONFIG_VERSION")},
 			},
 		})
 	}

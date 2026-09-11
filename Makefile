@@ -769,7 +769,7 @@ validate-observability: ## Validate retry alerts and Grafana dashboard contracts
 	ruby scripts/validate_observability.rb --self-test
 	$(PYTHON) scripts/observability_drill.py self-test
 	PYTHONPATH=workers/python/src $(PYTHON) -m ai_companion_worker.evaluation.direct_traffic_preproduction_drill self-test
-	ruby -ryaml -e 'YAML.load_file("deploy/observability/prometheus.yml"); YAML.load_file("deploy/observability/prometheus-drill.yml"); YAML.load_file("deploy/observability/alertmanager-drill.yml"); puts "observability_yaml=valid"'
+	ruby -ryaml -e 'YAML.load_file("deploy/observability/prometheus.yml"); YAML.load_file("deploy/observability/prometheus-drill.yml"); YAML.load_file("deploy/observability/alertmanager-drill.yml"); YAML.load_file("deploy/observability/loki.yml"); puts "observability_yaml=valid"'
 
 observability-drill: validate-observability ## Exercise Prometheus, Alertmanager, webhook firing and recovery in isolation
 	sh scripts/run_observability_drill.sh
@@ -865,19 +865,25 @@ infra-config: ## Validate the Compose model
 	docker compose --env-file .env.example -f deploy/compose/compose.yml config --quiet
 
 docker-up: ## Build and start the complete Docker application stack
-	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
+	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
 
 docker-up-kafka-scale: ## Start the application with Kafka horizontal-scale dispatch
-	KAFKA_ENABLED=true KAFKA_BROKERS=kafka:29092 docker compose --profile app --profile agent --profile agent-runtime --profile kafka-scale --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
+	KAFKA_ENABLED=true KAFKA_BROKERS=kafka:29092 docker compose --profile app --profile agent --profile agent-runtime --profile kafka-scale --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build
 
 docker-down: ## Stop the complete Docker application stack
-	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml down
+	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml down
 
 docker-logs: ## Follow API, Worker, Agent Worker and Web container logs
-	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f api worker agent-worker web
+	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f api worker agent-worker web loki alloy
 
 docker-ps: ## Show complete Docker application status
-	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml ps
+	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml ps
+
+log-stack-up: ## Start Loki and Alloy structured-log collection
+	docker compose --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d loki alloy
+
+log-stack-logs: ## Follow Loki and Alloy logs
+	docker compose --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f loki alloy
 
 release-check: ## Run backend release-readiness static gates
 	GOCACHE=$(GOCACHE) go test ./...

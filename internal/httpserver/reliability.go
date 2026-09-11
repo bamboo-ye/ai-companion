@@ -2,45 +2,25 @@ package httpserver
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/windcry1/ai-companion/internal/platform/id"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
-
-type traceContextKey struct{}
 
 func traceRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		traceID := strings.TrimSpace(r.Header.Get("X-Trace-ID"))
-		if !validTraceID(traceID) {
-			traceID, _ = id.New()
-			if traceID == "" {
-				traceID = fmt.Sprintf("fallback-%d", time.Now().UnixNano())
-			}
-		}
-		w.Header().Set("X-Trace-ID", traceID)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), traceContextKey{}, traceID)))
+		ctx := tracectx.ExtractHTTP(r.Context(), r.Header)
+		tracectx.InjectHTTP(ctx, w.Header())
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 func validTraceID(value string) bool {
-	if len(value) < 16 || len(value) > 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '-' && char != '_' {
-			return false
-		}
-	}
-	return true
+	return tracectx.ValidInput(value)
 }
 
 func requestTraceID(ctx context.Context) string {
-	value, _ := ctx.Value(traceContextKey{}).(string)
-	return value
+	return tracectx.ID(ctx)
 }
 
 type statusResponseWriter struct {

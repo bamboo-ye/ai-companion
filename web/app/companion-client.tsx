@@ -8,6 +8,8 @@ import { LifePanel } from "./life-panel";
 import { MemoryPanel } from "./memory-panel";
 import { TaskHistoryPanel } from "./task-history-panel";
 import { WorkPanel } from "./work-panel";
+import { OnboardingGuide } from "./onboarding-guide";
+import { userGuideTopics, type UserGuideTarget } from "./onboarding-content";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -325,6 +327,18 @@ export function CompanionStart() {
     setMessage("");
   }
 
+  function navigateFromGuide(target: UserGuideTarget) {
+    if (target === "companion" || target === "life" || target === "work") {
+      chooseModule(target);
+      return;
+    }
+    setActiveModule(target === "memories" ? "companion" : "work");
+    setScreen(target);
+    setActiveCharacter(null);
+    setShowCharacterForm(false);
+    setMessage("");
+  }
+
   async function deleteConversation(character: Character, conversation: Conversation) {
     if (!window.confirm(`删除与“${character.name}”的会话？历史消息将不再显示，但角色仍会保留。`)) return;
     setBusy(true);
@@ -398,6 +412,7 @@ export function CompanionStart() {
               {authMode === "login" ? "立即注册" : "返回登录"}
             </button>
           </p>
+          <OnboardingGuide key="user-login-guide" scope="user" topics={userGuideTopics} compact />
         </section>
       </main>
     );
@@ -419,13 +434,23 @@ export function CompanionStart() {
       </aside>
 
       <section className="appWorkspace">
+        <header className={screen === "dashboard" ? "workspaceHeader" : "workspaceUtilityHeader"}>
+          {screen === "dashboard" && <div><p className="eyebrow">{activeModule === "companion" ? "COMPANION" : activeModule === "life" ? "LIFE" : "WORK"}</p><h1>{currentModule.title}</h1><p>{currentModule.description}</p></div>}
+          <div className="workspaceHeaderActions">
+            <OnboardingGuide
+              key="user-workspace-guide"
+              scope="user"
+              topics={userGuideTopics}
+              autoStart
+              toolbar
+              currentTopic={screen === "dashboard" ? (activeModule === "companion" ? "characters" : activeModule) : screen}
+              onNavigate={navigateFromGuide}
+            />
+            {screen === "dashboard" && <button className="primaryAction" type="button" onClick={() => setShowCharacterForm(true)}>＋ 添加角色</button>}
+          </div>
+        </header>
         {screen === "dashboard" && (
           <>
-            <header className="workspaceHeader">
-              <div><p className="eyebrow">{activeModule === "companion" ? "COMPANION" : activeModule === "life" ? "LIFE" : "WORK"}</p><h1>{currentModule.title}</h1><p>{currentModule.description}</p></div>
-              <button className="primaryAction" type="button" onClick={() => setShowCharacterForm(true)}>＋ 添加角色</button>
-            </header>
-
             <div className="moduleTools">
               {activeModule === "companion" && <button type="button" onClick={() => setScreen("memories")}><span>✦</span><div><strong>记忆管理</strong><small>查看与维护长期记忆</small></div></button>}
               {activeModule === "work" && <><button type="button" onClick={() => setScreen("work-tools")}><span>⚙</span><div><strong>工作台</strong><small>技能配置与文件生成</small></div></button><button type="button" onClick={() => setScreen("task-history")}><span>↻</span><div><strong>历史任务</strong><small>状态、结果与失败重试</small></div></button><button type="button" onClick={() => setScreen("documents")}><span>▤</span><div><strong>文档库</strong><small>上传、解析与检索资料</small></div></button></>}

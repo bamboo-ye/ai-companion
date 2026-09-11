@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type OpenAICompatibleProvider struct {
@@ -154,6 +155,7 @@ func (p *OpenAICompatibleProvider) generate(ctx context.Context, persona charact
 	}
 	request.Header.Set("Authorization", "Bearer "+p.APIKey)
 	request.Header.Set("Content-Type", "application/json")
+	tracectx.InjectHTTP(ctx, request.Header)
 	if p.HTTPReferer != "" {
 		request.Header.Set("HTTP-Referer", p.HTTPReferer)
 	}

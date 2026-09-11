@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 // RunProcessor is the durable execution boundary used by RunDispatcher.
@@ -29,12 +31,16 @@ type RunDispatcher struct {
 }
 
 type dispatchState struct {
-	inFlight bool
-	replay   bool
+	inFlight    bool
+	replay      bool
+	traceID     string
+	traceParent string
+	traceState  string
 }
 
 type RunDispatchObservation struct {
 	RunID             string
+	TraceID           string
 	QueueWait         time.Duration
 	ExecutionDuration time.Duration
 	Replay            bool
@@ -52,6 +58,7 @@ const (
 
 type RunDispatchHintObservation struct {
 	RunID   string
+	TraceID string
 	Outcome RunDispatchHintOutcome
 }
 
@@ -63,8 +70,11 @@ type RunDispatcherStats struct {
 }
 
 type dispatchedRun struct {
-	runID      string
-	enqueuedAt time.Time
+	runID       string
+	traceID     string
+	traceParent string
+	traceState  string
+	enqueuedAt  time.Time
 }
 
 func NewRunDispatcher(processor RunProcessor, concurrency, queueSize int) *RunDispatcher {
@@ -101,8 +111,16 @@ func (d *RunDispatcher) Dispatch(ctx context.Context, runID string) error {
 		return ErrValidation
 	}
 	runID = strings.TrimSpace(runID)
+	traceID := tracectx.ID(ctx)
+	traceParent := tracectx.TraceParent(ctx)
+	traceState := tracectx.TraceState(ctx)
 	d.mu.Lock()
 	if state, exists := d.pending[runID]; exists {
+		if traceID != "" {
+			state.traceID = traceID
+			state.traceParent = traceParent
+			state.traceState = traceState
+		}
 		// A duplicate queued hint is already represented by the original item.
 		// A hint received while execution is in flight may represent a newer
 		// durable transition, so retain one trailing replay instead of adding an
@@ -113,15 +131,15 @@ func (d *RunDispatcher) Dispatch(ctx context.Context, runID string) error {
 			outcome = RunDispatchHintReplayRequested
 		}
 		d.mu.Unlock()
-		d.observeHint(runID, outcome)
+		d.observeHint(runID, traceID, outcome)
 		return nil
 	}
-	d.pending[runID] = &dispatchState{}
+	d.pending[runID] = &dispatchState{traceID: traceID, traceParent: traceParent, traceState: traceState}
 	d.mu.Unlock()
 
 	select {
-	case d.queue <- dispatchedRun{runID: runID, enqueuedAt: d.now()}:
-		d.observeHint(runID, RunDispatchHintEnqueued)
+	case d.queue <- dispatchedRun{runID: runID, traceID: traceID, traceParent: traceParent, traceState: traceState, enqueuedAt: d.now()}:
+		d.observeHint(runID, traceID, RunDispatchHintEnqueued)
 		return nil
 	case <-ctx.Done():
 		d.mu.Lock()
@@ -149,9 +167,9 @@ func (d *RunDispatcher) Stats() RunDispatcherStats {
 	return stats
 }
 
-func (d *RunDispatcher) observeHint(runID string, outcome RunDispatchHintOutcome) {
+func (d *RunDispatcher) observeHint(runID, traceID string, outcome RunDispatchHintOutcome) {
 	if d.onHint != nil {
-		d.onHint(RunDispatchHintObservation{RunID: runID, Outcome: outcome})
+		d.onHint(RunDispatchHintObservation{RunID: runID, TraceID: traceID, Outcome: outcome})
 	}
 }
 
@@ -193,6 +211,11 @@ func (d *RunDispatcher) processItem(ctx context.Context, item dispatchedRun) {
 			d.pending[item.runID] = state
 		}
 		state.inFlight = true
+		if state.traceID != "" {
+			item.traceID = state.traceID
+			item.traceParent = state.traceParent
+			item.traceState = state.traceState
+		}
 		d.mu.Unlock()
 
 		queueWait := d.now().Sub(item.enqueuedAt)
@@ -200,10 +223,17 @@ func (d *RunDispatcher) processItem(ctx context.Context, item dispatchedRun) {
 			d.onStart(item.runID, queueWait)
 		}
 		startedAt := d.now()
-		processed, err := d.processor.ProcessRun(ctx, item.runID)
+		runCtx := ctx
+		if restored, ok := tracectx.FromPropagation(ctx, item.traceParent, item.traceState, item.traceID); ok {
+			runCtx = tracectx.Child(restored)
+		} else {
+			runCtx = tracectx.New(ctx)
+		}
+		runCtx = tracectx.WithRunID(runCtx, item.runID)
+		processed, err := d.processor.ProcessRun(runCtx, item.runID)
 		if d.onComplete != nil {
 			d.onComplete(RunDispatchObservation{
-				RunID: item.runID, QueueWait: queueWait,
+				RunID: item.runID, TraceID: item.traceID, QueueWait: queueWait,
 				ExecutionDuration: d.now().Sub(startedAt),
 				Replay:            replay, Processed: processed, Err: err,
 			})
@@ -217,6 +247,9 @@ func (d *RunDispatcher) processItem(ctx context.Context, item dispatchedRun) {
 		if state != nil && state.replay && ctx.Err() == nil {
 			state.replay = false
 			state.inFlight = false
+			item.traceID = state.traceID
+			item.traceParent = state.traceParent
+			item.traceState = state.traceState
 			d.mu.Unlock()
 			item.enqueuedAt = d.now()
 			replay = true

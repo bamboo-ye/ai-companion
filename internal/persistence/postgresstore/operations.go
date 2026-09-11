@@ -110,7 +110,7 @@ func (s *Store) ListCompensationRecords(ctx context.Context, limit int) ([]event
 }
 
 const outboxRecordSelect = `
-	SELECT id::text,aggregate_type,aggregate_id::text,event_type,event_version,
+	SELECT id::text,COALESCE(trace_id,''),COALESCE(traceparent,''),COALESCE(tracestate,''),aggregate_type,aggregate_id::text,event_type,event_version,
 		payload,occurred_at,status,available_at,attempts,COALESCE(last_error,''),
 		COALESCE(worker_id,''),lease_expires_at,published_at,
 		COALESCE(published_topic,''),published_partition,published_offset
@@ -122,7 +122,7 @@ func scanOutboxRecord(row rowScanner) (eventbus.OutboxRecord, error) {
 	var lease, publishedAt sql.NullTime
 	var partition, offset sql.NullInt64
 	err := row.Scan(
-		&record.ID, &record.AggregateType, &record.AggregateID, &record.Type,
+		&record.ID, &record.TraceID, &record.TraceParent, &record.TraceState, &record.AggregateType, &record.AggregateID, &record.Type,
 		&record.Version, &payload, &record.OccurredAt, &record.Status,
 		&record.AvailableAt, &record.Attempts, &record.LastError,
 		&record.WorkerID, &lease, &publishedAt, &record.PublishedTopic,

@@ -15,6 +15,8 @@ from ai_companion_worker.agent_runtime import (
     ToolStatus,
 )
 
+from ai_companion_worker.otel_context import propagation_headers
+
 
 class ToolGatewayHTTPError(RuntimeError):
     """A gateway rejection with status-aware retry semantics."""
@@ -58,6 +60,7 @@ class HTTPToolGateway:
         self._service_token = service_token.strip()
         self._timeout_seconds = timeout_seconds
         self._expected_revision = 0
+        self._trace_headers: dict[str, str] = {}
         if expected_revision:
             self.bind_revision(expected_revision)
 
@@ -74,6 +77,9 @@ class HTTPToolGateway:
         if not isinstance(revision, int) or isinstance(revision, bool) or revision <= 0:
             raise ValueError("agent gateway expected revision must be positive")
         self._expected_revision = revision
+
+    def bind_trace_context(self, run: Mapping[str, Any]) -> None:
+        self._trace_headers = propagation_headers(run)
 
     def prepare(
         self,
@@ -226,6 +232,7 @@ class HTTPToolGateway:
                 "Authorization": f"Bearer {self._service_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                **self._trace_headers,
                 **(
                     {"X-Agent-Run-Revision": str(self._expected_revision)}
                     if self._expected_revision > 0

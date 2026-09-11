@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type fakeConsumer struct {
@@ -35,11 +37,18 @@ func (c *fakeConsumer) Commit(context.Context, KafkaMessage) error {
 
 func TestConsumerRunnerProcessesBeforeInboxAndCommitsDuplicate(t *testing.T) {
 	store := NewMemoryStore()
-	event := Event{ID: "11111111-1111-4111-8111-111111111111", Type: "skill.execute.v1", AggregateID: "22222222-2222-4222-8222-222222222222"}
+	producerCtx := tracectx.WithID(context.Background(), "trace-1234567890abcdef")
+	event := Event{ID: "11111111-1111-4111-8111-111111111111", TraceID: tracectx.ID(producerCtx), TraceParent: tracectx.TraceParent(producerCtx), Type: "skill.execute.v1", AggregateID: "22222222-2222-4222-8222-222222222222"}
 	consumer := &fakeConsumer{messages: []KafkaMessage{{Event: event}, {Event: event}}}
 	calls := 0
-	runner := NewConsumerRunner(store, consumer, ProcessorFunc(func(context.Context, Event) error {
+	runner := NewConsumerRunner(store, consumer, ProcessorFunc(func(ctx context.Context, _ Event) error {
 		calls++
+		if got := tracectx.ID(ctx); got != event.TraceID {
+			t.Fatalf("processor trace id=%q", got)
+		}
+		if got := tracectx.SpanID(ctx); got == tracectx.SpanID(producerCtx) {
+			t.Fatalf("consumer did not create a child span: %q", got)
+		}
 		return nil
 	}), "skill-worker")
 	if err := runner.RunOnce(context.Background()); err != nil {

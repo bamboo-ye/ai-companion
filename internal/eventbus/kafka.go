@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 type KafkaPublisher struct{ client *kgo.Client }
@@ -36,11 +38,14 @@ func (p *KafkaPublisher) Publish(ctx context.Context, event Event) (PublishAck, 
 	if err != nil {
 		return PublishAck{}, err
 	}
-	envelope, err := json.Marshal(map[string]any{
-		"event_id": event.ID, "event_type": event.Type, "event_version": event.Version,
-		"aggregate_type": event.AggregateType, "aggregate_id": event.AggregateID,
-		"occurred_at": event.OccurredAt.UTC(), "payload": json.RawMessage(event.Payload),
-	})
+	producerCtx, err := eventProducerContext(ctx, event)
+	if err != nil {
+		return PublishAck{}, err
+	}
+	event.TraceID = tracectx.ID(producerCtx)
+	event.TraceParent = tracectx.TraceParent(producerCtx)
+	event.TraceState = tracectx.TraceState(producerCtx)
+	envelope, err := marshalKafkaEnvelope(event)
 	if err != nil {
 		return PublishAck{}, err
 	}
@@ -50,11 +55,36 @@ func (p *KafkaPublisher) Publish(ctx context.Context, event Event) (PublishAck, 
 			{Key: "event_id", Value: []byte(event.ID)},
 			{Key: "event_type", Value: []byte(event.Type)},
 			{Key: "event_version", Value: []byte(strconv.Itoa(event.Version))},
+			{Key: "trace_id", Value: []byte(event.TraceID)},
+			{Key: tracectx.TraceParentHeader, Value: []byte(event.TraceParent)},
 		},
 	}
-	result, err := p.client.ProduceSync(ctx, record).First()
+	if event.TraceState != "" {
+		record.Headers = append(record.Headers, kgo.RecordHeader{Key: tracectx.TraceStateHeader, Value: []byte(event.TraceState)})
+	}
+	result, err := p.client.ProduceSync(producerCtx, record).First()
 	if err != nil {
 		return PublishAck{}, err
 	}
 	return PublishAck{Topic: result.Topic, Partition: result.Partition, Offset: result.Offset}, nil
+}
+
+func eventProducerContext(ctx context.Context, event Event) (context.Context, error) {
+	if strings.TrimSpace(event.TraceParent) != "" || strings.TrimSpace(event.TraceID) != "" {
+		restored, ok := tracectx.FromPropagation(ctx, event.TraceParent, event.TraceState, event.TraceID)
+		if !ok {
+			return ctx, fmt.Errorf("invalid event trace context")
+		}
+		return tracectx.Child(restored), nil
+	}
+	return tracectx.Child(ctx), nil
+}
+
+func marshalKafkaEnvelope(event Event) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"event_id": event.ID, "event_type": event.Type, "event_version": event.Version,
+		"aggregate_type": event.AggregateType, "aggregate_id": event.AggregateID,
+		"trace_id": event.TraceID, "traceparent": event.TraceParent, "tracestate": event.TraceState,
+		"occurred_at": event.OccurredAt.UTC(), "payload": json.RawMessage(event.Payload),
+	})
 }

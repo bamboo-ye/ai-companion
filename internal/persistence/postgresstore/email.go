@@ -57,9 +57,9 @@ func (s *Store) CreateDelivery(ctx context.Context, item email.Delivery) error {
 	payload, _ := json.Marshal(map[string]string{"delivery_id": item.ID})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events
-			(id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at)
-		VALUES ($1,'email_delivery',$2,'email.deliver.v1',1,$3,$4)`,
-		eventID, item.ID, payload, item.CreatedAt,
+			(id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate)
+		VALUES ($1,'email_delivery',$2,'email.deliver.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, item.ID, payload, item.CreatedAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return err
 	}
@@ -152,9 +152,9 @@ func (s *Store) ReplayDelivery(ctx context.Context, deliveryID string, now time.
 	payload, _ := json.Marshal(map[string]string{"delivery_id": deliveryID})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events
-			(id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at)
-		VALUES ($1,'email_delivery',$2,'email.deliver.v1',1,$3,$4)`,
-		eventID, deliveryID, payload, now,
+			(id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate)
+		VALUES ($1,'email_delivery',$2,'email.deliver.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, deliveryID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return email.Delivery{}, err
 	}

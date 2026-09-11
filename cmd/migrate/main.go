@@ -66,7 +66,7 @@ func loadMigrationConfig() (migrationConfig, error) {
 		cfg.directory = envOrDefault("MIGRATIONS_DIR", "migrations/postgres")
 		cfg.requiredTables = splitNonEmpty(envOrDefault(
 			"MIGRATION_REQUIRED_TABLES",
-			"agent.runs,app.users,app.conversations,app.long_term_memories,app.ledger_entries,app.reminders,app.notification_deliveries,app.documents,app.skill_runs,app.generated_files,app.workspaces,app.email_deliveries,app.billing_plans,app.user_safety_policies,app.operator_accounts,eventing.outbox_events",
+			"agent.runs,app.users,app.conversations,app.long_term_memories,app.ledger_entries,app.reminders,app.notification_deliveries,app.documents,app.skill_runs,app.generated_files,app.workspaces,app.email_deliveries,app.billing_plans,app.billing_usage_adjustments,app.user_safety_policies,app.operator_accounts,eventing.outbox_events,ops.evaluation_runs,ops.agent_rollouts,ops.system_logs,ops.alert_rules,ops.incidents,ops.alert_subscriptions,ops.incident_notifications,ops.performance_budgets,ops.performance_budget_recommendation_decisions,ops.runtime_config_reports",
 		))
 	default:
 		return migrationConfig{}, fmt.Errorf("DATABASE_DRIVER must be mysql or postgres")

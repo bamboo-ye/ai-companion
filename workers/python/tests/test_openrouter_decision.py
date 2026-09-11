@@ -98,6 +98,96 @@ def context() -> dict[str, Any]:
 
 
 class OpenRouterDecisionPortTest(unittest.TestCase):
+    def test_declarative_model_node_uses_published_prompt_and_safe_state_projection(self) -> None:
+        port = StubOpenRouter(
+            [{"choices": [{"message": {"content": "已根据可信状态回答。"}}]}]
+        )
+
+        result = port.execute_declarative_node(
+            module="life",
+            message="我的计划是什么",
+            node_type="model",
+            role="responder",
+            prompt_template="只依据可信观察回答。",
+            conditions=(),
+            context={
+                "timezone": "Asia/Shanghai",
+                "observations": [{"response": "今天没有计划"}],
+                "private_token": "must-not-leak",
+            },
+        )
+
+        self.assertEqual(result["response"], "已根据可信状态回答。")
+        request = port.requests[0]
+        self.assertEqual(request["messages"][1]["content"], "只依据可信观察回答。")
+        user_payload = json.loads(request["messages"][2]["content"])
+        self.assertNotIn("private_token", user_payload["trusted_state"])
+        self.assertEqual(user_payload["trusted_state"]["timezone"], "Asia/Shanghai")
+
+    def test_declarative_router_accepts_only_a_compiled_condition(self) -> None:
+        port = StubOpenRouter(
+            [{"choices": [{"message": {"content": '{"condition":"respond"}'}}]}]
+        )
+
+        result = port.execute_declarative_node(
+            module="work",
+            message="总结这段内容",
+            node_type="router",
+            role="router",
+            prompt_template="选择下一条边。",
+            conditions=("respond", "stop"),
+            context={},
+        )
+
+        self.assertEqual(result, {"condition": "respond", "response": ""})
+        self.assertEqual(port.requests[0]["response_format"], {"type": "json_object"})
+
+    def test_declarative_router_falls_back_after_unknown_condition(self) -> None:
+        port = StubOpenRouter(
+            [
+                {"choices": [{"message": {"content": '{"condition":"unknown"}'}}]},
+                {"choices": [{"message": {"content": '{"condition":"stop"}'}}]},
+            ]
+        )
+
+        result = port.execute_declarative_node(
+            module="work",
+            message="停止",
+            node_type="router",
+            role="router",
+            prompt_template="选择下一条边。",
+            conditions=("respond", "stop"),
+            context={},
+        )
+
+        self.assertEqual(result["condition"], "stop")
+        events = port.consume_observability()
+        self.assertFalse(events[0]["contract_valid"])
+        self.assertEqual(len(port.requests), 2)
+
+    def test_declarative_model_reserves_combined_token_budget_before_dispatch(self) -> None:
+        port = StubOpenRouter([])
+
+        with self.assertRaises(ModelBudgetExceeded):
+            port.execute_declarative_node(
+                module="life",
+                message="测试",
+                node_type="model",
+                role="responder",
+                prompt_template="回答请求。",
+                conditions=(),
+                context={
+                    "model_allowance": {
+                        "remaining_calls": 2,
+                        "remaining_prompt_tokens": 1000,
+                        "remaining_completion_tokens": 1000,
+                        "remaining_total_tokens": 1,
+                        "remaining_cost_micros": 1000,
+                    }
+                },
+            )
+        self.assertEqual(port.requests, [])
+
     def test_observability_buffers_are_isolated_between_parallel_branches(self) -> None:
         port = StubOpenRouter([])
         barrier = threading.Barrier(2)
@@ -1644,6 +1734,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             manifest["roles"]["router"]["models"],
             ["openai/gpt-5-nano"],
         )
+
         self.assertEqual(
             manifest["roles"]["composer"]["models"],
             ["openai/gpt-5-mini"],
@@ -1689,6 +1780,59 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         self.assertEqual(manifest["inference"]["composer_reasoning_effort"], "low")
         self.assertEqual(manifest["inference"]["assessor_reasoning_effort"], "minimal")
         self.assertEqual(manifest["inference"]["fallback_reasoning_effort"], "low")
+
+    @patch("urllib.request.urlopen")
+    def test_otel_trace_context_is_sent_to_model_provider(self, urlopen: Any) -> None:
+        response = urlopen.return_value.__enter__.return_value
+        response.read.return_value = b'{"choices":[]}'
+        port = OpenRouterDecisionPort(
+            OpenRouterConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                models=("openrouter/free",),
+            )
+        )
+        port.bind_trace_context(
+            {
+                "otel_traceparent": (
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                ),
+                "otel_tracestate": "vendor=value",
+            }
+        )
+
+        self.assertEqual(
+            port._request({"model": "openrouter/free"}, timeout_seconds=1),
+            {"choices": []},
+        )
+        request = urlopen.call_args.args[0]
+        self.assertEqual(
+            request.get_header("Traceparent"),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+        self.assertEqual(request.get_header("Tracestate"), "vendor=value")
+
+    def test_published_role_runtime_settings_are_loaded_from_environment(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL_API_KEY": "test-key",
+                "MODEL_CONFIG_VERSION": "published-routing-v2",
+                "MODEL_ROUTER_NAME": "deepseek/deepseek-v4-flash-0731",
+                "MODEL_ROUTER_MAX_TOKENS": "384",
+                "MODEL_ROUTER_TIMEOUT_SECONDS": "22.5",
+                "MODEL_ROUTER_ATTEMPT_TIMEOUT_SECONDS": "9.5",
+                "MODEL_ROUTER_REASONING_EFFORT": "medium",
+            },
+            clear=True,
+        ):
+            port = OpenRouterDecisionPort.from_env()
+        manifest = port.model_manifest()
+        self.assertEqual(manifest["config_version"], "published-routing-v2")
+        self.assertEqual(manifest["roles"]["router"]["max_output_tokens"], 384)
+        self.assertEqual(manifest["roles"]["router"]["timeout_seconds"], 22.5)
+        self.assertEqual(manifest["roles"]["router"]["attempt_timeout_seconds"], 9.5)
+        self.assertEqual(manifest["roles"]["router"]["reasoning_effort"], "medium")
 
     def test_remaining_run_budget_bounds_completion_before_dispatch(self) -> None:
         port = StubOpenRouter([tool_response("life_query_today_plan")])

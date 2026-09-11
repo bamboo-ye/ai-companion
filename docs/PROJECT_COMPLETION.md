@@ -1,6 +1,6 @@
 # Project Completion Status
 
-Date: 2026-07-11
+Date: 2026-09-09
 
 ## Completion decision
 
@@ -38,6 +38,12 @@ This completion status covers the repository implementation, local quality gates
 - Minor mode and risky Skill capability gating.
 - Operator admin APIs, user moderation, operator MFA/RBAC, admin account bootstrap/rotation, lockout prevention, audit CSV export, release-readiness API, production config hardening, and security headers.
 - Release evidence collection and validation with semantic tests covering required files, status artifacts, manifest completeness, response headers/content types, JSON payload syntax, readiness details, metrics, CSV header, and secret-leak patterns.
+- A user-login-independent `/admin` management console using an in-memory management key, with Operations, persistent redacted logs, alert/incident workflows, email and console notifications, and evidence export.
+- Visual Agent Studio with a governed graph canvas, node-level isolated debugging, independent immutable Prompt versions, evaluation gates, stable canary rollout, publish, and rollback.
+- Immutable billing/model/Agent configuration control plane, unified Agent/model-cost usage accounting, append-only audited corrections, and durable per-instance convergence reporting.
+- Cross-Kafka Trace propagation through transactional Outbox, event envelopes/headers, consumer contexts, asynchronous Agent dispatch, persistent logs, and DLQ inspection.
+- Canonical redacted JSON logs collected by Grafana Alloy into Loki, with low-cardinality labels, Run/Trace/Langfuse Agent Trace correlation, and an explicit PostgreSQL query fallback in the management console.
+- Cost/quality analytics, anomaly detection, budget forecasting, human recommendation decisions, before/after effect reviews, manual rollback linkage, post-rollback verification, and periodic JSON/Markdown review reports.
 
 ## Final local verification gate
 
@@ -63,6 +69,7 @@ The gate currently runs:
 - M7 full native Android/iOS productization, store submission assets, TestFlight/Play internal tracks, native app E2E, APNs/FCM provider setup, and mobile crash/performance release metrics.
 - External production launch and live traffic rollout.
 - Provider-specific approvals and credentials for model vendors, SMTP/OAuth mailbox providers, payment processors, app stores, or regional compliance programs.
+- Production operation, retention approval, and SLO ownership for the external Langfuse project or a separately self-hosted instance. The configured local integration remains fail-open, and Agent evaluation, Prompt governance, redacted logs, Trace correlation, and release gates do not depend on remote availability. Loki is implemented as an optional local/remote telemetry backend; Tempo remains a future integration.
 - Real internal environment evidence bundle, unless collected separately with `make release-evidence` and validated with `make validate-release-evidence`.
 
 ## Deployment handoff

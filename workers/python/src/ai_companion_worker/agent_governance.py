@@ -473,6 +473,7 @@ class BudgetPolicy:
     max_model_calls: int = 64
     max_prompt_tokens: int = 1_000_000
     max_completion_tokens: int = 128_000
+    max_total_tokens: int = 1_128_000
     max_cost_micros: int = 250_000
     max_tool_resumes: int = 120
     tool_poll_interval_ms: int = 500
@@ -489,6 +490,7 @@ class BudgetPolicy:
             max_model_calls=_positive_env("AGENT_MAX_MODEL_CALLS", 64),
             max_prompt_tokens=_positive_env("AGENT_MAX_PROMPT_TOKENS", 1_000_000),
             max_completion_tokens=_positive_env("AGENT_MAX_COMPLETION_TOKENS", 128_000),
+            max_total_tokens=_positive_env("AGENT_MAX_TOTAL_TOKENS", 1_128_000),
             max_cost_micros=_positive_env("AGENT_MAX_COST_MICROS", 250_000),
             max_tool_resumes=_positive_env("AGENT_MAX_TOOL_RESUMES", 120),
             tool_poll_interval_ms=_positive_env("AGENT_TOOL_POLL_INTERVAL_MS", 500),
@@ -510,6 +512,8 @@ class BudgetPolicy:
             raise ValueError("AGENT_MAX_PROMPT_TOKENS must be at most 10000000")
         if self.max_completion_tokens > 1_000_000:
             raise ValueError("AGENT_MAX_COMPLETION_TOKENS must be at most 1000000")
+        if self.max_total_tokens > 11_000_000:
+            raise ValueError("AGENT_MAX_TOTAL_TOKENS must be at most 11000000")
         if self.max_cost_micros > 10_000_000:
             raise ValueError("AGENT_MAX_COST_MICROS must be at most 10000000")
         if self.max_tool_resumes > 10_000:
@@ -536,6 +540,7 @@ class BudgetPolicy:
             "max_model_calls": self.max_model_calls,
             "max_prompt_tokens": self.max_prompt_tokens,
             "max_completion_tokens": self.max_completion_tokens,
+            "max_total_tokens": self.max_total_tokens,
             "max_cost_micros": self.max_cost_micros,
             "max_tool_resumes": self.max_tool_resumes,
             "tool_poll_interval_ms": self.tool_poll_interval_ms,
@@ -578,6 +583,10 @@ def model_budget_exhaustion(
     usage: Mapping[str, Any],
     node: str,
 ) -> str:
+    if _non_negative_int(usage.get("prompt_tokens")) + _non_negative_int(
+        usage.get("completion_tokens")
+    ) >= _positive_int(limits.get("max_total_tokens"), 1):
+        return "总 token 预算已用完"
     checks = (
         ("model_calls", "max_model_calls", "模型调用次数"),
         ("prompt_tokens", "max_prompt_tokens", "输入 token"),

@@ -8,8 +8,9 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" \
-    -o /out/agent-worker ./cmd/agent-worker
+    go build -trimpath -ldflags="-s -w" -o /out/agent-worker ./cmd/agent-worker \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
 
 FROM ${BASE_REGISTRY}/python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -27,5 +28,6 @@ RUN pip install --no-cache-dir --no-deps ./workers/python \
     && mkdir -p /app/.scheduler /app/.shadow \
     && chown -R agent:agent /app/.scheduler /app/.shadow
 COPY --from=build /out/agent-worker /agent-worker
+COPY --from=build /out/healthcheck /healthcheck
 USER agent
 ENTRYPOINT ["/agent-worker"]

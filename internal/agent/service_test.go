@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,106 @@ func TestCreateRejectsUnsupportedModule(t *testing.T) {
 		Module: "finance",
 	}); err == nil {
 		t.Fatal("Create() expected validation error")
+	}
+}
+
+func TestCreateCapturesImmutableModelProfileSnapshot(t *testing.T) {
+	store := &serviceStore{}
+	service := NewService(store)
+	service.SetModelProfileResolver(func(context.Context) (RunModelProfileSnapshot, error) {
+		return RunModelProfileSnapshot{
+			ProfileKey: "production-default", VersionID: "20000000-0000-4000-8000-000000000002",
+			Version: 2, Revision: 7, ConfigVersion: "routing-v2",
+			Fingerprint: strings.Repeat("a", 64),
+			Variables: map[string]string{
+				"MODEL_PROVIDER": "openrouter", "MODEL_CONFIG_VERSION": "routing-v2",
+			},
+		}, nil
+	})
+	item, created, err := service.Create(context.Background(), CreateInput{
+		UserID: "user-1", ConversationID: "conversation-1", CharacterID: "character-1",
+		Module: "work", Payload: map[string]any{"user_message": "test"},
+	})
+	if err != nil || !created {
+		t.Fatalf("Create() = %#v, %v, %v", item, created, err)
+	}
+	if item.ModelProfileVersionID != "20000000-0000-4000-8000-000000000002" ||
+		item.ModelProfileRevision != 7 || item.ModelProfileConfigVersion != "routing-v2" ||
+		item.ModelProfileFingerprint != strings.Repeat("a", 64) {
+		t.Fatalf("model profile metadata = %#v", item)
+	}
+	var snapshot RunModelProfileSnapshot
+	if err = json.Unmarshal(item.ModelProfileSnapshot, &snapshot); err != nil ||
+		snapshot.Variables["MODEL_PROVIDER"] != "openrouter" {
+		t.Fatalf("model profile snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestCreateCapturesAgentDefinitionAndUsesItsModelProfile(t *testing.T) {
+	store := &serviceStore{}
+	now := time.Date(2026, time.September, 5, 8, 0, 0, 0, time.UTC)
+	service := NewServiceWithClock(store, func() time.Time { return now })
+	definition := json.RawMessage(`{
+		"display_name":"Work Agent","description":"","modules":["work"],
+		"model_profile":"work-profile","entry_node":"answer",
+		"nodes":[{"key":"answer","type":"model","model_role":"responder","prompt_template":"Answer."},{"key":"done","type":"end"}],
+		"edges":[{"from":"answer","to":"done"}],
+		"budget":{"max_steps":8,"max_model_calls":4,"max_tool_calls":0,"max_total_tokens":12000,"timeout_ms":120000}
+	}`)
+	service.SetAgentDefinitionResolver(func(_ context.Context, module, routingKey string) (RunAgentDefinitionSnapshot, bool, error) {
+		if module != "work" {
+			t.Fatalf("resolver module = %q", module)
+		}
+		if routingKey != "user-1" {
+			t.Fatalf("resolver routing key = %q", routingKey)
+		}
+		return RunAgentDefinitionSnapshot{
+			Key: "work-default", VersionID: "30000000-0000-4000-8000-000000000003",
+			Version: 3, Revision: 9, Fingerprint: strings.Repeat("b", 64),
+			ModelProfile: "work-profile", Definition: definition,
+		}, true, nil
+	})
+	service.SetModelProfileKeyResolver(func(_ context.Context, profileKey string) (RunModelProfileSnapshot, error) {
+		if profileKey != "work-profile" {
+			t.Fatalf("model profile key = %q", profileKey)
+		}
+		return RunModelProfileSnapshot{
+			ProfileKey: profileKey, VersionID: "40000000-0000-4000-8000-000000000004",
+			Version: 4, Revision: 11, ConfigVersion: "work-routing-v4",
+			Fingerprint: strings.Repeat("c", 64), Variables: map[string]string{
+				"MODEL_PROVIDER": "openrouter", "MODEL_CONFIG_VERSION": "work-routing-v4",
+			},
+		}, nil
+	})
+	item, created, err := service.Create(context.Background(), CreateInput{
+		UserID: "user-1", ConversationID: "conversation-1", CharacterID: "character-1",
+		Module: "work", Payload: map[string]any{"user_message": "test"},
+	})
+	if err != nil || !created {
+		t.Fatalf("Create() = %#v, %v, %v", item, created, err)
+	}
+	if item.AgentDefinitionKey != "work-default" || item.AgentDefinitionVersion != 3 ||
+		item.AgentDefinitionRevision != 9 || item.AgentDefinitionFingerprint != strings.Repeat("b", 64) ||
+		item.ModelProfileKey != "work-profile" || !item.DeadlineAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("bound Agent Run = %#v", item)
+	}
+	var snapshot RunAgentDefinitionSnapshot
+	if err = json.Unmarshal(item.AgentDefinitionSnapshot, &snapshot); err != nil ||
+		snapshot.VersionID != item.AgentDefinitionVersionID || len(snapshot.Definition) == 0 {
+		t.Fatalf("Agent definition snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestCreateFailsClosedWhenModelProfileCannotBeResolved(t *testing.T) {
+	service := NewService(&serviceStore{})
+	service.SetModelProfileResolver(func(context.Context) (RunModelProfileSnapshot, error) {
+		return RunModelProfileSnapshot{}, errors.New("control plane unavailable")
+	})
+	if _, _, err := service.Create(context.Background(), CreateInput{
+		UserID: "user-1", ConversationID: "conversation-1", CharacterID: "character-1",
+		Module: "work", Payload: map[string]any{"user_message": "test"},
+	}); err == nil || !strings.Contains(err.Error(), "control plane unavailable") {
+		t.Fatalf("Create() error = %v", err)
 	}
 }
 

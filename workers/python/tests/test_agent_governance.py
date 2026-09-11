@@ -81,6 +81,12 @@ class AgentGovernanceTest(unittest.TestCase):
         usage["model_calls_by_node"] = {"plan": 2}
         self.assertIn("plan", model_budget_exhaustion(limits, usage, "plan"))
 
+        usage = initial_budget_usage()
+        usage["prompt_tokens"] = 70
+        usage["completion_tokens"] = 30
+        limits["max_total_tokens"] = 100
+        self.assertIn("总 token", model_budget_exhaustion(limits, usage, "life"))
+
     def test_tool_poll_backoff_limits_are_explicit(self) -> None:
         policy = BudgetPolicy()
         self.assertEqual(policy.tool_poll_interval_ms, 500)

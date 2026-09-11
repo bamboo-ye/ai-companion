@@ -444,7 +444,7 @@ func (s *Server) getReleaseReadiness(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	checks := make([]releaseReadinessCheck, 0, 11)
+	checks := make([]releaseReadinessCheck, 0, 13)
 	add := func(key string, passed, required bool, message string) {
 		status := "passed"
 		if !passed {
@@ -467,6 +467,8 @@ func (s *Server) getReleaseReadiness(w http.ResponseWriter, r *http.Request) {
 	add("https_web_origin", !production || strings.HasPrefix(strings.TrimSpace(s.webOrigin), "https://"), production, "Production WEB_ORIGIN must use https://.")
 	add("security_headers_enabled", true, true, "Global security headers are installed on all HTTP responses.")
 	add("model_provider_configured", modelProvider != "development", production, "Production should configure an approved non-development model provider.")
+	add("langfuse_llm_observability", s.langfuseEnabled && s.langfuseConfigured, false, "Enable Langfuse to export LLM generations, Agent traces, node observations, and quality scores.")
+	add("loki_structured_logs", s.lokiEnabled && s.lokiConfigured, false, "Enable Loki and Alloy for cross-service structured log search with Run/Trace correlation.")
 
 	status := "ready"
 	for _, check := range checks {
@@ -490,11 +492,28 @@ func (s *Server) getOperatorConsoleBootstrap(w http.ResponseWriter, r *http.Requ
 		operator.Role = "viewer"
 	}
 	capabilities := map[string]bool{
-		"view_operations":          opsauth.Can(operator.Role, "viewer"),
-		"replay_operations":        opsauth.Can(operator.Role, "support"),
-		"manage_users":             opsauth.Can(operator.Role, "support"),
-		"manage_operator_accounts": opsauth.Can(operator.Role, "admin"),
-		"export_audit_logs":        opsauth.Can(operator.Role, "admin"),
+		"view_operations":            opsauth.Can(operator.Role, "viewer"),
+		"view_agent_runs":            opsauth.Can(operator.Role, "viewer"),
+		"view_system_logs":           opsauth.Can(operator.Role, "viewer"),
+		"view_incidents":             opsauth.Can(operator.Role, "viewer"),
+		"view_performance":           opsauth.Can(operator.Role, "viewer"),
+		"manage_performance_budgets": opsauth.Can(operator.Role, "admin"),
+		"manage_alert_rules":         opsauth.Can(operator.Role, "admin"),
+		"manage_alert_subscriptions": opsauth.Can(operator.Role, "admin"),
+		"manage_incidents":           opsauth.Can(operator.Role, "support"),
+		"export_incident_evidence":   opsauth.Can(operator.Role, "viewer"),
+		"view_configuration":         opsauth.Can(operator.Role, "viewer"),
+		"view_config_convergence":    opsauth.Can(operator.Role, "viewer"),
+		"manage_configuration":       opsauth.Can(operator.Role, "admin"),
+		"view_billing_usage":         opsauth.Can(operator.Role, "support"),
+		"adjust_billing_usage":       opsauth.Can(operator.Role, "admin"),
+		"run_agent_sandbox":          opsauth.Can(operator.Role, "support"),
+		"run_agent_evaluation":       opsauth.Can(operator.Role, "support"),
+		"manage_agent_rollouts":      opsauth.Can(operator.Role, "admin"),
+		"replay_operations":          opsauth.Can(operator.Role, "support"),
+		"manage_users":               opsauth.Can(operator.Role, "support"),
+		"manage_operator_accounts":   opsauth.Can(operator.Role, "admin"),
+		"export_audit_logs":          opsauth.Can(operator.Role, "admin"),
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"operator": map[string]any{
@@ -504,7 +523,30 @@ func (s *Server) getOperatorConsoleBootstrap(w http.ResponseWriter, r *http.Requ
 			"legacy":       operator.Legacy,
 		},
 		"capabilities": capabilities,
+		"integrations": map[string]any{
+			"langfuse": map[string]any{
+				"enabled":         s.langfuseEnabled,
+				"configured":      s.langfuseConfigured,
+				"base_url":        s.langfuseBaseURL,
+				"sample_rate":     s.langfuseSampleRate,
+				"capture_content": s.langfuseCapture,
+				"responsibility":  "llm_agent_observability",
+			},
+			"loki": map[string]any{
+				"enabled":        s.lokiEnabled,
+				"configured":     s.lokiConfigured,
+				"base_url":       s.lokiBaseURL,
+				"responsibility": "structured_system_logs",
+				"storage":        "loki",
+				"fallback":       "postgres",
+			},
+		},
 		"sections": []map[string]any{
+			{"key": "agents", "label": "Agent Runs", "required_role": "viewer", "routes": []string{"/v1/ops/agent-runs", "/v1/ops/reliability"}},
+			{"key": "logs", "label": "System Logs", "required_role": "viewer", "routes": []string{"/v1/ops/logs"}},
+			{"key": "incidents", "label": "Alerts & Incidents", "required_role": "viewer", "routes": []string{"/v1/ops/alert-rules", "/v1/ops/alert-subscriptions", "/v1/ops/incidents", "/v1/ops/incidents/{incident_id}/notifications", "/v1/ops/incidents/{incident_id}/evidence"}},
+			{"key": "performance", "label": "Cost & Quality", "required_role": "viewer", "routes": []string{"/v1/ops/performance/versions", "/v1/ops/performance/models", "/v1/ops/performance/anomalies", "/v1/ops/performance/trend", "/v1/ops/performance/forecast", "/v1/ops/performance/budgets", "/v1/ops/performance/budgets/forecast-history", "/v1/ops/performance/budgets/report", "/v1/ops/performance/budgets/{budget_id}/preview", "/v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/acknowledge", "/v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/close", "/v1/ops/performance/budgets/evaluate"}},
+			{"key": "configuration", "label": "Configuration", "required_role": "viewer", "routes": []string{"/v1/ops/configuration/convergence", "/v1/ops/billing/plans", "/v1/ops/billing/users/{user_id}/usage", "/v1/ops/billing/users/{user_id}/adjustments", "/v1/ops/model-profiles", "/v1/ops/model/catalog"}},
 			{"key": "queues", "label": "Queues", "required_role": "viewer", "routes": []string{"/v1/ops/outbox/dead-letter", "/v1/ops/kafka/poison-messages"}},
 			{"key": "email", "label": "Email Deliveries", "required_role": "viewer", "routes": []string{"/v1/ops/email/deliveries"}},
 			{"key": "users", "label": "Users", "required_role": "support", "routes": []string{"/v1/ops/users"}},
@@ -512,6 +554,14 @@ func (s *Server) getOperatorConsoleBootstrap(w http.ResponseWriter, r *http.Requ
 			{"key": "audit", "label": "Audit Logs", "required_role": "viewer", "routes": []string{"/v1/ops/audit-logs", "/v1/ops/audit-logs/export"}},
 		},
 		"filters": map[string]any{
+			"system_logs": map[string]any{
+				"level":      []string{"DEBUG", "INFO", "WARN", "ERROR"},
+				"time_range": []string{"15m", "1h", "6h", "24h", "7d"},
+			},
+			"incidents": map[string]any{
+				"status":   []string{"open", "acknowledged", "resolved"},
+				"severity": []string{"warning", "critical"},
+			},
 			"audit_logs": map[string]any{
 				"actor_type":    []string{"user", "operator", "system"},
 				"resource_type": []string{"user", "operator_account", "email_delivery", "skill_run", "ledger_entry", "reminder", "skill", "user_safety_policy"},

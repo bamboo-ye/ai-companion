@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 var ErrConsumerUnavailable = errors.New("Kafka consumer unavailable")
@@ -78,6 +79,9 @@ func (c *KafkaConsumer) Poll(ctx context.Context) (KafkaMessage, error) {
 		EventVersion  int             `json:"event_version"`
 		AggregateType string          `json:"aggregate_type"`
 		AggregateID   string          `json:"aggregate_id"`
+		TraceID       string          `json:"trace_id"`
+		TraceParent   string          `json:"traceparent"`
+		TraceState    string          `json:"tracestate"`
 		OccurredAt    time.Time       `json:"occurred_at"`
 		Payload       json.RawMessage `json:"payload"`
 	}
@@ -90,7 +94,51 @@ func (c *KafkaConsumer) Poll(ctx context.Context) (KafkaMessage, error) {
 	if !isUUID(envelope.EventID) {
 		return KafkaMessage{}, PoisonMessageError{Message: KafkaMessage{record: record}, Cause: fmt.Errorf("invalid Kafka event id %q", envelope.EventID)}
 	}
-	return KafkaMessage{Event: Event{ID: envelope.EventID, AggregateType: envelope.AggregateType, AggregateID: envelope.AggregateID, Type: envelope.EventType, Version: envelope.EventVersion, Payload: envelope.Payload, OccurredAt: envelope.OccurredAt}, record: record}, nil
+	headerTraceID := kafkaHeader(record, "trace_id")
+	headerTraceParent := kafkaHeader(record, tracectx.TraceParentHeader)
+	headerTraceState := kafkaHeader(record, tracectx.TraceStateHeader)
+	if propagationMismatch(headerTraceID, envelope.TraceID) || propagationMismatch(headerTraceParent, envelope.TraceParent) || propagationMismatch(headerTraceState, envelope.TraceState) {
+		return KafkaMessage{}, PoisonMessageError{Message: KafkaMessage{record: record}, Cause: errors.New("Kafka trace headers do not match envelope")}
+	}
+	traceID := firstNonEmpty(headerTraceID, envelope.TraceID)
+	traceParent := firstNonEmpty(headerTraceParent, envelope.TraceParent)
+	traceState := firstNonEmpty(headerTraceState, envelope.TraceState)
+	if traceID != "" && !tracectx.ValidInput(traceID) {
+		return KafkaMessage{}, PoisonMessageError{Message: KafkaMessage{record: record}, Cause: fmt.Errorf("invalid Kafka trace id %q", envelope.TraceID)}
+	}
+	if traceParent != "" || traceID != "" {
+		restored, ok := tracectx.FromPropagation(context.Background(), traceParent, traceState, traceID)
+		if !ok {
+			return KafkaMessage{}, PoisonMessageError{Message: KafkaMessage{record: record}, Cause: errors.New("invalid Kafka trace context")}
+		}
+		traceID = tracectx.ID(restored)
+		traceParent = tracectx.TraceParent(restored)
+		traceState = tracectx.TraceState(restored)
+	}
+	return KafkaMessage{Event: Event{ID: envelope.EventID, TraceID: traceID, TraceParent: traceParent, TraceState: traceState, AggregateType: envelope.AggregateType, AggregateID: envelope.AggregateID, Type: envelope.EventType, Version: envelope.EventVersion, Payload: envelope.Payload, OccurredAt: envelope.OccurredAt}, record: record}, nil
+}
+
+func kafkaHeader(record *kgo.Record, key string) string {
+	for _, header := range record.Headers {
+		if strings.EqualFold(strings.TrimSpace(header.Key), key) {
+			return strings.TrimSpace(string(header.Value))
+		}
+	}
+	return ""
+}
+
+func propagationMismatch(header, envelope string) bool {
+	header, envelope = strings.TrimSpace(header), strings.TrimSpace(envelope)
+	return header != "" && envelope != "" && header != envelope
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *KafkaConsumer) Commit(ctx context.Context, message KafkaMessage) error {
@@ -171,10 +219,19 @@ func (r *ConsumerRunner) RunOnce(ctx context.Context) error {
 		return err
 	}
 	if !seen {
-		if err = r.processor.Process(ctx, message.Event); err != nil {
+		eventCtx := ctx
+		if restored, ok := tracectx.FromPropagation(ctx, message.Event.TraceParent, message.Event.TraceState, message.Event.TraceID); ok {
+			eventCtx = tracectx.Child(restored)
+		} else {
+			eventCtx = tracectx.New(ctx)
+		}
+		if strings.HasSuffix(message.Event.AggregateType, "_run") {
+			eventCtx = tracectx.WithRunID(eventCtx, message.Event.AggregateID)
+		}
+		if err = r.processor.Process(eventCtx, message.Event); err != nil {
 			return err
 		}
-		if _, err = r.store.RecordInboxEvent(ctx, r.name, message.Event.ID, r.now().UTC()); err != nil {
+		if _, err = r.store.RecordInboxEvent(eventCtx, r.name, message.Event.ID, r.now().UTC()); err != nil {
 			return err
 		}
 	}

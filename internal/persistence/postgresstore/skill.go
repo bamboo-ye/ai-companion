@@ -430,9 +430,9 @@ func appendPostgresSkillQueuedOutbox(ctx context.Context, tx *sql.Tx, run skill.
 	})
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'skill_run',$2,'skill.execute.v1',1,$3,$4)`,
-		eventID, run.ID, payload, run.UpdatedAt,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'skill_run',$2,'skill.execute.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, run.ID, payload, run.UpdatedAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	)
 	return err
 }
@@ -548,9 +548,9 @@ func appendPostgresSkillAuditAndOutbox(ctx context.Context, tx *sql.Tx, run skil
 	})
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'skill_run',$2,$3,1,$4,$5)`,
-		eventID, run.ID, eventType, payload, run.UpdatedAt,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'skill_run',$2,$3,1,$4,$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
+		eventID, run.ID, eventType, payload, run.UpdatedAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	)
 	return err
 }

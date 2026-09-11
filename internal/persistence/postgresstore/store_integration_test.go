@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/agent"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/controlplane"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
@@ -22,6 +24,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/opsauth"
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/platform/id"
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 	"github.com/windcry1/ai-companion/internal/safety"
 	"github.com/windcry1/ai-companion/internal/skill"
 	"github.com/windcry1/ai-companion/internal/team"
@@ -34,6 +37,8 @@ func TestCoreStores(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	ctx = tracectx.WithID(ctx, "trace-postgres-core-integration")
+	integrationTraceID := tracectx.ID(ctx)
 	store, err := Open(ctx, dsn)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -47,10 +52,13 @@ func TestCoreStores(t *testing.T) {
 	characterID := mustID(t)
 	conversationID := mustID(t)
 	skillRunID := mustID(t)
+	agentConfigKey := "core-agent-" + userID[:8]
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.inbox_events WHERE consumer_name='migration-test'`)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.audit_logs WHERE resource_type='billing_usage_adjustment' AND metadata->>'user_id'=$1`, userID)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.billing_usage_adjustments WHERE user_id=$1`, userID)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.outbox_events WHERE aggregate_id=$1`, conversationID)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.model_usage_records WHERE generation_job_id IN (SELECT id FROM app.generation_jobs WHERE conversation_id=$1)`, conversationID)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.generation_job_events WHERE generation_job_id IN (SELECT id FROM app.generation_jobs WHERE conversation_id=$1)`, conversationID)
@@ -68,6 +76,13 @@ func TestCoreStores(t *testing.T) {
 			conversationID,
 		)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM agent.runs WHERE conversation_id=$1`, conversationID)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.audit_logs WHERE resource_type='agent_rollout' AND resource_id IN (SELECT id FROM ops.agent_rollouts WHERE agent_key=$1)`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM ops.agent_rollouts WHERE agent_key=$1`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.audit_logs WHERE resource_type='agent_evaluation_run' AND resource_id IN (SELECT id FROM ops.evaluation_runs WHERE agent_key=$1)`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM ops.evaluation_runs WHERE agent_key=$1`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM eventing.audit_logs WHERE resource_type='config_version' AND resource_id IN (SELECT id FROM ops.config_versions WHERE config_key=$1)`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM ops.config_deployments WHERE config_kind='agent_definition' AND config_key=$1`, agentConfigKey)
+		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM ops.config_versions WHERE config_kind='agent_definition' AND config_key=$1`, agentConfigKey)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.generation_jobs WHERE conversation_id=$1`, conversationID)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.messages WHERE conversation_id=$1`, conversationID)
 		_, _ = store.db.ExecContext(cleanupCtx, `DELETE FROM app.conversations WHERE id=$1`, conversationID)
@@ -97,6 +112,27 @@ func TestCoreStores(t *testing.T) {
 	duplicate.ID = mustID(t)
 	if err := store.CreateUser(ctx, duplicate); !errors.Is(err, identity.ErrConflict) {
 		t.Fatalf("CreateUser(duplicate) error = %v", err)
+	}
+	billingService := billing.NewService(store, billing.DefaultPlans())
+	adjustment, err := billingService.AdjustUsage(ctx, billing.CreateUsageAdjustmentInput{
+		UserID: userID, Resource: billing.ResourceModelCost, Delta: 1250,
+		Reason: "PostgreSQL unified usage integration test", Actor: "integration-admin",
+	})
+	if err != nil || adjustment.Delta != 1250 || adjustment.PeriodStart == nil || adjustment.PeriodEnd == nil {
+		t.Fatalf("AdjustUsage() = %#v, %v", adjustment, err)
+	}
+	billingSummary, err := billingService.Summary(ctx, userID)
+	if err != nil {
+		t.Fatalf("Billing Summary() error = %v", err)
+	}
+	modelCostFound := false
+	for _, usage := range billingSummary.Usage {
+		if usage.Resource == billing.ResourceModelCost && usage.Actual == 0 && usage.Adjustment == 1250 && usage.Used == 1250 {
+			modelCostFound = true
+		}
+	}
+	if !modelCostFound {
+		t.Fatalf("model-cost adjustment missing from billing summary: %#v", billingSummary)
 	}
 
 	device, err := store.UpsertDevice(ctx, identity.Device{
@@ -263,12 +299,78 @@ func TestCoreStores(t *testing.T) {
 
 	agentNow := claimTime.Add(time.Second)
 	agentService := agent.NewServiceWithClock(store, func() time.Time { return agentNow })
+	configurationService := controlplane.NewService(store, "integration-test")
+	agentDefinitionPayload, err := json.Marshal(controlplane.AgentDefinitionPayload{
+		DisplayName: "Core Store Agent", Description: "Immutable Run binding integration fixture",
+		Modules: []string{"life", "work"}, ModelProfile: controlplane.DefaultModelProfileKey,
+		EntryNode: "answer",
+		Nodes: []controlplane.AgentNodeConfig{
+			{Key: "answer", Type: "model", ModelRole: "responder", PromptTemplate: "Answer safely."},
+			{Key: "done", Type: "end"},
+		},
+		Edges: []controlplane.AgentEdgeConfig{{From: "answer", To: "done"}},
+		Budget: controlplane.AgentBudgetConfig{
+			MaxSteps: 12, MaxModelCalls: 6, MaxToolCalls: 0,
+			MaxTotalTokens: 16000, TimeoutMS: 120000,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentDefinitionVersion, err := configurationService.Create(ctx, controlplane.CreateInput{
+		Kind: controlplane.KindAgentDefinition, Key: agentConfigKey, Payload: agentDefinitionPayload,
+		Actor: "core-agent-author", Reason: "verify immutable Agent Run definition snapshots",
+	})
+	if err == nil {
+		agentDefinitionVersion, err = configurationService.Validate(ctx, agentDefinitionVersion.ID, "core-agent-author")
+	}
+	if err == nil {
+		_, err = configurationService.EvaluateAgentVersion(ctx, agentDefinitionVersion.ID, integrationEvaluationSuite("life", "work"), "core-agent-author", integrationEvaluationSandbox{})
+	}
+	if err == nil {
+		agentDefinitionVersion, err = configurationService.Submit(ctx, agentDefinitionVersion.ID, "core-agent-author")
+	}
+	var agentDefinitionDeployment controlplane.Deployment
+	if err == nil {
+		agentDefinitionVersion, agentDefinitionDeployment, err = configurationService.Publish(ctx, agentDefinitionVersion.ID, "core-agent-approver")
+	}
+	if err != nil {
+		t.Fatalf("publish Agent definition fixture: %v", err)
+	}
+	agentService.SetAgentDefinitionResolver(func(_ context.Context, module, _ string) (agent.RunAgentDefinitionSnapshot, bool, error) {
+		if module != "life" && module != "work" {
+			return agent.RunAgentDefinitionSnapshot{}, false, nil
+		}
+		return agent.RunAgentDefinitionSnapshot{
+			Key: agentConfigKey, VersionID: agentDefinitionVersion.ID,
+			Version: agentDefinitionVersion.Version, Revision: agentDefinitionDeployment.Revision,
+			Fingerprint:  agentDefinitionVersion.Fingerprint,
+			ModelProfile: controlplane.DefaultModelProfileKey,
+			Definition:   agentDefinitionVersion.Payload,
+		}, true, nil
+	})
+	agentService.SetModelProfileResolver(func(ctx context.Context) (agent.RunModelProfileSnapshot, error) {
+		snapshot, snapshotErr := configurationService.ActiveModelRuntime(ctx, controlplane.DefaultModelProfileKey)
+		if snapshotErr != nil {
+			return agent.RunModelProfileSnapshot{}, snapshotErr
+		}
+		return agent.RunModelProfileSnapshot{
+			ProfileKey: snapshot.Key, VersionID: snapshot.VersionID, Version: snapshot.Version,
+			Revision: snapshot.Revision, ConfigVersion: snapshot.ConfigVersion,
+			Fingerprint: snapshot.Fingerprint, Variables: snapshot.Variables,
+		}, nil
+	})
 	agentRun, created, err := agentService.Create(ctx, agent.CreateInput{
 		UserID: userID, ConversationID: conversationID, CharacterID: characterID,
 		Module: "life", IdempotencyKey: "agent-migration-message",
 		Payload: map[string]any{"message_id": messageID, "text": userMessage.Content},
 	})
-	if err != nil || !created || agentRun.ThreadID != agentRun.ID {
+	if err != nil || !created || agentRun.ThreadID != agentRun.ID ||
+		agentRun.AgentDefinitionVersionID != agentDefinitionVersion.ID ||
+		agentRun.AgentDefinitionFingerprint != agentDefinitionVersion.Fingerprint ||
+		len(agentRun.AgentDefinitionSnapshot) == 0 ||
+		agentRun.ModelProfileVersionID == "" || agentRun.ModelProfileFingerprint == "" ||
+		len(agentRun.ModelProfileSnapshot) == 0 {
 		t.Fatalf("Create(agent run) = %#v, %v, %v", agentRun, created, err)
 	}
 	duplicateAgentRun, created, err := agentService.Create(ctx, agent.CreateInput{
@@ -380,6 +482,31 @@ func TestCoreStores(t *testing.T) {
 	)
 	if err != nil || resumedAgentRun.Status != "completed" || resumedAgentRun.Revision != 6 {
 		t.Fatalf("Complete(agent resume) = %#v, %v", resumedAgentRun, err)
+	}
+	var acceptedSnapshot, resumedSnapshot agent.RunModelProfileSnapshot
+	var acceptedDefinition, resumedDefinition agent.RunAgentDefinitionSnapshot
+	acceptedSnapshotErr := json.Unmarshal(approvalRun.ModelProfileSnapshot, &acceptedSnapshot)
+	resumedSnapshotErr := json.Unmarshal(resumedAgentRun.ModelProfileSnapshot, &resumedSnapshot)
+	acceptedDefinitionErr := json.Unmarshal(approvalRun.AgentDefinitionSnapshot, &acceptedDefinition)
+	resumedDefinitionErr := json.Unmarshal(resumedAgentRun.AgentDefinitionSnapshot, &resumedDefinition)
+	var acceptedDefinitionPayload, resumedDefinitionPayload any
+	if acceptedDefinitionErr == nil {
+		acceptedDefinitionErr = json.Unmarshal(acceptedDefinition.Definition, &acceptedDefinitionPayload)
+	}
+	if resumedDefinitionErr == nil {
+		resumedDefinitionErr = json.Unmarshal(resumedDefinition.Definition, &resumedDefinitionPayload)
+	}
+	acceptedDefinition.Definition = nil
+	resumedDefinition.Definition = nil
+	if resumedAgentRun.ModelProfileVersionID != approvalRun.ModelProfileVersionID ||
+		resumedAgentRun.ModelProfileFingerprint != approvalRun.ModelProfileFingerprint ||
+		acceptedSnapshotErr != nil || resumedSnapshotErr != nil ||
+		!reflect.DeepEqual(acceptedSnapshot, resumedSnapshot) ||
+		resumedAgentRun.AgentDefinitionVersionID != approvalRun.AgentDefinitionVersionID ||
+		acceptedDefinitionErr != nil || resumedDefinitionErr != nil ||
+		!reflect.DeepEqual(acceptedDefinition, resumedDefinition) ||
+		!reflect.DeepEqual(acceptedDefinitionPayload, resumedDefinitionPayload) {
+		t.Fatalf("resumed Agent Run changed its model profile snapshot: %#v / %#v", approvalRun, resumedAgentRun)
 	}
 	toolWaitRun, created, err := agentService.Create(ctx, agent.CreateInput{
 		UserID: userID, ConversationID: conversationID, CharacterID: characterID,
@@ -516,11 +643,18 @@ func TestCoreStores(t *testing.T) {
 	if err != nil || completedAgentChatRun.Status != "completed" {
 		t.Fatalf("Complete(agent chat) = %#v, %v", completedAgentChatRun, err)
 	}
-	agentChatMessages, err := store.ListMessages(ctx, userID, conversationID, 2, 2, 10)
+	// Start at this user message's sequence with a virtual bubble before bubble 0.
+	// Earlier Agent runs may have appended additional bubbles to sequence 2.
+	agentChatMessages, err := store.ListMessages(
+		ctx, userID, conversationID, agentChatMessage.Sequence, -1, 10,
+	)
 	if err != nil || len(agentChatMessages) != 2 ||
 		agentChatMessages[0].ID != agentChatMessage.ID ||
 		agentChatMessages[1].Role != "assistant" ||
-		agentChatMessages[1].Content != "今天没有计划。" {
+		!strings.HasPrefix(
+			agentChatMessages[1].Content,
+			"今天没有计划。\n<!--ai-agent-run:"+agentChatRun.ID+"|completed|",
+		) {
 		t.Fatalf("Agent chat messages = %#v, %v", agentChatMessages, err)
 	}
 
@@ -571,7 +705,8 @@ func TestCoreStores(t *testing.T) {
 		SELECT COUNT(*)
 		FROM app.messages
 		WHERE conversation_id=$1 AND role='assistant' AND content=$2`,
-		conversationID, "持久化重试恢复成功。",
+		conversationID,
+		"持久化重试恢复成功。\n<!--ai-agent-run:"+retryRun.ID+"|completed|5-->",
 	).Scan(&retryAssistantMessages); err != nil || retryAssistantMessages != 1 {
 		t.Fatalf("retry assistant messages = %d, %v", retryAssistantMessages, err)
 	}
@@ -660,16 +795,16 @@ func TestCoreStores(t *testing.T) {
 		t.Fatalf("GetLatestSummary() = %#v, %v", latest, err)
 	}
 
-	var chatEventID, chatEventType string
+	var chatEventID, chatEventType, chatTraceID string
 	if err = store.db.QueryRowContext(ctx, `
-		SELECT id::text,event_type
+		SELECT id::text,event_type,COALESCE(trace_id,'')
 		FROM eventing.outbox_events
 		WHERE aggregate_id=$1 AND event_type='chat.command.v1'
 		LIMIT 1`,
 		conversationID,
-	).Scan(&chatEventID, &chatEventType); err != nil ||
-		chatEventType != "chat.command.v1" {
-		t.Fatalf("chat outbox event = %q/%q, %v", chatEventID, chatEventType, err)
+	).Scan(&chatEventID, &chatEventType, &chatTraceID); err != nil ||
+		chatEventType != "chat.command.v1" || chatTraceID != integrationTraceID {
+		t.Fatalf("chat outbox event = %q/%q trace=%q, %v", chatEventID, chatEventType, chatTraceID, err)
 	}
 	rows, err := store.db.QueryContext(ctx, `
 		SELECT aggregate_id,event_type

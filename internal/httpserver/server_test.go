@@ -29,12 +29,37 @@ func TestHealthAndReadiness(t *testing.T) {
 		if traceID := response.Header().Get("X-Trace-ID"); traceID == "" {
 			t.Fatalf("GET %s did not return a trace id", path)
 		}
+		if traceParent := response.Header().Get("traceparent"); traceParent == "" {
+			t.Fatalf("GET %s did not return traceparent", path)
+		}
 	}
 	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	metricsResponse := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(metricsResponse, metricsRequest)
 	if metricsResponse.Code != http.StatusOK || !strings.Contains(metricsResponse.Body.String(), `ai_companion_http_requests_total{method="GET",route="GET /healthz",status="200"} 1`) || !strings.Contains(metricsResponse.Body.String(), "ai_companion_degradation_level 0") {
 		t.Fatalf("metrics response = %d %s", metricsResponse.Code, metricsResponse.Body.String())
+	}
+}
+
+func TestCORSAllowsEquivalentLoopbackDevelopmentOrigins(t *testing.T) {
+	handler := cors("http://localhost:3000", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, origin := range []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/ops/console/bootstrap", nil)
+		request.Header.Set("Origin", origin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if allowed := response.Header().Get("Access-Control-Allow-Origin"); allowed != origin {
+			t.Fatalf("origin %q allowed as %q", origin, allowed)
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/ops/console/bootstrap", nil)
+	request.Header.Set("Origin", "https://example.com")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if allowed := response.Header().Get("Access-Control-Allow-Origin"); allowed != "" {
+		t.Fatalf("unexpected cross-site origin %q", allowed)
 	}
 }
 
@@ -69,8 +94,11 @@ func TestTracePropagationAndReliabilityEndpointAuthentication(t *testing.T) {
 	request.Header.Set("X-Trace-ID", "client_trace_1234567890")
 	response := httptest.NewRecorder()
 	server.httpServer.Handler.ServeHTTP(response, request)
-	if got := response.Header().Get("X-Trace-ID"); got != "client_trace_1234567890" {
-		t.Fatalf("trace id = %q", got)
+	if got := response.Header().Get("X-Trace-ID"); len(got) != 32 || got == "client_trace_1234567890" {
+		t.Fatalf("normalized trace id = %q", got)
+	}
+	if got := response.Header().Get("traceparent"); !strings.Contains(got, "-"+response.Header().Get("X-Trace-ID")+"-") {
+		t.Fatalf("traceparent = %q", got)
 	}
 	unauthorized := performJSON(t, server, http.MethodGet, "/v1/reliability", "", nil)
 	if unauthorized.Code != http.StatusUnauthorized {

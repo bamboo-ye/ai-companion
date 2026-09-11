@@ -568,7 +568,10 @@ def _validate_cross_renderer_page_coverage(source: bytes, rendered: bytes) -> No
         for source_page, rendered_page in zip(source_pages, rendered_pages, strict=True):
             source_ink = _rendered_page_ink_ratio(source_page)
             rendered_ink = _rendered_page_ink_ratio(rendered_page)
-            if source_ink >= 0.001 and rendered_ink / source_ink < 0.50:
+            # Translation can legitimately use substantially fewer pixels than
+            # the source across scripts. Treat a loss above 60% as missing
+            # visual content while leaving room for shorter CJK replacements.
+            if source_ink >= 0.001 and rendered_ink / source_ink < 0.40:
                 raise ValueError("translated_pdf_visual_content_missing")
 
 

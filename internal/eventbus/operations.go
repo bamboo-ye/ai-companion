@@ -8,6 +8,9 @@ import (
 
 type OutboxRecord struct {
 	ID                 string          `json:"id"`
+	TraceID            string          `json:"trace_id,omitempty"`
+	TraceParent        string          `json:"traceparent,omitempty"`
+	TraceState         string          `json:"tracestate,omitempty"`
 	AggregateType      string          `json:"aggregate_type"`
 	AggregateID        string          `json:"aggregate_id"`
 	Type               string          `json:"event_type"`

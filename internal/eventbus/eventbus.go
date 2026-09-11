@@ -15,6 +15,9 @@ var (
 
 type Event struct {
 	ID            string
+	TraceID       string
+	TraceParent   string
+	TraceState    string
 	AggregateType string
 	AggregateID   string
 	Type          string

@@ -743,9 +743,9 @@ func insertChatCommand(ctx context.Context, tx *sql.Tx, jobID, userID, conversat
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
 			id,aggregate_type,aggregate_id,event_type,event_version,payload,
-			occurred_at,available_at
-		) VALUES ($1,'conversation',$2,'chat.command.v1',1,$3,$4,$4)`,
-		eventID, conversationID, payload, occurredAt,
+			occurred_at,available_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'conversation',$2,'chat.command.v1',1,$3,$4,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, conversationID, payload, occurredAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	)
 	return err
 }

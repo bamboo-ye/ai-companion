@@ -17,24 +17,29 @@ import (
 var agentToolWakeLatencyBuckets = []float64{0.1, 0.25, 0.5, 1, 2, 5}
 
 type agentWorkerMetrics struct {
-	mu                  sync.RWMutex
-	dispatchHints       map[agent.RunDispatchHintOutcome]uint64
-	dispatchCompletions map[string]uint64
-	dispatchReplays     uint64
-	pythonExecutions    map[string]uint64
-	pythonModelCalls    uint64
-	canaryRuns          map[string]struct{}
-	canaryDispatchHints map[agent.RunDispatchHintOutcome]uint64
-	canaryCompletions   map[string]uint64
-	canaryPythonRuns    uint64
-	canaryModelCalls    uint64
-	canaryToolWakes     map[string]uint64
-	canaryWakeLatency   []uint64
-	canaryWakeSum       float64
-	toolWakeEvents      map[string]map[string]uint64
-	toolAwakenedRuns    map[string]uint64
-	toolWakeLatency     []uint64
-	toolWakeLatencySum  float64
+	mu                     sync.RWMutex
+	dispatchHints          map[agent.RunDispatchHintOutcome]uint64
+	dispatchCompletions    map[string]uint64
+	dispatchReplays        uint64
+	pythonExecutions       map[string]uint64
+	pythonModelCalls       uint64
+	modelConfigReloads     map[string]uint64
+	modelConfigRevision    int
+	modelConfigVersion     string
+	modelConfigVersionID   string
+	modelConfigFingerprint string
+	canaryRuns             map[string]struct{}
+	canaryDispatchHints    map[agent.RunDispatchHintOutcome]uint64
+	canaryCompletions      map[string]uint64
+	canaryPythonRuns       uint64
+	canaryModelCalls       uint64
+	canaryToolWakes        map[string]uint64
+	canaryWakeLatency      []uint64
+	canaryWakeSum          float64
+	toolWakeEvents         map[string]map[string]uint64
+	toolAwakenedRuns       map[string]uint64
+	toolWakeLatency        []uint64
+	toolWakeLatencySum     float64
 }
 
 func newAgentWorkerMetrics() *agentWorkerMetrics {
@@ -42,6 +47,7 @@ func newAgentWorkerMetrics() *agentWorkerMetrics {
 		dispatchHints:       make(map[agent.RunDispatchHintOutcome]uint64),
 		dispatchCompletions: make(map[string]uint64),
 		pythonExecutions:    make(map[string]uint64),
+		modelConfigReloads:  make(map[string]uint64),
 		canaryRuns:          make(map[string]struct{}),
 		canaryDispatchHints: make(map[agent.RunDispatchHintOutcome]uint64),
 		canaryCompletions:   make(map[string]uint64),
@@ -51,6 +57,25 @@ func newAgentWorkerMetrics() *agentWorkerMetrics {
 		toolAwakenedRuns:    make(map[string]uint64),
 		toolWakeLatency:     make([]uint64, len(agentToolWakeLatencyBuckets)+1),
 	}
+}
+
+func (m *agentWorkerMetrics) observeModelConfiguration(observation modelConfigurationObservation) {
+	if m == nil {
+		return
+	}
+	outcome := strings.TrimSpace(observation.Outcome)
+	if outcome != "applied" && outcome != "error" {
+		outcome = "error"
+	}
+	m.mu.Lock()
+	m.modelConfigReloads[outcome]++
+	if outcome == "applied" {
+		m.modelConfigRevision = observation.Revision
+		m.modelConfigVersion = observation.ConfigVersion
+		m.modelConfigVersionID = observation.VersionID
+		m.modelConfigFingerprint = observation.Fingerprint
+	}
+	m.mu.Unlock()
 }
 
 func (m *agentWorkerMetrics) trackCanaryRun(runID string, active bool) {
@@ -181,6 +206,14 @@ func (m *agentWorkerMetrics) prometheus(stats agent.RunDispatcherStats) string {
 		pythonExecutions[outcome] = count
 	}
 	pythonModelCalls := m.pythonModelCalls
+	modelConfigReloads := make(map[string]uint64, len(m.modelConfigReloads))
+	for outcome, count := range m.modelConfigReloads {
+		modelConfigReloads[outcome] = count
+	}
+	modelConfigRevision := m.modelConfigRevision
+	modelConfigVersion := m.modelConfigVersion
+	modelConfigVersionID := m.modelConfigVersionID
+	modelConfigFingerprint := m.modelConfigFingerprint
 	canaryDispatchHints := make(map[agent.RunDispatchHintOutcome]uint64, len(m.canaryDispatchHints))
 	for outcome, count := range m.canaryDispatchHints {
 		canaryDispatchHints[outcome] = count
@@ -241,6 +274,19 @@ func (m *agentWorkerMetrics) prometheus(stats agent.RunDispatcherStats) string {
 	output.WriteString("# HELP ai_companion_agent_python_model_calls_total Model calls reported by completed Python runtime executions.\n")
 	output.WriteString("# TYPE ai_companion_agent_python_model_calls_total counter\n")
 	fmt.Fprintf(&output, "ai_companion_agent_python_model_calls_total %d\n", pythonModelCalls)
+	output.WriteString("# HELP ai_companion_agent_model_config_reloads_total Governed model configuration loads by outcome.\n")
+	output.WriteString("# TYPE ai_companion_agent_model_config_reloads_total counter\n")
+	for _, outcome := range []string{"applied", "error"} {
+		fmt.Fprintf(&output, "ai_companion_agent_model_config_reloads_total{outcome=%q} %d\n", outcome, modelConfigReloads[outcome])
+	}
+	output.WriteString("# HELP ai_companion_agent_model_config_revision Active governed model configuration deployment revision.\n")
+	output.WriteString("# TYPE ai_companion_agent_model_config_revision gauge\n")
+	fmt.Fprintf(&output, "ai_companion_agent_model_config_revision %d\n", modelConfigRevision)
+	output.WriteString("# HELP ai_companion_agent_model_config_info Active governed model configuration identity.\n")
+	output.WriteString("# TYPE ai_companion_agent_model_config_info gauge\n")
+	if modelConfigVersionID != "" {
+		fmt.Fprintf(&output, "ai_companion_agent_model_config_info{config_version=%q,version_id=%q,fingerprint=%q} 1\n", modelConfigVersion, modelConfigVersionID, modelConfigFingerprint)
+	}
 	output.WriteString("# HELP ai_companion_agent_canary_dispatch_hints_total Synthetic canary run hints by in-memory deduplication outcome.\n")
 	output.WriteString("# TYPE ai_companion_agent_canary_dispatch_hints_total counter\n")
 	for _, outcome := range []agent.RunDispatchHintOutcome{

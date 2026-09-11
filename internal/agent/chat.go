@@ -72,5 +72,11 @@ func (s *Service) AcceptChat(ctx context.Context, input AcceptChatInput) (conver
 		AvailableAt: now, DeadlineAt: now.Add(s.runTimeout),
 		Revision: 1, CreatedAt: now, UpdatedAt: now,
 	}
+	if err = s.captureAgentDefinition(ctx, &run); err != nil {
+		return conversation.Message{}, Run{}, err
+	}
+	if err = s.captureModelProfile(ctx, &run); err != nil {
+		return conversation.Message{}, Run{}, err
+	}
 	return store.AcceptAgentMessage(ctx, message, run)
 }

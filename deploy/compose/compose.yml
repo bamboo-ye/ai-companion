@@ -21,10 +21,11 @@ services:
       - mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
       start_period: 20s
+      start_interval: 5s
 
   postgres:
     image: postgres:18.3-alpine
@@ -40,10 +41,11 @@ services:
       - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
       start_period: 10s
+      start_interval: 5s
 
   redis:
     image: redis:8.8.0-alpine
@@ -55,9 +57,11 @@ services:
       - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 10s
+      start_interval: 5s
 
   kafka:
     profiles: ["kafka-scale"]
@@ -88,6 +92,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+      start_interval: 5s
 
   kafka-init:
     profiles: ["kafka-scale"]
@@ -126,9 +131,11 @@ services:
       - minio-data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
-      retries: 20
+      retries: 3
+      start_period: 10s
+      start_interval: 5s
 
   migrate:
     profiles: ["mysql"]
@@ -157,7 +164,7 @@ services:
       DATABASE_DRIVER: postgres
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
       MIGRATIONS_DIR: migrations/postgres
-      MIGRATION_REQUIRED_TABLES: agent.runs,app.users,app.conversations,app.long_term_memories,app.ledger_entries,app.reminders,app.notification_deliveries,app.documents,app.skill_runs,app.generated_files,app.workspaces,app.email_deliveries,app.billing_plans,app.user_safety_policies,app.operator_accounts,eventing.outbox_events
+      MIGRATION_REQUIRED_TABLES: agent.runs,app.users,app.conversations,app.long_term_memories,app.ledger_entries,app.reminders,app.notification_deliveries,app.documents,app.skill_runs,app.generated_files,app.workspaces,app.email_deliveries,app.billing_plans,app.billing_usage_adjustments,app.user_safety_policies,app.operator_accounts,eventing.outbox_events,ops.evaluation_runs,ops.agent_rollouts,ops.system_logs,ops.alert_rules,ops.incidents,ops.alert_subscriptions,ops.incident_notifications,ops.performance_budgets,ops.performance_budget_recommendation_decisions,ops.runtime_config_reports
     depends_on:
       postgres:
         condition: service_healthy
@@ -237,6 +244,18 @@ services:
       PYTHON_EXECUTABLE: /usr/local/bin/python
       PYTHON_WORKER_PATH: /app/workers/python/src
       MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
+      AGENT_MODEL_CONFIG_POLL_INTERVAL: ${AGENT_MODEL_CONFIG_POLL_INTERVAL:-10s}
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_SAMPLE_RATE: ${LANGFUSE_SAMPLE_RATE:-1}
+      LANGFUSE_CAPTURE_CONTENT: ${LANGFUSE_CAPTURE_CONTENT:-false}
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-development}
+      LANGFUSE_RELEASE: ${LANGFUSE_RELEASE:-local}
+      LANGFUSE_FLUSH_AT: ${LANGFUSE_FLUSH_AT:-20}
+      LANGFUSE_FLUSH_INTERVAL: ${LANGFUSE_FLUSH_INTERVAL:-5}
+      LANGFUSE_TIMEOUT_SECONDS: ${LANGFUSE_TIMEOUT_SECONDS:-3}
       AGENT_METRICS_ADDR: :9467
     ports:
       - "127.0.0.1:${AGENT_METRICS_PORT:-9467}:9467"
@@ -251,11 +270,12 @@ services:
       worker:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9467/readyz', timeout=3)"]
-      interval: 5s
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:9467/readyz"]
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
       start_period: 10s
+      start_interval: 5s
     restart: unless-stopped
 
   prometheus:
@@ -270,6 +290,39 @@ services:
       - prometheus-data:/prometheus
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../observability/prometheus-rules.yml:/etc/prometheus/rules/prometheus-rules.yml:ro
+    restart: unless-stopped
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - loki-data:/loki
+      - ../observability/loki.yml:/etc/loki/local-config.yaml:ro
+    restart: unless-stopped
+
+  alloy:
+    profiles: ["observability"]
+    image: grafana/alloy:v1.19.0
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+    ports:
+      - "127.0.0.1:${ALLOY_PORT:-12345}:12345"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../observability/alloy.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      loki:
+        condition: service_started
     restart: unless-stopped
 
   deployment-sandbox-setup:
@@ -351,11 +404,12 @@ services:
       deployment-sandbox-setup:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9465/readyz', timeout=3)"]
-      interval: 5s
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:9465/readyz"]
+      interval: 30s
       timeout: 5s
-      retries: 6
-      start_period: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 5s
     security_opt:
       - no-new-privileges:true
     restart: "on-failure:3"
@@ -411,11 +465,12 @@ services:
       - deployment-scheduler-data:/app/.scheduler-source:ro
       - deployment-shadow-data:/app/.shadow
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9466/readyz', timeout=3)"]
-      interval: 10s
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:9466/readyz"]
+      interval: 30s
       timeout: 5s
-      retries: 6
-      start_period: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 5s
     cap_drop:
       - ALL
     security_opt:
@@ -455,6 +510,9 @@ services:
       AGENT_CONFIRMATION_SECRET: ${AGENT_CONFIRMATION_SECRET:-development-agent-confirmation-secret}
       AGENT_CONFIRMATION_TTL: ${AGENT_CONFIRMATION_TTL:-15m}
       AGENT_CHAT_MODULES: ${AGENT_CHAT_MODULES:-}
+      LOKI_ENABLED: ${LOKI_ENABLED:-false}
+      LOKI_BASE_URL: ${LOKI_BASE_URL:-http://loki:3100}
+      LOKI_QUERY_TIMEOUT: ${LOKI_QUERY_TIMEOUT:-3s}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -472,11 +530,12 @@ services:
       qdrant:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
-      interval: 5s
+      test: ["CMD", "/healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
       start_period: 10s
+      start_interval: 5s
     restart: unless-stopped
 
   worker:
@@ -547,6 +606,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+      start_interval: 5s
     restart: unless-stopped
 
 volumes:
@@ -562,3 +622,5 @@ volumes:
   deployment-scheduler-data:
   deployment-shadow-data:
   prometheus-data:
+  loki-data:
+  alloy-data:

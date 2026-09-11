@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: 伴AI API
-  version: 1.2.0
-  description: M1-M4 platform plus the M6 reliability control plane, Kafka async delivery, operator DLQ replay, and compensation records.
+  version: 1.27.0
+  description: M1-M4 platform plus the M6 reliability control plane, governed Agent Studio, unified adjustable usage ledger, multi-instance runtime-configuration convergence, persisted cost and quality analytics with time trends, predictive budget burn and guarded model-switch recommendations, per-budget proactive forecast policies with sample gating, audited human recommendation feedback, revision-bound application and rollback-execution tracking, configurable before/after observation windows, downloadable periodic budget reviews, read-only rollback recommendations and post-rollback verification with acknowledged/closed human disposition, audited budget guardrails, automatic budget incidents with escalation plus email or management-console recovery notifications, baseline anomaly detection, Loki-backed redacted structured system logs with PostgreSQL fallback and Run/Trace correlation, threshold alert evaluation, downloadable incident evidence, durable W3C/OpenTelemetry Trace Context propagation across HTTP, Outbox, Kafka, Go/Python Agent workers and Langfuse, optional fail-open Langfuse LLM/Agent traces with generations, node observations and scores, operator DLQ replay, and compensation records. Every HTTP response includes canonical traceparent and X-Trace-ID correlation headers; clients may send traceparent/tracestate, while X-Trace-ID remains a normalized compatibility input.
 servers:
   - url: http://localhost:8080
 paths:
@@ -1655,6 +1655,1294 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/OperatorConsoleBootstrap" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/reliability:
+    get:
+      operationId: getOperatorReliability
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Current reliability controller snapshot for the operator dashboard.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReliabilitySnapshot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/logs:
+    get:
+      operationId: listOperatorSystemLogs
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Queries Loki structured operational logs with explicit PostgreSQL fallback after server-side secret and content redaction. Prompt, response, request-body, credential, token, and cookie values are never returned.
+      parameters:
+        - { name: since, in: query, required: false, description: Defaults to one hour before until., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: Defaults to the current time., schema: { type: string, format: date-time } }
+        - { name: service, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: level, in: query, required: false, schema: { type: string, enum: [DEBUG, INFO, WARN, ERROR] } }
+        - { name: q, in: query, required: false, description: Plain-text search over redacted event, message, error code, and bounded attributes., schema: { type: string, maxLength: 200 } }
+        - { name: trace_id, in: query, required: false, description: Matches the canonical 32-hex W3C Trace ID shared by the request, Agent Run, logs, Kafka and Langfuse., schema: { type: string, pattern: "^[0-9a-f]{32}$" } }
+        - { name: run_id, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: before_id, in: query, required: false, description: Loads records older than this log identifier., schema: { type: integer, minimum: 1 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Redacted logs, filtered summary, service facets, and an optional pagination cursor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemLogPage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/alert-rules:
+    get:
+      operationId: listOperatorAlertRules
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Persistent log-based alert rules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules: { type: array, items: { $ref: "#/components/schemas/AlertRule" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createOperatorAlertRule
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
+      responses:
+        "201":
+          description: Alert rule created with an audit record.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule]
+                properties:
+                  rule: { $ref: "#/components/schemas/AlertRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/alert-rules/{rule_id}:
+    patch:
+      operationId: setOperatorAlertRuleEnabled
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: rule_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAlertRuleEnabledRequest" } } }
+      responses:
+        "200":
+          description: Alert rule enabled state updated; disabling also resolves its active incident.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rule]
+                properties:
+                  rule: { $ref: "#/components/schemas/AlertRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/alert-subscriptions:
+    get:
+      operationId: listOperatorAlertSubscriptions
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Admin-visible incident email routing subscriptions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscriptions]
+                properties:
+                  subscriptions: { type: array, items: { $ref: "#/components/schemas/AlertSubscription" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createOperatorAlertSubscription
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertSubscriptionRequest" } } }
+      responses:
+        "201":
+          description: Email subscription created and audited.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscription]
+                properties:
+                  subscription: { $ref: "#/components/schemas/AlertSubscription" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/alert-subscriptions/{subscription_id}:
+    patch:
+      operationId: setOperatorAlertSubscriptionEnabled
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: subscription_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SetAlertSubscriptionEnabledRequest" } } }
+      responses:
+        "200":
+          description: Subscription enabled state updated and audited.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subscription]
+                properties:
+                  subscription: { $ref: "#/components/schemas/AlertSubscription" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/alerts/evaluate:
+    post:
+      operationId: evaluateOperatorAlerts
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Immediate evaluation report. The API also evaluates enabled rules periodically.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [evaluation]
+                properties:
+                  evaluation: { $ref: "#/components/schemas/AlertEvaluation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/ops/incidents:
+    get:
+      operationId: listOperatorIncidents
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, acknowledged, resolved] } }
+        - { name: severity, in: query, required: false, schema: { type: string, enum: [warning, critical] } }
+        - { name: source, in: query, required: false, schema: { type: string, enum: [log_rule, performance_budget] } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Incidents ordered by the most recent activity.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incidents]
+                properties:
+                  incidents: { type: array, items: { $ref: "#/components/schemas/Incident" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/incidents/{incident_id}:
+    get:
+      operationId: getOperatorIncident
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Incident detail including the rule snapshot and redacted evidence.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incident]
+                properties:
+                  incident: { $ref: "#/components/schemas/Incident" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/incidents/{incident_id}/notifications:
+    get:
+      operationId: listOperatorIncidentNotifications
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: Email delivery outcomes for incident opened, escalated, and resolved transitions. Recipient addresses are masked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications]
+                properties:
+                  notifications: { type: array, items: { $ref: "#/components/schemas/IncidentNotification" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/incidents/{incident_id}/evidence:
+    get:
+      operationId: exportOperatorIncidentEvidence
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: format, in: query, required: false, schema: { type: string, enum: [json, markdown], default: json } }
+      responses:
+        "200":
+          description: Privacy-reduced incident state, audit timeline, notification outcomes, and matching redacted logs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentEvidence" }
+            text/markdown:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/incidents/{incident_id}/acknowledge:
+    post:
+      operationId: acknowledgeOperatorIncident
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/IncidentStatusRequest" } } }
+      responses:
+        "200":
+          description: Incident acknowledged with operator attribution and audit evidence.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incident]
+                properties:
+                  incident: { $ref: "#/components/schemas/Incident" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/incidents/{incident_id}/resolve:
+    post:
+      operationId: resolveOperatorIncident
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/IncidentStatusRequest" } } }
+      responses:
+        "200":
+          description: Incident manually resolved with operator attribution and audit evidence.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incident]
+                properties:
+                  incident: { $ref: "#/components/schemas/Incident" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agent-runs:
+    get:
+      operationId: listOperatorAgentRuns
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists privacy-reduced Agent Run metadata. Prompts, responses, tool arguments, and tool results are not returned.
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [accepted, queued, running, waiting_approval, waiting_tool, completed, failed, cancel_requested, cancelled, timed_out] } }
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: error_code, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: q, in: query, required: false, description: Exact run, thread, or conversation identifier., schema: { type: string, maxLength: 128 } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        "200":
+          description: Agent Run summaries ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/AgentRunOperationsSummary" } }
+                  next_cursor: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agent-runs/{run_id}:
+    get:
+      operationId: getOperatorAgentRun
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Returns a redacted trace. User prompts, assistant responses, tool arguments/results, and confirmation secrets are excluded.
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Operational run detail with node trace, model usage, tool metadata, and state events.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRunOperationsDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/versions:
+    get:
+      operationId: listOperatorVersionPerformance
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Aggregates privacy-safe success, quality, latency, token, and cost metrics by immutable Agent or model-profile version.
+      parameters:
+        - { name: dimension, in: query, required: false, schema: { type: string, enum: [agent_version, model_profile], default: agent_version } }
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: range, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d, 90d], default: 7d } }
+        - { name: from, in: query, required: false, description: Must be supplied together with to; overrides range., schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: Must be supplied together with from; overrides range., schema: { type: string, format: date-time } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Version metrics ordered by completed sample count and recency.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionPerformancePage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/models:
+    get:
+      operationId: listOperatorModelPerformance
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Aggregates the provider and model actually returned for persisted Agent model calls, including failures and cost.
+      parameters:
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: range, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d, 90d], default: 7d } }
+        - { name: from, in: query, required: false, description: Must be supplied together with to; overrides range., schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: Must be supplied together with from; overrides range., schema: { type: string, format: date-time } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200":
+          description: Actual provider/model usage ordered by total cost and call volume.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelPerformancePage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/anomalies:
+    get:
+      operationId: getOperatorPerformanceAnomalies
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Compares a recent completed-run window with the immediately preceding baseline and suppresses decisions when sample counts are too small.
+      parameters:
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: window, in: query, required: false, schema: { type: string, enum: [1h, 6h, 24h], default: 1h } }
+        - { name: baseline, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d], default: 24h } }
+      responses:
+        "200":
+          description: Current and baseline metrics with any statistically eligible threshold violations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PerformanceAnalysis" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/trend:
+    get:
+      operationId: listOperatorPerformanceTrend
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Returns privacy-safe cost, success, call-volume, and latency buckets. Ranges up to seven days use hourly buckets; longer ranges use daily buckets.
+      parameters:
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: range, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d, 90d], default: 7d } }
+        - { name: from, in: query, required: false, description: Must be supplied together with to; overrides range., schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: Must be supplied together with from; overrides range., schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Chronological trend buckets including empty buckets.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceTrendPage" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/forecast:
+    get:
+      operationId: getOperatorPerformanceForecast
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Projects each matching budget to the end of its current period using actual burn rate over the selected history window. It also proposes lower-cost observed models only when sample, error-rate, and P95-latency guardrails pass. Recommendations are read-only and require validation before adoption.
+      parameters:
+        - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
+        - { name: range, in: query, required: false, schema: { type: string, enum: [24h, 7d, 30d, 90d], default: 7d } }
+        - { name: from, in: query, required: false, description: Must be supplied together with to; overrides range., schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: Must be supplied together with from; overrides range., schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Read-only budget and model optimization forecast.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceForecast" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets:
+    get:
+      operationId: listOperatorPerformanceBudgets
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Evaluates persisted daily and monthly cost guardrails against actual Agent model-call costs and returns each budget's proactive forecast policy.
+      responses:
+        "200":
+          description: Budget definitions with current-period utilization and status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [budgets]
+                properties:
+                  budgets: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetStatus" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createOperatorPerformanceBudget
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Creates one audited budget per module scope and period. Requires the admin role.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetMutation" } } }
+      responses:
+        "201":
+          description: Budget created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [budget]
+                properties: { budget: { $ref: "#/components/schemas/PerformanceBudget" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/forecast-history:
+    get:
+      operationId: getOperatorPerformanceBudgetForecastHistory
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Reports outcomes for incidents initially opened by a projected budget exceedance and produces conservative read-only policy recommendations. A hit means the same incident later escalated to an actual exceedance; a cleared prediction may reflect successful mitigation and is not labelled a false positive. Observing predictions are excluded from hit-rate calculations. Recommendations require at least five decided outcomes and must pass impact preview before any manual update. Regressed effects can be acknowledged and closed through separately audited, admin-only endpoints that never update the budget.
+      parameters:
+        - { name: range, in: query, required: false, schema: { type: string, enum: [30d, 90d, 365d], default: 90d } }
+        - { name: budget_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, required: false, description: Limits returned detail items only; aggregate values cover the complete selected range., schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Read-only forecast outcome aggregates and recent details.
+          content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetForecastHistory" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/report:
+    get:
+      operationId: exportOperatorPerformanceBudgetReview
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Downloads a privacy-safe periodic review containing current budget status, complete forecast outcomes, human decisions, effect observations, rollback plans, and post-rollback verification. It never evaluates budgets or sends notifications.
+      parameters:
+        - { name: range, in: query, required: false, schema: { type: string, enum: [30d, 90d, 365d], default: 90d } }
+        - { name: format, in: query, required: false, schema: { type: string, enum: [json, markdown], default: json } }
+      responses:
+        "200":
+          description: Downloadable JSON or Markdown budget-review report.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetReviewReport" } }
+            text/markdown: { schema: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/evaluate:
+    post:
+      operationId: evaluateOperatorPerformanceBudgets
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Immediately evaluates every persisted budget and reconciles forecast-warning, actual-warning, critical, escalation, and recovery incident transitions. Each budget controls whether forecast incidents are enabled, the 1-90 day history window, and the 5-10000 completed-run sample minimum. The API also runs this evaluation periodically.
+      responses:
+        "200":
+          description: Budget evaluation and incident-transition counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [evaluation]
+                properties:
+                  evaluation: { $ref: "#/components/schemas/PerformanceBudgetEvaluation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/ops/performance/budgets/{budget_id}:
+    patch:
+      operationId: updateOperatorPerformanceBudget
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Replaces mutable budget fields using an optimistic revision check and records the reason in the audit log. Requires the admin role.
+      parameters:
+        - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetMutation" } } }
+      responses:
+        "200":
+          description: Updated budget.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [budget]
+                properties: { budget: { $ref: "#/components/schemas/PerformanceBudget" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/{budget_id}/preview:
+    post:
+      operationId: previewOperatorPerformanceBudgetImpact
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Compares the persisted budget with a proposed complete definition using the same actual-cost and forecast rules as incident evaluation. This admin-only operation is read-only and never saves the budget, reconciles incidents, or sends notifications.
+      parameters:
+        - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetPreviewRequest" } } }
+      responses:
+        "200":
+          description: Current and proposed alert-impact projections.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [preview]
+                properties: { preview: { $ref: "#/components/schemas/PerformanceBudgetImpactPreview" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/{budget_id}/recommendations/{recommendation_key}/decision:
+    post:
+      operationId: decideOperatorPerformanceBudgetRecommendation
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Records an admin's accepted or rejected decision against the exact recommendation snapshot. This operation is audited and never updates the budget, creates an incident, or sends a notification. Reusing the same snapshot key revises the recorded decision while preserving audit history.
+      parameters:
+        - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: recommendation_key, in: path, required: true, description: Server-generated SHA-256 key binding the budget revision, outcome aggregate, and proposed policy., schema: { type: string, pattern: "^[0-9a-f]{64}$" } }
+        - { name: range, in: query, required: false, description: Must match the range used to generate the recommendation., schema: { type: string, enum: [30d, 90d, 365d], default: 90d } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetPolicyDecisionRequest" } } }
+      responses:
+        "200":
+          description: Persisted human feedback; budget configuration remains unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [feedback]
+                properties: { feedback: { $ref: "#/components/schemas/PerformanceBudgetPolicyDecision" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/acknowledge:
+    post:
+      operationId: acknowledgeOperatorPerformanceBudgetEffect
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Records or revises an admin disposition for a currently reviewable regressed effect. The audit event binds the evidence snapshot, application revision, observation window, and rollback parameters. This operation never updates the budget.
+      parameters:
+        - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: decision_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectReviewRequest" } } }
+      responses:
+        "200":
+          description: Effect disposition acknowledged; budget configuration remains unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [review]
+                properties: { review: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectReview" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/performance/budgets/{budget_id}/effects/{decision_id}/close:
+    post:
+      operationId: closeOperatorPerformanceBudgetEffect
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Closes an acknowledged effect disposition with an audited reason. Closed dispositions are immutable; this operation never updates or rolls back the budget.
+      parameters:
+        - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: decision_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectCloseRequest" } } }
+      responses:
+        "200":
+          description: Effect disposition closed; budget configuration remains unchanged.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [review]
+                properties: { review: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectReview" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/configuration/convergence:
+    get:
+      operationId: getOperatorRuntimeConfigurationConvergence
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Compares durable heartbeats from API and Agent Worker instances with the currently deployed immutable configuration versions.
+      responses:
+        "200":
+          description: Per-instance configuration convergence and stale-instance summary.
+          content: { application/json: { schema: { $ref: "#/components/schemas/RuntimeConfigurationConvergence" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/ops/billing/plans:
+    get:
+      operationId: listOperatorBillingPlanConfiguration
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists immutable billing-plan versions and the active deployment for the current environment.
+      parameters:
+        - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        "200":
+          description: Billing-plan configuration history and active deployments.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationPage" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/billing/plans/{config_key}/versions:
+    post:
+      operationId: createOperatorBillingPlanVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Creates an immutable billing-plan draft. Requires an admin operator.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateBillingPlanVersionRequest" } } }
+      responses:
+        "201":
+          description: Draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version]
+                properties: { version: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/billing/plans/{config_key}/rollback:
+    post:
+      operationId: rollbackOperatorBillingPlan
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Rolls the active billing plan back to an earlier published version. Requires admin, verified MFA, and approval separation.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RollbackConfigurationRequest" } } }
+      responses:
+        "200":
+          description: Deployment rolled back and billing catalog reloaded when possible.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationDeploymentResult" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/billing/users/{user_id}/usage:
+    get:
+      operationId: getOperatorUserBillingUsage
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Returns a support-safe unified quota view from durable documents, Skill Runs, Agent Runs, model costs, workspaces, and append-only adjustments.
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Unified usage and effective quota summary., content: { application/json: { schema: { $ref: "#/components/schemas/BillingSummary" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/billing/users/{user_id}/adjustments:
+    get:
+      operationId: listOperatorUserBillingAdjustments
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Append-only manual adjustment history.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [adjustments]
+                properties: { adjustments: { type: array, items: { $ref: "#/components/schemas/BillingUsageAdjustment" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createOperatorUserBillingAdjustment
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Appends an audited usage correction without mutating source events. Requires admin and verified MFA; the legacy development key is accepted only when MFA enforcement is disabled.
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateBillingUsageAdjustmentRequest" } } }
+      responses:
+        "201":
+          description: Adjustment and recalculated quota summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [adjustment, summary]
+                properties:
+                  adjustment: { $ref: "#/components/schemas/BillingUsageAdjustment" }
+                  summary: { $ref: "#/components/schemas/BillingSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/model/providers:
+    get:
+      operationId: listOperatorModelProviders
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Safe provider metadata. Credential values are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [providers]
+                properties:
+                  providers: { type: array, items: { $ref: "#/components/schemas/ProviderConnection" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/model/catalog:
+    get:
+      operationId: listOperatorModelCatalog
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      responses:
+        "200":
+          description: Governed model catalog available to model profiles.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [models]
+                properties:
+                  models: { type: array, items: { $ref: "#/components/schemas/ModelCatalogEntry" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/ops/model-profiles:
+    get:
+      operationId: listOperatorModelProfileConfiguration
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists immutable model-routing profiles and active deployments.
+      parameters:
+        - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        "200":
+          description: Model-profile history and active deployments.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationPage" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/model-profiles/{config_key}/versions:
+    post:
+      operationId: createOperatorModelProfileVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Creates a validated-against-catalog model-profile draft. Requires an admin operator.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateModelProfileVersionRequest" } } }
+      responses:
+        "201":
+          description: Draft version created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version]
+                properties: { version: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/model-profiles/{config_key}/rollback:
+    post:
+      operationId: rollbackOperatorModelProfile
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Rolls the desired model profile back to an earlier published version. Requires admin, verified MFA, and approval separation.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RollbackConfigurationRequest" } } }
+      responses:
+        "200":
+          description: Desired model-profile deployment rolled back. Worker runtime activation is reported separately.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationDeploymentResult" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/prompts:
+    get:
+      operationId: listOperatorPrompts
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists independently versioned Prompt assets and active deployments.
+      parameters:
+        - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        "200":
+          description: Prompt version history and active deployments.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationPage" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/prompts/{config_key}/versions:
+    post:
+      operationId: createOperatorPromptVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Creates an immutable Prompt draft. Requires an admin operator.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreatePromptVersionRequest" } } }
+      responses:
+        "201":
+          description: Prompt draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version]
+                properties: { version: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/prompts/{config_key}/rollback:
+    post:
+      operationId: rollbackOperatorPrompt
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Rolls the active Prompt deployment back without changing previously pinned Agent versions.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RollbackConfigurationRequest" } } }
+      responses:
+        "200":
+          description: Prompt deployment rolled back; existing Agent snapshots are unchanged.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationDeploymentResult" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agents:
+    get:
+      operationId: listOperatorAgentDefinitions
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists immutable Agent Studio definition versions and active deployments.
+      parameters:
+        - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+      responses:
+        "200":
+          description: Agent definition history and active deployments.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationPage" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agents/{config_key}/compile:
+    post:
+      operationId: compileOperatorAgentDefinition
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Compiles and validates a declarative Agent graph without persisting it or invoking models and tools.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AgentDefinitionPayload" } } }
+      responses:
+        "200":
+          description: Executable graph manifest produced by the sandbox compiler.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [compilation]
+                properties: { compilation: { $ref: "#/components/schemas/AgentDefinitionCompilation" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agents/{config_key}/dry-run:
+    post:
+      operationId: dryRunOperatorAgentDefinition
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Executes a draft with the production declarative LangGraph compiler and isolated synthetic model/tool fixtures. It cannot access production data or invoke external providers. Requires support or admin.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AgentSyntheticDraftRunRequest" } } }
+      responses:
+        "200":
+          description: Synthetic execution report with node trace, budget use, interrupts, and the verified isolation boundary.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentSyntheticRunResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/ops/agents/{config_key}/versions:
+    post:
+      operationId: createOperatorAgentDefinitionVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Creates an immutable declarative Agent graph draft. Requires an admin operator.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateAgentDefinitionVersionRequest" } } }
+      responses:
+        "201":
+          description: Agent definition draft created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version]
+                properties: { version: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agents/{config_key}/rollback:
+    post:
+      operationId: rollbackOperatorAgentDefinition
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Rolls an Agent definition deployment back to an earlier published version. Requires admin, MFA, and approval separation.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RollbackConfigurationRequest" } } }
+      responses:
+        "200":
+          description: Agent definition deployment rolled back.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationDeploymentResult" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agent-versions/{version_id}/dry-runs:
+    post:
+      operationId: dryRunOperatorAgentDefinitionVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Executes an immutable Agent definition version with isolated synthetic fixtures. Requires support or admin.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AgentSyntheticVersionRunRequest" } } }
+      responses:
+        "200":
+          description: Synthetic execution report bound to the immutable version fingerprint.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentSyntheticRunResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /v1/ops/agent-versions/{version_id}/evaluations:
+    post:
+      operationId: evaluateOperatorAgentDefinitionVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Runs and persists a bounded agent-eval-case-v1 suite against the exact immutable Agent version. Requires support or admin.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AgentEvaluationSuite" } } }
+      responses:
+        "201":
+          description: Completed persistent evaluation run and release-Gate decision.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentEvaluationRunResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    get:
+      operationId: listOperatorAgentEvaluationRuns
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists persistent evaluation history for one immutable Agent version.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: Evaluation history in reverse chronological order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [evaluation_runs]
+                properties:
+                  evaluation_runs: { type: array, items: { $ref: "#/components/schemas/AgentEvaluationRun" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/evaluation-runs/{run_id}:
+    get:
+      operationId: getOperatorAgentEvaluationRun
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Gets the immutable suite, per-case assertions, baseline comparison, and Gate decision for one evaluation run.
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Persistent evaluation run.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentEvaluationRunResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/agent-versions/{version_id}/rollouts:
+    post:
+      operationId: startOperatorAgentRollout
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Starts a deterministic user-cohort Canary for a submitted Agent version against the currently published baseline. Requires a separate admin approver and verified MFA.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StartAgentRolloutRequest" } } }
+      responses:
+        "201":
+          description: Canary routing is active and collecting online observations.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentRolloutResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agents/{config_key}/rollouts:
+    get:
+      operationId: listOperatorAgentRollouts
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Lists the persistent online rollout and Gate history for one Agent key.
+      parameters:
+        - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: Rollout history in reverse chronological order.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [rollouts]
+                properties:
+                  rollouts: { type: array, items: { $ref: "#/components/schemas/AgentRollout" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/agent-rollouts/{rollout_id}:
+    get:
+      operationId: getOperatorAgentRollout
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      parameters:
+        - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Persistent rollout state, policy, observations, and violations.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentRolloutResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ops/agent-rollouts/{rollout_id}/refresh:
+    post:
+      operationId: refreshOperatorAgentRollout
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Recomputes candidate and baseline metrics from persisted Agent Runs. Insufficient samples continue collecting; any violation automatically pauses candidate routing. Requires support or admin.
+      parameters:
+        - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Updated Gate decision.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentRolloutResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/ops/agent-rollouts/{rollout_id}/abort:
+    post:
+      operationId: abortOperatorAgentRollout
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Stops candidate routing and returns all new Runs to the published baseline. Requires admin and verified MFA.
+      parameters:
+        - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AbortAgentRolloutRequest" } } }
+      responses:
+        "200":
+          description: Rollout aborted and candidate routing disabled.
+          content: { application/json: { schema: { $ref: "#/components/schemas/AgentRolloutResponse" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/ops/config-versions/{version_id}/validate:
+    post:
+      operationId: validateOperatorConfigurationVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Revalidates a draft against the current schema and governed catalog. Requires an admin operator.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Version validated.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, validation]
+                properties:
+                  version: { $ref: "#/components/schemas/ConfigurationVersion" }
+                  validation: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/config-versions/{version_id}/submit:
+    post:
+      operationId: submitOperatorConfigurationVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Submits a validated version for approval. Agent definitions require a passing evaluation bound to the exact version fingerprint. Requires an admin operator.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Version submitted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version]
+                properties: { version: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/ops/config-versions/{version_id}/publish:
+    post:
+      operationId: publishOperatorConfigurationVersion
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }]
+      description: Publishes a submitted version. Agent definitions recheck their fingerprint-bound evaluation and, when replacing an active version, atomically require and promote a passing online Canary. Requires a different admin from the author/submitter and verified MFA.
+      parameters:
+        - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Operator-TOTP, in: header, required: true, schema: { type: string, pattern: "^\\d{6}$" } }
+      responses:
+        "200":
+          description: Version published and runtime activation status returned.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ConfigurationPublishResult" } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/ops/release-readiness:
     get:
       operationId: getReleaseReadiness
@@ -1947,6 +3235,9 @@ components:
     NotFound:
       description: Resource was not found in the caller scope.
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ServiceUnavailable:
+      description: The isolated runtime or a required service is temporarily unavailable.
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
   schemas:
     Error:
       type: object
@@ -1962,18 +3253,20 @@ components:
           additionalProperties: false
           required: [resource, plan_code, used, limit]
           properties:
-            resource: { type: string, enum: [documents, skill_runs, workspaces] }
+            resource: { type: string, enum: [documents, skill_runs, workspaces, agent_runs, model_cost_micros] }
             plan_code: { type: string }
             used: { type: integer, minimum: 0 }
             limit: { type: integer }
     BillingLimits:
       type: object
       additionalProperties: false
-      required: [documents, skill_runs_per_month, workspaces]
+      required: [documents, skill_runs_per_month, workspaces, agent_runs_per_month, model_cost_micros_monthly]
       properties:
         documents: { type: integer }
         skill_runs_per_month: { type: integer }
         workspaces: { type: integer }
+        agent_runs_per_month: { type: integer, description: Monthly Agent Run quota; -1 is unlimited. }
+        model_cost_micros_monthly: { type: integer, description: Monthly model-cost quota in USD micros; -1 is unlimited. }
     BillingPlan:
       type: object
       additionalProperties: false
@@ -1998,9 +3291,11 @@ components:
     BillingUsageItem:
       type: object
       additionalProperties: false
-      required: [resource, used, limit, remaining]
+      required: [resource, actual, adjustment, used, limit, remaining]
       properties:
-        resource: { type: string, enum: [documents, skill_runs, workspaces] }
+        resource: { type: string, enum: [documents, skill_runs, workspaces, agent_runs, model_cost_micros] }
+        actual: { type: integer, minimum: 0, description: Count or model-cost micros derived from immutable source facts. }
+        adjustment: { type: integer, description: Sum of append-only manual corrections for the applicable period. }
         used: { type: integer, minimum: 0 }
         limit: { type: integer }
         remaining: { type: integer }
@@ -2014,6 +3309,28 @@ components:
         plan: { $ref: "#/components/schemas/BillingPlan" }
         subscription: { $ref: "#/components/schemas/BillingSubscription" }
         usage: { type: array, items: { $ref: "#/components/schemas/BillingUsageItem" } }
+    BillingUsageAdjustment:
+      type: object
+      additionalProperties: false
+      required: [id, user_id, resource, delta, reason, actor, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        resource: { type: string, enum: [documents, skill_runs, workspaces, agent_runs, model_cost_micros] }
+        delta: { type: integer, not: { const: 0 } }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+        actor: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    CreateBillingUsageAdjustmentRequest:
+      type: object
+      additionalProperties: false
+      required: [resource, delta, reason]
+      properties:
+        resource: { type: string, enum: [documents, skill_runs, workspaces, agent_runs, model_cost_micros] }
+        delta: { type: integer, not: { const: 0 } }
+        reason: { type: string, minLength: 1, maxLength: 512 }
     SafetyPolicy:
       type: object
       additionalProperties: false
@@ -2187,6 +3504,14 @@ components:
         conversation_id: { type: string, format: uuid }
         character_id: { type: string, format: uuid }
         module: { type: string, enum: [companion, life, work] }
+        agent_definition_key: { type: string, description: Published Agent Studio definition captured when the run was accepted. }
+        agent_definition_version_id: { type: string, format: uuid }
+        agent_definition_version: { type: integer, minimum: 1 }
+        agent_definition_revision: { type: integer, minimum: 1 }
+        agent_definition_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        model_profile_version_id: { type: string, format: uuid, description: Immutable model profile version captured when the run was accepted. }
+        model_profile_config_version: { type: string }
+        model_profile_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
         status: { type: string, enum: [accepted, queued, running, waiting_approval, waiting_tool, completed, failed, cancel_requested, cancelled, timed_out] }
         revision: { type: integer, minimum: 1 }
         deadline_at: { type: string, format: date-time, description: "Fixed total deadline; retries and approval resumes do not extend it." }
@@ -2212,6 +3537,849 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+    AgentRunOperationsSummary:
+      type: object
+      additionalProperties: false
+      required: [id, thread_id, user_id, conversation_id, module, graph_name, graph_version, status, revision, model_calls, prompt_tokens, completion_tokens, cost_micros, tool_calls, duration_ms, deadline_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        thread_id: { type: string }
+        user_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        module: { type: string, enum: [companion, life, work] }
+        graph_name: { type: string }
+        graph_version: { type: string }
+        agent_definition_key: { type: string }
+        agent_definition_version_id: { type: string, format: uuid }
+        agent_definition_version: { type: integer, minimum: 1 }
+        agent_definition_revision: { type: integer, minimum: 1 }
+        agent_definition_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        model_profile_key: { type: string }
+        model_profile_version_id: { type: string, format: uuid }
+        model_profile_revision: { type: integer, minimum: 1 }
+        model_profile_config_version: { type: string }
+        model_profile_fingerprint: { type: string, pattern: '^[0-9a-f]{64}$' }
+        status: { type: string, enum: [accepted, queued, running, waiting_approval, waiting_tool, completed, failed, cancel_requested, cancelled, timed_out] }
+        current_node: { type: string }
+        revision: { type: integer, minimum: 1 }
+        model_calls: { type: integer, minimum: 0 }
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        tool_calls: { type: integer, minimum: 0 }
+        error_code: { type: string }
+        error_message: { type: string, description: Truncated operational error text. }
+        duration_ms: { type: integer, minimum: 0 }
+        deadline_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    VersionPerformance:
+      type: object
+      additionalProperties: false
+      required: [dimension, group_id, key, label, runs, sample_size, completed, failed, cancelled, quality_failures, success_rate, error_rate, quality_failure_rate, model_calls, prompt_tokens, completion_tokens, cost_micros, average_cost_micros, average_duration_ms, p50_duration_ms, p95_duration_ms]
+      properties:
+        dimension: { type: string, enum: [agent_version, model_profile] }
+        group_id: { type: string }
+        key: { type: string }
+        label: { type: string }
+        version_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        revision: { type: integer, minimum: 1 }
+        config_version: { type: string }
+        runs: { type: integer, minimum: 0 }
+        sample_size: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        cancelled: { type: integer, minimum: 0 }
+        quality_failures: { type: integer, minimum: 0 }
+        success_rate: { type: number, minimum: 0, maximum: 1 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        quality_failure_rate: { type: number, minimum: 0, maximum: 1 }
+        model_calls: { type: integer, minimum: 0 }
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        average_cost_micros: { type: number, minimum: 0 }
+        average_duration_ms: { type: number, minimum: 0 }
+        p50_duration_ms: { type: number, minimum: 0 }
+        p95_duration_ms: { type: number, minimum: 0 }
+    VersionPerformancePage:
+      type: object
+      additionalProperties: false
+      required: [dimension, module, from, to, items]
+      properties:
+        dimension: { type: string, enum: [agent_version, model_profile] }
+        module: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/VersionPerformance" } }
+    ModelPerformance:
+      type: object
+      additionalProperties: false
+      required: [provider, model, calls, succeeded, failed, error_rate, prompt_tokens, completion_tokens, cached_tokens, cost_micros, average_cost_micros, average_latency_ms, p95_latency_ms]
+      properties:
+        provider: { type: string }
+        model: { type: string }
+        calls: { type: integer, minimum: 0 }
+        succeeded: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        cached_tokens: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        average_cost_micros: { type: number, minimum: 0 }
+        average_latency_ms: { type: number, minimum: 0 }
+        p95_latency_ms: { type: number, minimum: 0 }
+    ModelPerformancePage:
+      type: object
+      additionalProperties: false
+      required: [module, from, to, items]
+      properties:
+        module: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/ModelPerformance" } }
+    PerformanceWindow:
+      type: object
+      additionalProperties: false
+      required: [from, to, runs, sample_size, completed, failed, quality_failures, success_rate, error_rate, quality_failure_rate, model_calls, cost_micros, average_cost_micros, p95_duration_ms]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        runs: { type: integer, minimum: 0 }
+        sample_size: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        quality_failures: { type: integer, minimum: 0 }
+        success_rate: { type: number, minimum: 0, maximum: 1 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        quality_failure_rate: { type: number, minimum: 0, maximum: 1 }
+        model_calls: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        average_cost_micros: { type: number, minimum: 0 }
+        p95_duration_ms: { type: number, minimum: 0 }
+    PerformanceAnomaly:
+      type: object
+      additionalProperties: false
+      required: [metric, severity, current, baseline, change, message]
+      properties:
+        metric: { type: string, enum: [error_rate, quality_failure_rate, p95_duration_ms, average_cost_micros] }
+        severity: { type: string, enum: [warning, critical] }
+        current: { type: number }
+        baseline: { type: number }
+        change: { type: number, description: Absolute rate delta for rates and relative delta for duration or cost. }
+        message: { type: string }
+    PerformanceAnalysis:
+      type: object
+      additionalProperties: false
+      required: [status, generated_at, current, baseline, anomalies]
+      properties:
+        status: { type: string, enum: [stable, warning, critical, insufficient_data] }
+        generated_at: { type: string, format: date-time }
+        current: { $ref: "#/components/schemas/PerformanceWindow" }
+        baseline: { $ref: "#/components/schemas/PerformanceWindow" }
+        anomalies: { type: array, items: { $ref: "#/components/schemas/PerformanceAnomaly" } }
+        note: { type: string }
+    PerformanceTrendPoint:
+      type: object
+      additionalProperties: false
+      required: [from, to, runs, sample_size, completed, failed, success_rate, model_calls, cost_micros, p95_duration_ms]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        runs: { type: integer, minimum: 0 }
+        sample_size: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        success_rate: { type: number, minimum: 0, maximum: 1 }
+        model_calls: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        p95_duration_ms: { type: number, minimum: 0 }
+    PerformanceTrendPage:
+      type: object
+      additionalProperties: false
+      required: [module, from, to, bucket, items]
+      properties:
+        module: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        bucket: { type: string, enum: [hour, day] }
+        items: { type: array, items: { $ref: "#/components/schemas/PerformanceTrendPoint" } }
+    PerformanceBudget:
+      type: object
+      required: [id, name, period, cost_limit_micros, warning_ratio, enabled, forecast_alerts_enabled, forecast_lookback_days, forecast_min_samples, effect_observation_days, effect_min_samples, revision, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 2, maxLength: 128 }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        cost_limit_micros: { type: integer, minimum: 1 }
+        warning_ratio: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }
+        enabled: { type: boolean }
+        forecast_alerts_enabled: { type: boolean }
+        forecast_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        forecast_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        effect_observation_days: { type: integer, minimum: 7, maximum: 180, description: Fixed observation window captured when an accepted recommendation is manually applied. }
+        effect_min_samples: { type: integer, minimum: 5, maximum: 100, description: Minimum decided outcomes required to assess an applied recommendation. }
+        revision: { type: integer, minimum: 1 }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PerformanceBudgetStatus:
+      allOf:
+        - { $ref: "#/components/schemas/PerformanceBudget" }
+        - type: object
+          required: [window_from, window_to, used_cost_micros, remaining_micros, utilization, status]
+          properties:
+            window_from: { type: string, format: date-time }
+            window_to: { type: string, format: date-time }
+            used_cost_micros: { type: integer, minimum: 0 }
+            remaining_micros: { type: integer, minimum: 0 }
+            utilization: { type: number, minimum: 0 }
+            status: { type: string, enum: [normal, warning, exceeded, disabled] }
+      unevaluatedProperties: false
+    PerformanceBudgetMutation:
+      type: object
+      additionalProperties: false
+      required: [name, period, cost_limit_micros, warning_ratio, enabled, reason]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 128 }
+        module: { type: string, enum: ["", companion, life, work], description: Empty or omitted applies to all modules. }
+        period: { type: string, enum: [daily, monthly] }
+        cost_limit_micros: { type: integer, minimum: 1 }
+        warning_ratio: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }
+        enabled: { type: boolean }
+        forecast_alerts_enabled: { type: boolean, default: true, description: Enables proactive forecast incidents; actual warning and exceeded incidents remain active when false. }
+        forecast_lookback_days: { type: integer, minimum: 1, maximum: 90, description: Defaults to 7 for daily budgets and 30 for monthly budgets. }
+        forecast_min_samples: { type: integer, minimum: 5, maximum: 10000, default: 20 }
+        effect_observation_days: { type: integer, minimum: 7, maximum: 180, default: 30 }
+        effect_min_samples: { type: integer, minimum: 5, maximum: 100, default: 5 }
+        revision: { type: integer, minimum: 1, description: Required for updates and ignored when creating. }
+        reason: { type: string, minLength: 2, maxLength: 512 }
+    PerformanceBudgetPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [name, period, cost_limit_micros, warning_ratio, enabled]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 128 }
+        module: { type: string, enum: ["", companion, life, work], description: Empty or omitted applies to all modules. }
+        period: { type: string, enum: [daily, monthly] }
+        cost_limit_micros: { type: integer, minimum: 1 }
+        warning_ratio: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1 }
+        enabled: { type: boolean }
+        forecast_alerts_enabled: { type: boolean, default: true }
+        forecast_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        forecast_min_samples: { type: integer, minimum: 5, maximum: 10000, default: 20 }
+        effect_observation_days: { type: integer, minimum: 7, maximum: 180, default: 30, description: Accepted for the same form contract; does not affect immediate incident preview. }
+        effect_min_samples: { type: integer, minimum: 5, maximum: 100, default: 5, description: Accepted for the same form contract; does not affect immediate incident preview. }
+        revision: { type: integer, minimum: 0, description: Accepted for form compatibility and ignored by preview. }
+        reason: { type: string, maxLength: 512, description: Accepted for form compatibility and ignored by preview. }
+    PerformanceBudgetImpactProjection:
+      type: object
+      additionalProperties: false
+      required: [enabled, forecast_alerts_enabled, forecast_lookback_days, forecast_min_samples, status, signal, severity, will_alert, used_cost_micros, cost_limit_micros, utilization, forecast_risk, forecast_confidence, sample_size, projected_cost_micros, projected_utilization, reason]
+      properties:
+        enabled: { type: boolean }
+        forecast_alerts_enabled: { type: boolean }
+        forecast_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        forecast_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        status: { type: string, enum: [normal, warning, exceeded, disabled] }
+        signal: { type: string, enum: [disabled, safe, insufficient_samples, projected_exceeded, actual_warning, actual_exceeded] }
+        severity: { type: string, enum: [none, warning, critical] }
+        will_alert: { type: boolean }
+        used_cost_micros: { type: integer, minimum: 0 }
+        cost_limit_micros: { type: integer, minimum: 1 }
+        utilization: { type: number, minimum: 0 }
+        forecast_risk: { type: string, enum: [not_evaluated, on_track, projected_warning, projected_exceeded, exceeded, disabled, insufficient_data] }
+        forecast_confidence: { type: string, enum: [none, low, medium, high] }
+        sample_size: { type: integer, minimum: 0 }
+        projected_cost_micros: { type: integer, minimum: 0 }
+        projected_utilization: { type: number, minimum: 0 }
+        projected_limit_exceeded_at: { type: string, format: date-time }
+        reason: { type: string }
+    PerformanceBudgetImpactPreview:
+      type: object
+      additionalProperties: false
+      required: [budget_id, generated_at, current, proposed, change, note]
+      properties:
+        budget_id: { type: string, format: uuid }
+        generated_at: { type: string, format: date-time }
+        current: { $ref: "#/components/schemas/PerformanceBudgetImpactProjection" }
+        proposed: { $ref: "#/components/schemas/PerformanceBudgetImpactProjection" }
+        change: { type: string, enum: [unchanged, would_start_alerting, would_stop_alerting, would_escalate, would_deescalate, would_change_signal] }
+        note: { type: string, description: Explicitly states that the preview has no persistence, incident, or notification side effects. }
+    PerformanceBudgetForecastOutcome:
+      type: object
+      additionalProperties: false
+      required: [incident_id, budget_id, budget_name, period, outcome, opened_at, duration_minutes, initial_utilization, projected_utilization, projected_cost_micros, forecast_sample_size, budget_revision]
+      properties:
+        incident_id: { type: string, format: uuid }
+        budget_id: { type: string, format: uuid }
+        budget_name: { type: string }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        outcome: { type: string, enum: [hit, cleared, observing] }
+        opened_at: { type: string, format: date-time }
+        outcome_at: { type: string, format: date-time }
+        duration_minutes: { type: integer, minimum: 0, description: Minutes until actual exceedance for a hit, or until recovery for a cleared prediction. Zero while observing. }
+        initial_utilization: { type: number, minimum: 0 }
+        projected_utilization: { type: number, minimum: 0 }
+        projected_cost_micros: { type: integer, minimum: 0 }
+        forecast_sample_size: { type: integer, minimum: 0 }
+        predicted_limit_exceeded_at: { type: string, format: date-time }
+        budget_revision: { type: integer, minimum: 0, description: Budget revision captured when the forecast incident opened. Zero identifies legacy records without a policy snapshot. }
+    PerformanceBudgetForecastHistorySummary:
+      type: object
+      additionalProperties: false
+      required: [budget_id, budget_name, period, predictions, hits, cleared, observing, decided, hit_rate, average_lead_time_minutes]
+      properties:
+        budget_id: { type: string, format: uuid }
+        budget_name: { type: string }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        predictions: { type: integer, minimum: 0 }
+        hits: { type: integer, minimum: 0 }
+        cleared: { type: integer, minimum: 0 }
+        observing: { type: integer, minimum: 0 }
+        decided: { type: integer, minimum: 0 }
+        hit_rate: { type: number, minimum: 0, maximum: 1 }
+        average_lead_time_minutes: { type: number, minimum: 0 }
+    PerformanceBudgetPolicyRecommendation:
+      type: object
+      additionalProperties: false
+      required: [budget_id, budget_name, period, action, confidence, decided, hit_rate, average_lead_time_minutes, current_lookback_days, current_min_samples, proposed_lookback_days, proposed_min_samples, reason, requires_impact_preview, recommendation_key, budget_revision]
+      properties:
+        budget_id: { type: string, format: uuid }
+        budget_name: { type: string }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        action: { type: string, enum: [not_applicable, collect_more_data, keep_policy, increase_sample_gate, decrease_sample_gate] }
+        confidence: { type: string, enum: [none, low, medium, high] }
+        decided: { type: integer, minimum: 0 }
+        hit_rate: { type: number, minimum: 0, maximum: 1 }
+        average_lead_time_minutes: { type: number, minimum: 0 }
+        current_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        current_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        proposed_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        proposed_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        reason: { type: string }
+        requires_impact_preview: { type: boolean, description: True only when the proposed values differ. The recommendation itself never writes configuration. }
+        recommendation_key: { type: string, pattern: "^[0-9a-f]{64}$", description: Stable key for this exact recommendation snapshot and budget revision. }
+        feedback: { $ref: "#/components/schemas/PerformanceBudgetPolicyDecision" }
+        budget_revision: { type: integer, minimum: 1 }
+    PerformanceBudgetPolicyDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision, reason]
+      properties:
+        decision: { type: string, enum: [accepted, rejected] }
+        reason: { type: string, minLength: 2, maxLength: 512 }
+    PerformanceBudgetPolicyEffectReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [disposition, reason]
+      properties:
+        disposition: { type: string, enum: [rollback_planned, continue_observing] }
+        reason: { type: string, minLength: 2, maxLength: 512 }
+    PerformanceBudgetPolicyEffectCloseRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 2, maxLength: 512 }
+    PerformanceBudgetPolicyEffectReview:
+      type: object
+      additionalProperties: false
+      required: [status, disposition, reason, reviewed_by, reviewed_at]
+      properties:
+        status: { type: string, enum: [acknowledged, closed] }
+        disposition: { type: string, enum: [rollback_planned, continue_observing] }
+        reason: { type: string, minLength: 2, maxLength: 512 }
+        reviewed_by: { type: string }
+        reviewed_at: { type: string, format: date-time }
+        rollback_applied_at: { type: string, format: date-time, description: Present when a manual budget update strictly matched this rollback plan. }
+        rollback_applied_by: { type: string }
+        rollback_budget_revision: { type: integer, minimum: 1, description: New budget revision created by the matched manual rollback. }
+        closed_reason: { type: string, minLength: 2, maxLength: 512 }
+        closed_by: { type: string }
+        closed_at: { type: string, format: date-time }
+    PerformanceBudgetPolicyDecision:
+      type: object
+      additionalProperties: false
+      required: [id, budget_id, recommendation_key, action, decision, confidence, outcome_count, hit_rate, average_lead_time_minutes, current_lookback_days, current_min_samples, proposed_lookback_days, proposed_min_samples, recommendation_reason, reason, decided_by, decided_at, budget_revision]
+      properties:
+        id: { type: string, format: uuid }
+        budget_id: { type: string, format: uuid }
+        recommendation_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+        action: { type: string, enum: [increase_sample_gate, decrease_sample_gate] }
+        decision: { type: string, enum: [accepted, rejected] }
+        confidence: { type: string, enum: [low, medium, high] }
+        outcome_count: { type: integer, minimum: 5 }
+        hit_rate: { type: number, minimum: 0, maximum: 1 }
+        average_lead_time_minutes: { type: number, minimum: 0 }
+        current_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        current_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        proposed_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        proposed_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        recommendation_reason: { type: string }
+        reason: { type: string, minLength: 2, maxLength: 512 }
+        decided_by: { type: string }
+        decided_at: { type: string, format: date-time }
+        budget_revision: { type: integer, minimum: 0, description: Budget revision from which this exact recommendation was generated. Zero identifies feedback created before revision-bound attribution was introduced. }
+        applied_at: { type: string, format: date-time }
+        applied_by: { type: string }
+        applied_budget_revision: { type: integer, minimum: 1, description: New revision created when an accepted recommendation was manually saved. }
+        effect_observation_days: { type: integer, minimum: 7, maximum: 180, description: Observation window captured atomically at application time. }
+        effect_min_samples: { type: integer, minimum: 5, maximum: 100, description: Assessment sample threshold captured atomically at application time. }
+        effect_review: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectReview" }
+    PerformanceBudgetPolicyEffectMetrics:
+      type: object
+      additionalProperties: false
+      required: [predictions, hits, cleared, observing, decided, hit_rate, average_lead_time_minutes]
+      properties:
+        predictions: { type: integer, minimum: 0 }
+        hits: { type: integer, minimum: 0 }
+        cleared: { type: integer, minimum: 0 }
+        observing: { type: integer, minimum: 0 }
+        decided: { type: integer, minimum: 0 }
+        hit_rate: { type: number, minimum: 0, maximum: 1 }
+        average_lead_time_minutes: { type: number, minimum: 0 }
+    PerformanceBudgetPolicyRollbackVerification:
+      type: object
+      additionalProperties: false
+      required: [budget_revision, applied_by, applied_at, observation_days, minimum_decided_samples, observation_ends_at, observation_complete, after, status, note]
+      properties:
+        budget_revision: { type: integer, minimum: 1, description: Budget revision created by the matched manual rollback. }
+        applied_by: { type: string }
+        applied_at: { type: string, format: date-time }
+        observation_days: { type: integer, minimum: 7, maximum: 180 }
+        minimum_decided_samples: { type: integer, minimum: 5, maximum: 100 }
+        observation_ends_at: { type: string, format: date-time }
+        observation_complete: { type: boolean }
+        after: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectMetrics" }
+        status: { type: string, enum: [collecting, insufficient_data, recovered, improving, mixed, not_recovered] }
+        note: { type: string }
+    PerformanceBudgetPolicyEffect:
+      type: object
+      additionalProperties: false
+      required: [decision_id, budget_id, budget_name, period, recommendation_key, action, current_lookback_days, current_min_samples, proposed_lookback_days, proposed_min_samples, applied_by, applied_at, applied_budget_revision, observation_days, minimum_decided_samples, observation_ends_at, observation_complete, before, after, status, note, recommend_rollback, rollback_can_apply]
+      properties:
+        decision_id: { type: string, format: uuid }
+        budget_id: { type: string, format: uuid }
+        budget_name: { type: string }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        recommendation_key: { type: string, pattern: "^[0-9a-f]{64}$" }
+        action: { type: string, enum: [increase_sample_gate, decrease_sample_gate] }
+        current_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        current_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        proposed_lookback_days: { type: integer, minimum: 1, maximum: 90 }
+        proposed_min_samples: { type: integer, minimum: 5, maximum: 10000 }
+        applied_by: { type: string }
+        applied_at: { type: string, format: date-time }
+        applied_budget_revision: { type: integer, minimum: 1 }
+        observation_days: { type: integer, minimum: 7, maximum: 180 }
+        minimum_decided_samples: { type: integer, minimum: 5, maximum: 100 }
+        observation_ends_at: { type: string, format: date-time }
+        observation_complete: { type: boolean }
+        before: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectMetrics" }
+        after: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectMetrics" }
+        status: { type: string, enum: [collecting, insufficient_data, improved, mixed, regressed, stable] }
+        note: { type: string }
+        recommend_rollback: { type: boolean, description: True only after the observation window ends with enough outcomes and a clear regression. This response never changes configuration. }
+        rollback_lookback_days: { type: integer, minimum: 1, maximum: 90, description: Original lookback value; present only for a rollback recommendation. }
+        rollback_min_samples: { type: integer, minimum: 5, maximum: 10000, description: Original sample gate; present only for a rollback recommendation. }
+        rollback_reason: { type: string }
+        rollback_can_apply: { type: boolean, description: True only while an acknowledged rollback plan still matches the current enabled budget revision and proposed policy. }
+        rollback_verification: { $ref: "#/components/schemas/PerformanceBudgetPolicyRollbackVerification" }
+        review: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffectReview" }
+    PerformanceBudgetForecastHistory:
+      type: object
+      additionalProperties: false
+      required: [generated_at, from, to, predictions, hits, cleared, observing, decided, hit_rate, average_lead_time_minutes, budgets, recommendations, effects, items, note]
+      properties:
+        generated_at: { type: string, format: date-time }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        predictions: { type: integer, minimum: 0 }
+        hits: { type: integer, minimum: 0 }
+        cleared: { type: integer, minimum: 0 }
+        observing: { type: integer, minimum: 0 }
+        decided: { type: integer, minimum: 0 }
+        hit_rate: { type: number, minimum: 0, maximum: 1 }
+        average_lead_time_minutes: { type: number, minimum: 0 }
+        budgets: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetForecastHistorySummary" } }
+        recommendations: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetPolicyRecommendation" } }
+        effects: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetPolicyEffect" } }
+        items: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetForecastOutcome" } }
+        note: { type: string }
+    PerformanceBudgetReviewReport:
+      type: object
+      additionalProperties: false
+      required: [generated_at, from, to, range, summary, budgets, history]
+      properties:
+        generated_at: { type: string, format: date-time }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        range: { type: string, enum: [30d, 90d, 365d] }
+        summary:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        budgets: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetStatus" } }
+        history: { $ref: "#/components/schemas/PerformanceBudgetForecastHistory" }
+    PerformanceBudgetEvaluation:
+      type: object
+      additionalProperties: false
+      required: [budgets_evaluated, warning, exceeded, projected_exceeded, opened, escalated, resolved]
+      properties:
+        budgets_evaluated: { type: integer, minimum: 0 }
+        warning: { type: integer, minimum: 0 }
+        exceeded: { type: integer, minimum: 0 }
+        projected_exceeded: { type: integer, minimum: 0, description: Normal budgets projected to exceed the period limit after satisfying their configured sample minimum. }
+        opened: { type: integer, minimum: 0 }
+        escalated: { type: integer, minimum: 0 }
+        resolved: { type: integer, minimum: 0 }
+    PerformanceBudgetForecast:
+      type: object
+      additionalProperties: false
+      required: [budget_id, name, period, current_status, risk, confidence, sample_size, observed_hours, used_cost_micros, cost_limit_micros, burn_rate_micros_per_hour, projected_cost_micros, projected_utilization, required_savings_micros, period_ends_at]
+      properties:
+        budget_id: { type: string, format: uuid }
+        name: { type: string }
+        module: { type: string, enum: [companion, life, work] }
+        period: { type: string, enum: [daily, monthly] }
+        current_status: { type: string, enum: [normal, warning, exceeded, disabled] }
+        risk: { type: string, enum: [on_track, projected_warning, projected_exceeded, exceeded, disabled, insufficient_data] }
+        confidence: { type: string, enum: [none, low, medium, high] }
+        sample_size: { type: integer, minimum: 0 }
+        observed_hours: { type: number, exclusiveMinimum: 0 }
+        used_cost_micros: { type: integer, minimum: 0 }
+        cost_limit_micros: { type: integer, minimum: 1 }
+        burn_rate_micros_per_hour: { type: number, minimum: 0 }
+        projected_cost_micros: { type: integer, minimum: 0 }
+        projected_utilization: { type: number, minimum: 0 }
+        required_savings_micros: { type: integer, minimum: 0 }
+        period_ends_at: { type: string, format: date-time }
+        projected_warning_at: { type: string, format: date-time }
+        projected_limit_exceeded_at: { type: string, format: date-time }
+    PerformanceModelRecommendation:
+      type: object
+      additionalProperties: false
+      required: [source_provider, source_model, target_provider, target_model, source_calls, target_calls, estimated_savings_micros_per_1000_calls, estimated_savings_ratio, error_rate_delta, p95_latency_delta_ms, confidence, reason, requires_validation_before_adoption]
+      properties:
+        source_provider: { type: string }
+        source_model: { type: string }
+        target_provider: { type: string }
+        target_model: { type: string }
+        source_calls: { type: integer, minimum: 20 }
+        target_calls: { type: integer, minimum: 20 }
+        estimated_savings_micros_per_1000_calls: { type: integer, minimum: 0 }
+        estimated_savings_ratio: { type: number, minimum: 0, maximum: 1 }
+        error_rate_delta: { type: number }
+        p95_latency_delta_ms: { type: number }
+        confidence: { type: string, enum: [low, medium, high] }
+        reason: { type: string }
+        requires_validation_before_adoption: { type: boolean, const: true }
+    PerformanceForecast:
+      type: object
+      additionalProperties: false
+      required: [status, generated_at, history_from, history_to, budget_forecasts, model_recommendations, note]
+      properties:
+        status: { type: string, enum: [ready, insufficient_data] }
+        generated_at: { type: string, format: date-time }
+        history_from: { type: string, format: date-time }
+        history_to: { type: string, format: date-time }
+        budget_forecasts: { type: array, items: { $ref: "#/components/schemas/PerformanceBudgetForecast" } }
+        model_recommendations: { type: array, items: { $ref: "#/components/schemas/PerformanceModelRecommendation" } }
+        note: { type: string }
+    SystemLogEntry:
+      type: object
+      additionalProperties: false
+      required: [id, occurred_at, service, environment, level, event, message, attributes]
+      properties:
+        id: { type: integer, minimum: 1 }
+        occurred_at: { type: string, format: date-time }
+        service: { type: string }
+        environment: { type: string }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+        event: { type: string }
+        message: { type: string, maxLength: 513 }
+        trace_id: { type: string, pattern: "^[0-9a-f]{32}$" }
+        span_id: { type: string, pattern: "^[0-9a-f]{16}$" }
+        trace_flags: { type: string, pattern: "^[0-9a-f]{2}$" }
+        run_id: { type: string }
+        agent_trace_id: { type: string, pattern: "^[0-9a-f]{32}$", description: Langfuse Agent Trace ID; normally identical to trace_id, with a deterministic run_id-derived fallback for reconciliation without incoming context. }
+        node: { type: string }
+        error_code: { type: string }
+        attributes: { type: object, additionalProperties: true, description: Redacted and size-bounded structured attributes. }
+    SystemLogPage:
+      type: object
+      additionalProperties: false
+      required: [items, summary, services, source]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/SystemLogEntry" } }
+        next_before_id: { type: integer, minimum: 1 }
+        summary:
+          type: object
+          additionalProperties: false
+          required: [total, errors, warnings, services]
+          properties:
+            total: { type: integer, minimum: 0 }
+            errors: { type: integer, minimum: 0 }
+            warnings: { type: integer, minimum: 0 }
+            services: { type: integer, minimum: 0 }
+        services: { type: array, items: { type: string } }
+        source: { type: string, enum: [loki, postgres, memory] }
+        degraded: { type: boolean, description: True when a configured Loki query fell back to the durable local log store. }
+        truncated: { type: boolean }
+    AlertRule:
+      type: object
+      additionalProperties: false
+      required: [id, name, level, window_minutes, threshold, severity, enabled, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        service: { type: string }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+        event_prefix: { type: string }
+        window_minutes: { type: integer, minimum: 1, maximum: 1440 }
+        threshold: { type: integer, minimum: 1, maximum: 1000000 }
+        severity: { type: string, enum: [warning, critical] }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAlertRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [name, level, window_minutes, threshold, severity, enabled, reason]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, maxLength: 512 }
+        service: { type: string, maxLength: 128 }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+        event_prefix: { type: string, maxLength: 128 }
+        window_minutes: { type: integer, minimum: 1, maximum: 1440 }
+        threshold: { type: integer, minimum: 1, maximum: 1000000 }
+        severity: { type: string, enum: [warning, critical] }
+        enabled: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    SetAlertRuleEnabledRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, reason]
+      properties:
+        enabled: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    AlertEvaluation:
+      type: object
+      additionalProperties: false
+      required: [rules_evaluated, triggered, opened, updated, resolved]
+      properties:
+        rules_evaluated: { type: integer, minimum: 0 }
+        triggered: { type: integer, minimum: 0 }
+        opened: { type: integer, minimum: 0 }
+        updated: { type: integer, minimum: 0 }
+        resolved: { type: integer, minimum: 0 }
+    Incident:
+      type: object
+      additionalProperties: false
+      required: [id, rule_name, source_type, source_id, status, severity, title, summary, level, observed_value, threshold, window_minutes, window_started_at, window_ended_at, evidence, opened_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        rule_id: { type: string, format: uuid }
+        rule_name: { type: string }
+        source_type: { type: string, enum: [log_rule, performance_budget] }
+        source_id: { type: string, format: uuid }
+        status: { type: string, enum: [open, acknowledged, resolved] }
+        severity: { type: string, enum: [warning, critical] }
+        title: { type: string }
+        summary: { type: string }
+        service: { type: string }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+        event_prefix: { type: string }
+        observed_value: { type: integer, minimum: 0 }
+        threshold: { type: integer, minimum: 1 }
+        window_minutes: { type: integer, minimum: 1 }
+        window_started_at: { type: string, format: date-time }
+        window_ended_at: { type: string, format: date-time }
+        evidence: { type: object, additionalProperties: true }
+        opened_at: { type: string, format: date-time }
+        acknowledged_at: { type: string, format: date-time }
+        acknowledged_by: { type: string }
+        resolved_at: { type: string, format: date-time }
+        resolved_by: { type: string }
+        resolution: { type: string }
+        updated_at: { type: string, format: date-time }
+    IncidentStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    AlertSubscription:
+      type: object
+      additionalProperties: false
+      required: [id, name, channel, target, minimum_severity, notify_on_open, notify_on_resolved, enabled, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        rule_id: { type: string, format: uuid }
+        rule_name: { type: string }
+        channel: { type: string, enum: [email, console] }
+        target: { type: string, description: Email address for email or a stable management-console inbox key. }
+        minimum_severity: { type: string, enum: [warning, critical] }
+        notify_on_open: { type: boolean }
+        notify_on_resolved: { type: boolean }
+        enabled: { type: boolean }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAlertSubscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [name, channel, target, minimum_severity, notify_on_open, notify_on_resolved, enabled, reason]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        rule_id: { type: string, format: uuid }
+        channel: { type: string, enum: [email, console] }
+        target: { type: string, maxLength: 320 }
+        minimum_severity: { type: string, enum: [warning, critical] }
+        notify_on_open: { type: boolean }
+        notify_on_resolved: { type: boolean }
+        enabled: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    SetAlertSubscriptionEnabledRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled, reason]
+      properties:
+        enabled: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    IncidentNotification:
+      type: object
+      additionalProperties: false
+      required: [id, transition, channel, target, status, attempts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        transition: { type: string, enum: [opened, escalated, resolved] }
+        channel: { type: string, enum: [email, console] }
+        target: { type: string, description: Masked recipient address for email or visible inbox key for management-console delivery. }
+        delivery_id: { type: string, format: uuid, description: Present only for email delivery. }
+        status: { type: string, enum: [queued, processing, sent, failed] }
+        attempts: { type: integer, minimum: 0 }
+        failure_code: { type: string }
+        created_at: { type: string, format: date-time }
+        sent_at: { type: string, format: date-time }
+    IncidentActivity:
+      type: object
+      additionalProperties: false
+      required: [action, actor_type, actor, occurred_at]
+      properties:
+        action: { type: string }
+        actor_type: { type: string, enum: [operator, system] }
+        actor: { type: string }
+        reason: { type: string }
+        occurred_at: { type: string, format: date-time }
+    IncidentEvidenceLog:
+      type: object
+      additionalProperties: false
+      required: [id, occurred_at, service, level, event, message]
+      properties:
+        id: { type: integer, minimum: 1 }
+        occurred_at: { type: string, format: date-time }
+        service: { type: string }
+        level: { type: string, enum: [DEBUG, INFO, WARN, ERROR] }
+        event: { type: string }
+        message: { type: string }
+        trace_id: { type: string }
+        run_id: { type: string }
+        error_code: { type: string }
+    IncidentEvidence:
+      type: object
+      additionalProperties: false
+      required: [incident, activity, notifications, logs, generated_at]
+      properties:
+        incident: { $ref: "#/components/schemas/Incident" }
+        activity: { type: array, items: { $ref: "#/components/schemas/IncidentActivity" } }
+        notifications: { type: array, items: { $ref: "#/components/schemas/IncidentNotification" } }
+        logs: { type: array, items: { $ref: "#/components/schemas/IncidentEvidenceLog" } }
+        generated_at: { type: string, format: date-time }
+    AgentRunOperationsModelCall:
+      type: object
+      additionalProperties: true
+      description: Governed model-call metadata without prompt or completion content.
+      properties:
+        graph_node: { type: string }
+        role: { type: string }
+        status: { type: string }
+        provider: { type: string }
+        requested_model: { type: string }
+        returned_model: { type: string }
+        prompt_tokens: { type: integer, minimum: 0 }
+        completion_tokens: { type: integer, minimum: 0 }
+        cached_tokens: { type: integer, minimum: 0 }
+        reasoning_tokens: { type: integer, minimum: 0 }
+        cost_micros: { type: integer, minimum: 0 }
+        latency_ms: { type: integer, minimum: 0 }
+        timeout_ms: { type: integer, minimum: 0 }
+        error_status: { type: string }
+        retryable: { type: boolean }
+        contract_valid: { type: boolean }
+        contract_error: { type: string }
+    AgentRunOperationsNode:
+      type: object
+      additionalProperties: false
+      properties:
+        node: { type: string }
+        status: { type: string }
+        duration_ms: { type: integer, minimum: 0 }
+        details: { type: object, additionalProperties: true, description: Recursively redacted bounded diagnostic metadata. }
+    AgentRunOperationsToolCall:
+      type: object
+      additionalProperties: false
+      required: [id, run_id, tool_name, risk_level, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        tool_name: { type: string }
+        risk_level: { type: string, enum: [none, low, medium, high] }
+        status: { type: string, enum: [proposed, approved, running, succeeded, failed, cancelled] }
+        error_code: { type: string }
+        error_message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    AgentRunOperationsEvent:
+      type: object
+      additionalProperties: false
+      required: [id, sequence, type, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        sequence: { type: integer, format: int64 }
+        type: { type: string }
+        created_at: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: true, description: Allowlisted state-transition metadata. }
+    AgentRunOperationsDetail:
+      type: object
+      additionalProperties: false
+      required: [run, graph, budget, model_manifest, model_calls, node_trace, langfuse, tool_calls, events]
+      properties:
+        run: { $ref: "#/components/schemas/AgentRunOperationsSummary" }
+        graph: { type: object, additionalProperties: true }
+        budget: { type: object, additionalProperties: true }
+        model_manifest: { type: object, additionalProperties: true }
+        model_calls: { type: array, items: { $ref: "#/components/schemas/AgentRunOperationsModelCall" } }
+        node_trace: { type: array, items: { $ref: "#/components/schemas/AgentRunOperationsNode" } }
+        langfuse: { $ref: "#/components/schemas/LangfuseRunReference" }
+        tool_calls: { type: array, items: { $ref: "#/components/schemas/AgentRunOperationsToolCall" } }
+        events: { type: array, items: { $ref: "#/components/schemas/AgentRunOperationsEvent" } }
     Memory:
       type: object
       required: [id, type, content, confidence, importance, sensitivity, pinned, status, valid_from, created_at, updated_at]
@@ -2598,6 +4766,674 @@ components:
         allowed_tools: { type: array, items: { type: string } }
         protocol_version: { type: string, enum: ["2025-11-25"] }
         transport: { type: string, enum: [stdio] }
+    ConfigurationVersion:
+      type: object
+      additionalProperties: false
+      required: [id, kind, key, version, base_version, schema_version, status, payload, fingerprint, reason, created_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [billing_plan, model_profile, agent_definition, prompt] }
+        key: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        version: { type: integer, minimum: 1 }
+        base_version: { type: integer, minimum: 0 }
+        schema_version: { type: string }
+        status: { type: string, enum: [draft, validated, submitted, published, superseded] }
+        payload: { type: object, additionalProperties: true }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        reason: { type: string, maxLength: 512 }
+        created_by: { type: string }
+        validated_by: { type: string }
+        submitted_by: { type: string }
+        published_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        validated_at: { type: string, format: date-time }
+        submitted_at: { type: string, format: date-time }
+        published_at: { type: string, format: date-time }
+    ConfigurationDeployment:
+      type: object
+      additionalProperties: false
+      required: [environment, kind, key, revision, deployed_by, deployed_at, version]
+      properties:
+        environment: { type: string }
+        kind: { type: string, enum: [billing_plan, model_profile, agent_definition, prompt] }
+        key: { type: string }
+        revision: { type: integer, minimum: 1 }
+        deployed_by: { type: string }
+        deployed_at: { type: string, format: date-time }
+        version: { $ref: "#/components/schemas/ConfigurationVersion" }
+    ConfigurationPage:
+      type: object
+      additionalProperties: false
+      required: [versions, deployments]
+      properties:
+        versions: { type: array, items: { $ref: "#/components/schemas/ConfigurationVersion" } }
+        deployments: { type: array, items: { $ref: "#/components/schemas/ConfigurationDeployment" } }
+    RuntimeConfigurationReport:
+      type: object
+      additionalProperties: false
+      required: [instance_id, service, environment, kind, key, status, started_at, last_seen_at]
+      properties:
+        instance_id: { type: string, maxLength: 128 }
+        service: { type: string, maxLength: 64 }
+        environment: { type: string }
+        kind: { type: string, enum: [billing_plan, model_profile, agent_definition, prompt] }
+        key: { type: string }
+        version_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        status: { type: string, enum: [applied, error] }
+        last_error: { type: string, maxLength: 1024 }
+        started_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+    RuntimeConfigurationState:
+      allOf:
+        - { $ref: "#/components/schemas/RuntimeConfigurationReport" }
+        - type: object
+          required: [convergence]
+          properties:
+            desired_version_id: { type: string, format: uuid }
+            desired_revision: { type: integer, minimum: 1 }
+            desired_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+            convergence: { type: string, enum: [converged, outdated, error, offline] }
+      unevaluatedProperties: false
+    RuntimeConfigurationConvergence:
+      type: object
+      additionalProperties: false
+      required: [environment, generated_at, stale_after_seconds, summary, instances]
+      properties:
+        environment: { type: string }
+        generated_at: { type: string, format: date-time }
+        stale_after_seconds: { type: integer, minimum: 15, maximum: 3600 }
+        summary:
+          type: object
+          additionalProperties: false
+          required: [converged, outdated, error, offline]
+          properties:
+            converged: { type: integer, minimum: 0 }
+            outdated: { type: integer, minimum: 0 }
+            error: { type: integer, minimum: 0 }
+            offline: { type: integer, minimum: 0 }
+        instances: { type: array, items: { $ref: "#/components/schemas/RuntimeConfigurationState" } }
+    ConfigurationPublishResult:
+      type: object
+      additionalProperties: false
+      required: [version, deployment, runtime_applied, runtime_message]
+      properties:
+        version: { $ref: "#/components/schemas/ConfigurationVersion" }
+        deployment: { $ref: "#/components/schemas/ConfigurationDeployment" }
+        runtime_applied: { type: boolean }
+        runtime_message: { type: string }
+    ConfigurationDeploymentResult:
+      type: object
+      additionalProperties: false
+      required: [deployment, runtime_applied, runtime_message]
+      properties:
+        deployment: { $ref: "#/components/schemas/ConfigurationDeployment" }
+        runtime_applied: { type: boolean }
+        runtime_message: { type: string }
+    ConfigurationResourceLimit:
+      type: object
+      additionalProperties: false
+      required: [resource, limit]
+      properties:
+        resource:
+          type: string
+          enum: [documents_active, document_storage_bytes, skill_runs_monthly, agent_runs_monthly, model_prompt_tokens_monthly, model_completion_tokens_monthly, model_cost_micros_monthly, concurrent_agent_runs, workspaces, team_seats]
+        limit: { type: integer, minimum: -1 }
+    CreateBillingPlanVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [base_version, display_name, status, effective_mode, limits, allowed_model_classes, allowed_skills, reason]
+      properties:
+        base_version: { type: integer, minimum: 0 }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        status: { type: string, enum: [active, archived] }
+        effective_mode: { type: string, enum: [immediate, next_period] }
+        limits: { type: array, minItems: 3, items: { $ref: "#/components/schemas/ConfigurationResourceLimit" } }
+        allowed_model_classes: { type: array, minItems: 1, uniqueItems: true, items: { type: string, enum: [free, standard, quality] } }
+        allowed_skills: { type: array, uniqueItems: true, items: { type: string, maxLength: 128 } }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    ModelRoleConfiguration:
+      type: object
+      additionalProperties: false
+      required: [models, max_tokens, reasoning_effort, timeout_ms, attempt_timeout_ms]
+      properties:
+        models: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, items: { type: string } }
+        max_tokens: { type: integer, minimum: 64, maximum: 32768 }
+        reasoning_effort: { type: string, enum: [none, minimal, low, medium, high, xhigh, max] }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
+        attempt_timeout_ms: { type: integer, minimum: 1000, maximum: 120000 }
+    ModelProviderPolicy:
+      type: object
+      additionalProperties: false
+      required: [sort, allow_fallbacks, require_parameters, data_collection, zdr_required, max_prompt_price, max_completion_price]
+      properties:
+        sort: { type: string, enum: [price, latency, throughput] }
+        allow_fallbacks: { type: boolean }
+        require_parameters: { type: boolean }
+        data_collection: { type: string, enum: [allow, deny] }
+        zdr_required: { type: boolean }
+        max_prompt_price: { type: number, exclusiveMinimum: 0, maximum: 0.3 }
+        max_completion_price: { type: number, exclusiveMinimum: 0, maximum: 2.5 }
+    CreateModelProfileVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [base_version, provider_connection, config_version, roles, provider_policy, reason]
+      properties:
+        base_version: { type: integer, minimum: 0 }
+        provider_connection: { type: string, minLength: 1, maxLength: 96 }
+        config_version: { type: string, minLength: 1, maxLength: 128 }
+        roles:
+          type: object
+          additionalProperties: false
+          required: [planner, router, composer, assessor, responder, companion_responder, repairer, translation]
+          properties:
+            planner: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            router: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            composer: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            assessor: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            responder: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            companion_responder: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            repairer: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+            translation: { $ref: "#/components/schemas/ModelRoleConfiguration" }
+        provider_policy: { $ref: "#/components/schemas/ModelProviderPolicy" }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    PromptPayload:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, template, variables]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        template: { type: string, minLength: 1, maxLength: 12000 }
+        variables:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+    CreatePromptVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [base_version, display_name, description, template, variables, reason]
+      properties:
+        base_version: { type: integer, minimum: 0 }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        template: { type: string, minLength: 1, maxLength: 12000 }
+        variables:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    AgentPromptReference:
+      type: object
+      additionalProperties: false
+      required: [key]
+      description: Clients may submit only key. The service resolves and persists version_id, version, fingerprint, and a template snapshot.
+      properties:
+        key: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        version_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+    AgentNodeConfiguration:
+      type: object
+      additionalProperties: false
+      required: [key, type]
+      properties:
+        key: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        type: { type: string, enum: [model, router, tool, end] }
+        model_role: { type: string, enum: [planner, router, composer, assessor, responder, companion_responder, repairer] }
+        prompt: { $ref: "#/components/schemas/AgentPromptReference" }
+        prompt_template: { type: string, maxLength: 12000 }
+        tools: { type: array, maxItems: 8, uniqueItems: true, items: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
+    AgentEdgeConfiguration:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        to: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        condition: { type: string, maxLength: 128 }
+    AgentBudgetConfiguration:
+      type: object
+      additionalProperties: false
+      required: [max_steps, max_model_calls, max_tool_calls, max_total_tokens, timeout_ms]
+      properties:
+        max_steps: { type: integer, minimum: 1, maximum: 128 }
+        max_model_calls: { type: integer, minimum: 1, maximum: 64 }
+        max_tool_calls: { type: integer, minimum: 0, maximum: 64 }
+        max_total_tokens: { type: integer, minimum: 64, maximum: 2000000 }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 900000 }
+    AgentDefinitionPayload:
+      type: object
+      additionalProperties: false
+      required: [display_name, description, modules, model_profile, entry_node, nodes, edges, budget]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        modules: { type: array, minItems: 1, uniqueItems: true, items: { type: string, enum: [companion, life, work] } }
+        model_profile: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        entry_node: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        nodes: { type: array, minItems: 1, maxItems: 64, items: { $ref: "#/components/schemas/AgentNodeConfiguration" } }
+        edges: { type: array, maxItems: 256, items: { $ref: "#/components/schemas/AgentEdgeConfiguration" } }
+        budget: { $ref: "#/components/schemas/AgentBudgetConfiguration" }
+    AgentDefinitionCompilation:
+      type: object
+      additionalProperties: false
+      required: [compiler_version, executable, fingerprint, entry_node, nodes, budget, capabilities, definition]
+      properties:
+        compiler_version: { type: string, enum: [agent-studio-langgraph/v1] }
+        executable: { type: boolean }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        entry_node: { type: string }
+        nodes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, type, outgoing]
+            properties:
+              key: { type: string }
+              type: { type: string, enum: [model, router, tool, end] }
+              model_role: { type: string }
+              prompt: { $ref: "#/components/schemas/AgentPromptReference" }
+              tools: { type: array, items: { type: string } }
+              outgoing:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [to]
+                  properties:
+                    to: { type: string }
+                    condition: { type: string }
+        budget: { $ref: "#/components/schemas/AgentBudgetConfiguration" }
+        capabilities: { type: object, additionalProperties: { type: boolean } }
+        definition: { $ref: "#/components/schemas/AgentDefinitionPayload" }
+    AgentSyntheticModelFixture:
+      type: object
+      additionalProperties: false
+      properties:
+        response: { type: string, minLength: 1, maxLength: 12000 }
+        prompt_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+        completion_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+    AgentSyntheticRouteFixture:
+      type: object
+      additionalProperties: false
+      properties:
+        condition: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        response: { type: string, maxLength: 12000 }
+        prompt_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+        completion_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+    AgentSyntheticToolFixture:
+      type: object
+      additionalProperties: false
+      properties:
+        tool_name: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        arguments: { type: object, additionalProperties: true }
+        parameters: { type: object, additionalProperties: true, description: Synthetic JSON Schema used only to contract-check fixture arguments. }
+        requires_composition: { type: boolean, default: false }
+        requires_approval: { type: boolean, default: false }
+        approval: { type: string, enum: [approve, reject, pause], default: pause }
+        risk_level: { type: string, enum: [none, low, medium, high], default: none }
+        result_status: { type: string, enum: [completed, failed, waiting], default: completed }
+        wait_result: { type: string, enum: [completed, failed, running, pause], default: completed }
+        response: { type: string, minLength: 1, maxLength: 12000 }
+        prompt_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+        completion_tokens: { type: integer, minimum: 0, maximum: 2000000, default: 0 }
+    AgentSyntheticRunScenario:
+      type: object
+      additionalProperties: false
+      properties:
+        module: { type: string, enum: [companion, life, work] }
+        user_message: { type: string, minLength: 1, maxLength: 12000 }
+        routes:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: "#/components/schemas/AgentSyntheticRouteFixture" }
+        models:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: "#/components/schemas/AgentSyntheticModelFixture" }
+        tools:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: "#/components/schemas/AgentSyntheticToolFixture" }
+    AgentSyntheticDraftRunRequest:
+      type: object
+      additionalProperties: false
+      required: [definition, scenario]
+      properties:
+        definition: { $ref: "#/components/schemas/AgentDefinitionPayload" }
+        scenario: { $ref: "#/components/schemas/AgentSyntheticRunScenario" }
+        debug_node: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+    AgentSyntheticVersionRunRequest:
+      type: object
+      additionalProperties: false
+      required: [scenario]
+      properties:
+        scenario: { $ref: "#/components/schemas/AgentSyntheticRunScenario" }
+        debug_node: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+    AgentSyntheticRunReport:
+      type: object
+      additionalProperties: false
+      required: [schema_version, run_id, mode, status, outcome, response, definition, safety, budget, node_outputs, node_trace, model_calls, tool_calls, tool_selections, interrupts, recovery]
+      properties:
+        schema_version: { type: string, enum: [agent-studio-synthetic-run/v1] }
+        run_id: { type: string }
+        mode: { type: string, enum: [synthetic] }
+        status: { type: string, enum: [completed, waiting_approval, waiting_tool] }
+        outcome: { type: string }
+        response: { type: string }
+        definition: { type: object, additionalProperties: true }
+        safety:
+          type: object
+          additionalProperties: false
+          required: [side_effects, production_data_access, external_model_calls, external_tool_calls]
+          properties:
+            side_effects: { type: boolean, enum: [false] }
+            production_data_access: { type: boolean, enum: [false] }
+            external_model_calls: { type: integer, enum: [0] }
+            external_tool_calls: { type: integer, enum: [0] }
+        budget: { type: object, additionalProperties: true }
+        node_outputs: { type: object, additionalProperties: true }
+        node_trace: { type: array, items: { type: object, additionalProperties: true } }
+        model_calls: { type: array, items: { type: object, additionalProperties: true } }
+        tool_calls: { type: array, items: { type: object, additionalProperties: true } }
+        tool_selections: { type: array, items: { type: object, additionalProperties: true } }
+        interrupts: { type: array, items: { type: object, additionalProperties: true } }
+        recovery: { type: object, additionalProperties: true }
+    AgentSyntheticRunResponse:
+      type: object
+      additionalProperties: false
+      required: [report]
+      properties:
+        report: { $ref: "#/components/schemas/AgentSyntheticRunReport" }
+        node_debug: { $ref: "#/components/schemas/AgentNodeDebugReport" }
+    AgentNodeDebugReport:
+      type: object
+      additionalProperties: false
+      required: [node, status, input, trace, model_calls, tool_calls]
+      properties:
+        node: { $ref: "#/components/schemas/AgentNodeConfiguration" }
+        status: { type: string, description: Last focused trace status or not_visited. }
+        input: { type: object, additionalProperties: true }
+        output: {}
+        trace: { type: array, items: { type: object, additionalProperties: true } }
+        model_calls: { type: array, items: { type: object, additionalProperties: true } }
+        tool_calls: { type: array, items: { type: object, additionalProperties: true } }
+    AgentEvaluationGiven:
+      type: object
+      additionalProperties: false
+      required: [module, user_message, tools]
+      properties:
+        module: { type: string, enum: [companion, life, work] }
+        user_message: { type: string, minLength: 1, maxLength: 12000 }
+        context:
+          type: object
+          additionalProperties: true
+          description: Existing agent-eval-case-v1 context. Agent Studio synthetic fixtures are nested under context.synthetic.
+        tools: { type: array, maxItems: 64, items: { type: object, additionalProperties: true } }
+    AgentEvaluationExpect:
+      type: object
+      additionalProperties: false
+      required: [status, outcome, max_model_calls, max_steps]
+      properties:
+        status: { type: string, minLength: 1 }
+        outcome:
+          oneOf:
+            - { type: string, minLength: 1 }
+            - { type: array, minItems: 1, items: { type: string, minLength: 1 } }
+        execution_mode: { type: string, enum: [direct, single_action, agentic] }
+        tool_sequence: { type: array, items: { type: string } }
+        required_nodes: { type: array, items: { type: string } }
+        forbidden_nodes: { type: array, items: { type: string } }
+        max_model_calls: { type: integer, minimum: 0 }
+        max_steps: { type: integer, minimum: 1 }
+        max_retries: { type: integer, minimum: 0 }
+        quality_pass: { type: boolean }
+        response_contains: { type: array, items: { type: string } }
+        response_not_contains: { type: array, items: { type: string } }
+    AgentEvaluationCase:
+      type: object
+      additionalProperties: false
+      required: [schema_version, id, tags, given, expect, tape]
+      properties:
+        schema_version: { type: string, enum: [agent-eval-case-v1] }
+        id: { type: string, minLength: 1, maxLength: 128 }
+        tags: { type: array, maxItems: 32, uniqueItems: true, items: { type: string } }
+        given: { $ref: "#/components/schemas/AgentEvaluationGiven" }
+        expect: { $ref: "#/components/schemas/AgentEvaluationExpect" }
+        tape: { type: object, additionalProperties: true }
+    AgentEvaluationSuite:
+      type: object
+      additionalProperties: false
+      required: [schema_version, name, version, cases]
+      properties:
+        schema_version: { type: string, enum: [agent-eval-suite-v1] }
+        name: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        version: { type: string, minLength: 1, maxLength: 64 }
+        baseline_run_id: { type: string, format: uuid }
+        cases: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/AgentEvaluationCase" } }
+    AgentEvaluationAssertion:
+      type: object
+      additionalProperties: false
+      required: [name, passed]
+      properties:
+        name: { type: string }
+        passed: { type: boolean }
+        expected: {}
+        actual: {}
+    AgentEvaluationCaseResult:
+      type: object
+      additionalProperties: false
+      required: [case_id, passed, assertions, model_calls, tool_calls, total_tokens]
+      properties:
+        case_id: { type: string }
+        passed: { type: boolean }
+        assertions: { type: array, items: { $ref: "#/components/schemas/AgentEvaluationAssertion" } }
+        status: { type: string }
+        outcome: { type: string }
+        response: { type: string }
+        model_calls: { type: integer, minimum: 0 }
+        tool_calls: { type: integer, minimum: 0 }
+        total_tokens: { type: integer, minimum: 0 }
+        failure_code: { type: string }
+        failure: { type: string }
+        sandbox_run_id: { type: string }
+    AgentEvaluationComparison:
+      type: object
+      additionalProperties: false
+      required: [baseline_run_id, available, pass_rate_delta, passed_cases_delta, model_calls_delta, total_tokens_delta]
+      properties:
+        baseline_run_id: { type: string, format: uuid }
+        available: { type: boolean }
+        pass_rate_delta: { type: number }
+        passed_cases_delta: { type: integer }
+        model_calls_delta: { type: integer }
+        total_tokens_delta: { type: integer }
+    AgentEvaluationSummary:
+      type: object
+      additionalProperties: false
+      required: [total_cases, passed_cases, failed_cases, pass_rate, model_calls, tool_calls, total_tokens]
+      properties:
+        total_cases: { type: integer, minimum: 0 }
+        passed_cases: { type: integer, minimum: 0 }
+        failed_cases: { type: integer, minimum: 0 }
+        pass_rate: { type: number, minimum: 0, maximum: 1 }
+        model_calls: { type: integer, minimum: 0 }
+        tool_calls: { type: integer, minimum: 0 }
+        total_tokens: { type: integer, minimum: 0 }
+        comparison: { $ref: "#/components/schemas/AgentEvaluationComparison" }
+    AgentEvaluationRun:
+      type: object
+      additionalProperties: false
+      required: [id, agent_version_id, agent_key, agent_version, agent_fingerprint, suite, suite_fingerprint, status, summary, results, created_by, started_at]
+      properties:
+        id: { type: string, format: uuid }
+        agent_version_id: { type: string, format: uuid }
+        agent_key: { type: string }
+        agent_version: { type: integer, minimum: 1 }
+        agent_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        suite: { $ref: "#/components/schemas/AgentEvaluationSuite" }
+        suite_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        status: { type: string, enum: [running, completed] }
+        decision: { type: string, enum: [pass, fail] }
+        summary: { $ref: "#/components/schemas/AgentEvaluationSummary" }
+        results: { type: array, items: { $ref: "#/components/schemas/AgentEvaluationCaseResult" } }
+        created_by: { type: string }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    AgentEvaluationRunResponse:
+      type: object
+      additionalProperties: false
+      required: [evaluation_run]
+      properties:
+        evaluation_run: { $ref: "#/components/schemas/AgentEvaluationRun" }
+    AgentRolloutPolicy:
+      type: object
+      additionalProperties: false
+      required: [minimum_sample_size, observation_window_seconds, max_error_rate, max_quality_failure_rate, max_p95_latency_ms, max_average_cost_micros, max_error_rate_regression, max_p95_latency_regression_ratio, max_average_cost_regression_ratio]
+      properties:
+        minimum_sample_size: { type: integer, minimum: 1, maximum: 10000 }
+        observation_window_seconds: { type: integer, minimum: 60, maximum: 604800 }
+        max_error_rate: { type: number, minimum: 0, maximum: 1 }
+        max_quality_failure_rate: { type: number, minimum: 0, maximum: 1 }
+        max_p95_latency_ms: { type: integer, minimum: 1, maximum: 900000 }
+        max_average_cost_micros: { type: integer, minimum: 1, maximum: 1000000000 }
+        max_error_rate_regression: { type: number, minimum: 0, maximum: 1 }
+        max_p95_latency_regression_ratio: { type: number, minimum: 0, maximum: 10 }
+        max_average_cost_regression_ratio: { type: number, minimum: 0, maximum: 10 }
+    AgentRolloutMetrics:
+      type: object
+      additionalProperties: false
+      required: [sample_size, completed, failed, quality_failures, error_rate, quality_failure_rate, p95_latency_ms, average_cost_micros]
+      properties:
+        sample_size: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        quality_failures: { type: integer, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        quality_failure_rate: { type: number, minimum: 0, maximum: 1 }
+        p95_latency_ms: { type: number, minimum: 0 }
+        average_cost_micros: { type: number, minimum: 0 }
+    AgentRolloutSummary:
+      type: object
+      additionalProperties: false
+      required: [window_started_at, window_ended_at, candidate, baseline]
+      properties:
+        window_started_at: { type: string, format: date-time }
+        window_ended_at: { type: string, format: date-time }
+        candidate: { $ref: "#/components/schemas/AgentRolloutMetrics" }
+        baseline: { $ref: "#/components/schemas/AgentRolloutMetrics" }
+    AgentRolloutViolation:
+      type: object
+      additionalProperties: false
+      required: [metric, expected, actual, message]
+      properties:
+        metric: { type: string }
+        expected: { type: number }
+        actual: { type: number }
+        message: { type: string }
+    AgentRollout:
+      type: object
+      additionalProperties: false
+      required: [id, environment, agent_key, agent_version_id, agent_version, agent_fingerprint, baseline_version_id, baseline_version, baseline_fingerprint, traffic_percent, routing_revision, policy, status, decision, summary, violations, revision, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        environment: { type: string }
+        agent_key: { type: string }
+        agent_version_id: { type: string, format: uuid }
+        agent_version: { type: integer, minimum: 1 }
+        agent_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        baseline_version_id: { type: string, format: uuid }
+        baseline_version: { type: integer, minimum: 1 }
+        baseline_fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        traffic_percent: { type: integer, minimum: 1, maximum: 50 }
+        routing_revision: { type: integer, minimum: 1 }
+        policy: { $ref: "#/components/schemas/AgentRolloutPolicy" }
+        status: { type: string, enum: [running, ready, paused, promoted, aborted] }
+        decision: { type: string, enum: [collecting, pass, fail] }
+        summary: { $ref: "#/components/schemas/AgentRolloutSummary" }
+        violations: { type: array, items: { $ref: "#/components/schemas/AgentRolloutViolation" } }
+        revision: { type: integer, minimum: 1 }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    AgentRolloutResponse:
+      type: object
+      additionalProperties: false
+      required: [rollout]
+      properties:
+        rollout: { $ref: "#/components/schemas/AgentRollout" }
+    StartAgentRolloutRequest:
+      type: object
+      additionalProperties: false
+      required: [traffic_percent]
+      properties:
+        traffic_percent: { type: integer, minimum: 1, maximum: 50 }
+        policy: { $ref: "#/components/schemas/AgentRolloutPolicy" }
+    AbortAgentRolloutRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    CreateAgentDefinitionVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [base_version, display_name, description, modules, model_profile, entry_node, nodes, edges, budget, reason]
+      properties:
+        base_version: { type: integer, minimum: 0 }
+        display_name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+        modules: { type: array, minItems: 1, uniqueItems: true, items: { type: string, enum: [companion, life, work] } }
+        model_profile: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        entry_node: { type: string, pattern: "^[a-z0-9_-]{1,96}$" }
+        nodes: { type: array, minItems: 1, maxItems: 64, items: { $ref: "#/components/schemas/AgentNodeConfiguration" } }
+        edges: { type: array, maxItems: 256, items: { $ref: "#/components/schemas/AgentEdgeConfiguration" } }
+        budget: { $ref: "#/components/schemas/AgentBudgetConfiguration" }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    RollbackConfigurationRequest:
+      type: object
+      additionalProperties: false
+      required: [target_version, reason]
+      properties:
+        target_version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    ProviderConnection:
+      type: object
+      additionalProperties: false
+      required: [key, provider_type, display_name, base_url, credential_ref, status, capabilities]
+      properties:
+        key: { type: string }
+        provider_type: { type: string }
+        display_name: { type: string }
+        base_url: { type: string, format: uri }
+        credential_ref: { type: string, description: Reference to a secret source; never the credential value. }
+        status: { type: string, enum: [active, disabled] }
+        capabilities: { type: object, additionalProperties: true }
+    ModelCatalogEntry:
+      type: object
+      additionalProperties: false
+      required: [model_id, provider_key, display_name, model_class, context_window, max_output_tokens, prompt_price, completion_price, zero_price, status, capabilities]
+      properties:
+        model_id: { type: string }
+        provider_key: { type: string }
+        display_name: { type: string }
+        model_class: { type: string, enum: [free, standard, quality] }
+        context_window: { type: integer, minimum: 1 }
+        max_output_tokens: { type: integer, minimum: 1 }
+        prompt_price: { type: number, minimum: 0 }
+        completion_price: { type: number, minimum: 0 }
+        zero_price: { type: boolean }
+        status: { type: string, enum: [approved, disabled] }
+        capabilities: { type: object, additionalProperties: true }
     ReliabilityPolicy:
       type: object
       additionalProperties: false
@@ -2721,6 +5557,9 @@ components:
       required: [id, aggregate_type, aggregate_id, event_type, event_version, occurred_at, status, available_at, attempts]
       properties:
         id: { type: string, format: uuid }
+        trace_id: { type: string, pattern: "^[0-9a-f]{32}$" }
+        traceparent: { type: string, maxLength: 255, description: Persisted W3C Trace Context at event creation. }
+        tracestate: { type: string, maxLength: 512, description: Optional W3C vendor trace state. }
         aggregate_type: { type: string }
         aggregate_id: { type: string, format: uuid }
         event_type: { type: string }
@@ -2816,7 +5655,7 @@ components:
     OperatorConsoleBootstrap:
       type: object
       additionalProperties: false
-      required: [operator, capabilities, sections, filters, limits]
+      required: [operator, capabilities, integrations, sections, filters, limits]
       properties:
         operator:
           type: object
@@ -2830,13 +5669,33 @@ components:
         capabilities:
           type: object
           additionalProperties: false
-          required: [view_operations, replay_operations, manage_users, manage_operator_accounts, export_audit_logs]
+          required: [view_operations, view_agent_runs, view_system_logs, view_incidents, view_performance, manage_alert_rules, manage_alert_subscriptions, manage_incidents, export_incident_evidence, view_configuration, manage_configuration, run_agent_sandbox, run_agent_evaluation, manage_agent_rollouts, replay_operations, manage_users, manage_operator_accounts, export_audit_logs]
           properties:
             view_operations: { type: boolean }
+            view_agent_runs: { type: boolean }
+            view_system_logs: { type: boolean }
+            view_incidents: { type: boolean }
+            view_performance: { type: boolean }
+            manage_alert_rules: { type: boolean }
+            manage_alert_subscriptions: { type: boolean }
+            manage_incidents: { type: boolean }
+            export_incident_evidence: { type: boolean }
+            view_configuration: { type: boolean }
+            manage_configuration: { type: boolean }
+            run_agent_sandbox: { type: boolean }
+            run_agent_evaluation: { type: boolean }
+            manage_agent_rollouts: { type: boolean }
             replay_operations: { type: boolean }
             manage_users: { type: boolean }
             manage_operator_accounts: { type: boolean }
             export_audit_logs: { type: boolean }
+        integrations:
+          type: object
+          additionalProperties: false
+          required: [langfuse, loki]
+          properties:
+            langfuse: { $ref: "#/components/schemas/LangfuseIntegrationStatus" }
+            loki: { $ref: "#/components/schemas/LokiIntegrationStatus" }
         sections:
           type: array
           items:
@@ -2859,6 +5718,38 @@ components:
             default_page_size: { type: integer }
             max_page_size: { type: integer }
             max_export_rows: { type: integer }
+    LangfuseIntegrationStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled, configured, base_url, sample_rate, capture_content, responsibility]
+      properties:
+        enabled: { type: boolean }
+        configured: { type: boolean }
+        base_url: { type: string }
+        sample_rate: { type: number, minimum: 0, maximum: 1 }
+        capture_content: { type: boolean }
+        responsibility: { type: string, const: llm_agent_observability }
+    LokiIntegrationStatus:
+      type: object
+      additionalProperties: false
+      required: [enabled, configured, base_url, responsibility, storage, fallback]
+      properties:
+        enabled: { type: boolean }
+        configured: { type: boolean }
+        base_url: { type: string }
+        responsibility: { type: string, const: structured_system_logs }
+        storage: { type: string, const: loki }
+        fallback: { type: string, const: postgres }
+    LangfuseRunReference:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        trace_id: { type: string, pattern: "^[0-9a-f]{32}$" }
+        initialized: { type: boolean }
+        capture_content: { type: boolean }
+        environment: { type: string }
     ReleaseReadiness:
       type: object
       additionalProperties: false

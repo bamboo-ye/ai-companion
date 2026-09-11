@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/chatattachment"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
@@ -76,6 +77,9 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth := currentAuth(r)
+	if !s.requireQuota(w, r, billing.ResourceModelCost) {
+		return
+	}
 	if len(input.DocumentIDs) > 3 {
 		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "too_many_attachments", Message: "单条消息最多发送 3 个文件"})
 		return
@@ -131,6 +135,9 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if s.agentModuleEnabled(persona.Module) || (forceArtifactAgent && persona.Module == "work") {
+			if !s.requireQuota(w, r, billing.ResourceAgentRuns) {
+				return
+			}
 			if s.agentRuns == nil {
 				writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "agent_unavailable", Message: "当前模块的 Agent 运行时暂不可用"})
 				return

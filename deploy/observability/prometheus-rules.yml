@@ -101,6 +101,17 @@ groups:
           description: "Agent Worker scrape target 不可达或进程 up=0 已持续 2 分钟。事件唤醒仍可能由 durable reconciler 回退，但时延目标不可保证。"
           runbook: "docs/runbooks/incident-response.md#agent-事件唤醒与调度"
 
+      - alert: AICompanionAgentModelConfigReloadFailed
+        expr: sum(increase(ai_companion_agent_model_config_reloads_total{outcome="error"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: ticket
+          service: ai-companion
+        annotations:
+          summary: "伴AI Agent 模型配置热加载失败"
+          description: "Worker 在最近五分钟无法读取、校验或应用已发布模型 Profile；运行时会保留最近一次成功快照。"
+          runbook: "docs/runbooks/incident-response.md#agent-模型配置热加载"
+
       - alert: AICompanionAgentToolWakeLatencyHigh
         expr: (histogram_quantile(0.95, sum by (le) (rate(ai_companion_agent_tool_wake_latency_seconds_bucket[5m]))) > 1) and on() (sum(increase(ai_companion_agent_tool_wake_latency_seconds_count[5m])) >= 5)
         for: 2m

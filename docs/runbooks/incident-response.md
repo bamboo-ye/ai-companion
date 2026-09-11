@@ -1,6 +1,6 @@
 # M6 Incident Response Runbook
 
-Date: 2026-07-08
+Date: 2026-09-07
 
 Use this runbook for internal release incidents involving API errors, database queue lag, optional Kafka delivery, model outages, or DLQ recovery. Always preserve user data first; do not “fix” by deleting accepted work.
 
@@ -41,9 +41,11 @@ required service is missing/stopped/unhealthy, a restart policy no longer matche
 or above `CPU_WARN_PERCENT` is logged as a warning rather than triggering an
 automatic restart.
 
-Kafka container health uses a TCP socket open and the Web container uses Alpine
-`wget` every 30 seconds. Do not replace these with `kafka-topics.sh` or `node -e`:
-both start heavyweight runtimes on every Docker health-check interval.
+API and Agent HTTP health checks use the image's static `/healthcheck` binary. When the
+`kafka-scale` profile is enabled, Kafka uses a TCP socket open; Web uses Alpine `wget`. Stable containers are checked every
+30 seconds; `start_interval` keeps startup checks at five seconds until the first
+success. Do not replace these probes with `python -c`, `kafka-topics.sh`, or `node -e`:
+they start heavyweight runtimes on every Docker health-check interval.
 
 ## L3 保护模式
 
@@ -161,7 +163,7 @@ Symptoms:
 
 Actions:
 
-1. Use `X-Trace-ID` from response or logs to find route-specific errors.
+1. Use the 32-hex Trace ID from response `traceparent`, compatibility `X-Trace-ID`, or logs to find route-specific errors.
 2. Check whether 5xx is isolated to:
    - document upload/query
    - Skill run creation/download
@@ -199,6 +201,46 @@ Actions:
 6. 恢复标准：Worker ready=1、数据库认领延迟恢复；`kafka-scale` 模式还需 Kafka lag 回落。
    连续两个五分钟窗口的唤醒 p95 <= 1 秒，
    且在不少于 20 个新提示时尾随重放比例 <= 25%。
+
+## Agent 模型配置热加载
+
+Symptoms:
+
+- `AICompanionAgentModelConfigReloadFailed`：Worker 读取、校验或应用已发布模型 Profile 失败。
+- 配置中心显示新 revision 已发布，但 `ai_companion_agent_model_config_revision` 仍为旧值。
+
+Actions:
+
+1. 查看 `ai_companion_agent_model_config_reloads_total{outcome="error"}` 和 Worker 的
+   `reload governed Agent model configuration` 日志；日志不会包含 API key。
+2. 对比 `ai_companion_agent_model_config_info` 的 `version_id`、`config_version`、`fingerprint`
+   与配置中心的已发布版本。正常情况下应在 `AGENT_MODEL_CONFIG_POLL_INTERVAL` 内收敛。
+3. 检查 `ops.config_deployments` 当前环境及 `default` 回退记录、Provider 状态、批准模型目录，
+   并确认 `credential_ref` 指向的环境变量在 Worker 中存在。不要把实际凭据写进配置 payload。
+4. 读取或校验失败时 Worker 会继续使用最近一次成功快照；不要通过重启强迫加载无效配置。
+   修复草稿并走双人审批，或按配置中心流程回滚到已发布版本。
+5. 配置切换时空闲 Python 进程会立即退出，运行中的进程完成当前 Run 后退出。恢复标准是
+   reload error 不再增长，revision 与发布版本一致，新 Run 的 model manifest 显示目标版本。
+
+## 告警通知与证据留存
+
+1. 在管理端“告警与事故”中配置邮件或“管理控制台”订阅。订阅可以覆盖全部规则或单条规则，
+   并可选择“警告及严重”或“仅严重”，以及事故发生/恢复事件。控制台通知写入 PostgreSQL
+   后即视为送达，不依赖 SMTP；邮箱目标继续走可重试的邮件队列。
+2. 通知邮件只包含事故标题、服务、阈值、状态和事故 ID，不包含 Prompt、模型回复、
+   Cookie、Authorization 或请求正文。事故页面只展示掩码后的收件地址。
+3. 邮件失败时，从事故通知记录发起重试；重试复用既有邮件队列、租约和审计机制，
+   不要绕过队列直接调用 SMTP。
+4. 需要交接或复盘时下载事故证据报告。报告包含规则快照、事故状态、处理审计、投递结果，
+   以及开单窗口内最多 200 条服务端脱敏日志；同时提供 Markdown 和 JSON 格式。
+5. 证据报告是排障快照，不替代 PostgreSQL 权威记录。禁止向报告中手工补写未经审计的结论。
+6. 预算策略交接使用“成本与质量”页的 30/90/365 天 Markdown 或 JSON 周期复盘；下载是只读操作，
+   不会触发预算评估、事故状态变化或通知。
+7. 配置发布后在“配置中心 / 多实例收敛”确认 API 与 Agent Worker 的 version、revision 和 fingerprint
+   一致；`outdated`、`error` 或超过两分钟的 `offline` 实例都需要在放量前处理。
+8. Kafka scale 模式排查时，从死信详情复制 `trace_id` 查询系统日志。HTTP 入口提取 W3C
+   `traceparent`/`tracestate`，并写入 Outbox；Relay 随 Kafka 信封和消息头传播，Consumer 与 Agent
+   调度逐跳生成新 Span ID、保持同一 Trace ID。不要手工改写事件来补 Trace。
 
 ## DLQ 重放与补偿
 

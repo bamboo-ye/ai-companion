@@ -8,9 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
 const maxRuntimeOutputBytes = 4 << 20
@@ -78,10 +82,11 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 }
 
 type PythonRuntimeExecutor struct {
-	Executable string
-	ModulePath string
-	Timeout    time.Duration
-	OnObserve  func(PythonRuntimeObservation)
+	Executable  string
+	ModulePath  string
+	Timeout     time.Duration
+	OnObserve   func(PythonRuntimeObservation)
+	Environment map[string]string
 }
 
 func (e PythonRuntimeExecutor) Execute(ctx context.Context, run Run) (result ExecutionResult, executionErr error) {
@@ -89,7 +94,7 @@ func (e PythonRuntimeExecutor) Execute(ctx context.Context, run Run) (result Exe
 	if e.OnObserve != nil {
 		defer func() {
 			observation := PythonRuntimeObservation{
-				RunID: run.ID, ExecutionMode: "process", ResultStatus: result.Status,
+				RunID: run.ID, TraceID: tracectx.ID(ctx), ExecutionMode: "process", ResultStatus: result.Status,
 				Duration: time.Since(startedAt), Success: executionErr == nil,
 				ErrorCode: pythonRuntimeErrorCode(executionErr),
 			}
@@ -106,6 +111,7 @@ func (e PythonRuntimeExecutor) Execute(ctx context.Context, run Run) (result Exe
 		ctx, cancel = context.WithTimeout(ctx, e.Timeout)
 		defer cancel()
 	}
+	run = runtimeRunWithTraceContext(ctx, run)
 	payload, err := json.Marshal(run)
 	if err != nil {
 		return ExecutionResult{}, err
@@ -147,16 +153,97 @@ func (e PythonRuntimeExecutor) Execute(ctx context.Context, run Run) (result Exe
 	return result, nil
 }
 
+func runtimeRunWithTraceContext(ctx context.Context, run Run) Run {
+	run.OTelTraceParent = tracectx.TraceParent(ctx)
+	run.OTelTraceState = tracectx.TraceState(ctx)
+	return run
+}
+
 func (e PythonRuntimeExecutor) commandEnv() []string {
-	environment := os.Environ()
+	overrides := cloneRuntimeEnvironment(e.Environment)
 	if modulePath := strings.TrimSpace(e.ModulePath); modulePath != "" {
 		pythonPath := modulePath
-		if existing := strings.TrimSpace(os.Getenv("PYTHONPATH")); existing != "" {
+		if existing := strings.TrimSpace(overrides["PYTHONPATH"]); existing != "" {
+			pythonPath += string(os.PathListSeparator) + existing
+		} else if existing = strings.TrimSpace(os.Getenv("PYTHONPATH")); existing != "" {
 			pythonPath += string(os.PathListSeparator) + existing
 		}
-		environment = append(environment, "PYTHONPATH="+pythonPath)
+		overrides["PYTHONPATH"] = pythonPath
+	}
+	environment := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if _, replaced := overrides[key]; !replaced {
+			environment = append(environment, item)
+		}
+	}
+	keys := make([]string, 0, len(overrides))
+	for key := range overrides {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		environment = append(environment, key+"="+overrides[key])
 	}
 	return environment
+}
+
+type ReloadablePythonRuntimeExecutor struct {
+	mu     sync.RWMutex
+	config PythonRuntimeExecutor
+}
+
+func NewReloadablePythonRuntimeExecutor(config PythonRuntimeExecutor) *ReloadablePythonRuntimeExecutor {
+	config.Environment = cloneRuntimeEnvironment(config.Environment)
+	return &ReloadablePythonRuntimeExecutor{config: config}
+}
+
+func (e *ReloadablePythonRuntimeExecutor) Execute(ctx context.Context, run Run) (ExecutionResult, error) {
+	if e == nil {
+		return ExecutionResult{}, ErrValidation
+	}
+	e.mu.RLock()
+	config := e.config
+	config.Environment = cloneRuntimeEnvironment(e.config.Environment)
+	e.mu.RUnlock()
+	return config.Execute(ctx, run)
+}
+
+func (e *ReloadablePythonRuntimeExecutor) ReloadEnvironment(environment map[string]string) bool {
+	if e == nil {
+		return false
+	}
+	next := cloneRuntimeEnvironment(environment)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if equalRuntimeEnvironment(e.config.Environment, next) {
+		return false
+	}
+	e.config.Environment = next
+	return true
+}
+
+func cloneRuntimeEnvironment(environment map[string]string) map[string]string {
+	cloned := make(map[string]string, len(environment))
+	for key, value := range environment {
+		key = strings.TrimSpace(key)
+		if key != "" && !strings.ContainsAny(key, "=\x00") && !strings.ContainsRune(value, '\x00') {
+			cloned[key] = value
+		}
+	}
+	return cloned
+}
+
+func equalRuntimeEnvironment(first, second map[string]string) bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for key, value := range first {
+		if second[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func parseExecutorError(stderr string) *ExecutorError {

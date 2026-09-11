@@ -13,19 +13,23 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/controlplane"
 	"github.com/windcry1/ai-companion/internal/eventbus"
+	"github.com/windcry1/ai-companion/internal/opslog"
 	"github.com/windcry1/ai-companion/internal/persistence"
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	baseLogHandler := slog.NewJSONHandler(os.Stdout, nil)
+	logger := slog.New(baseLogHandler)
 	cfg, err := config.Load("ai-companion-agent-worker")
 	if err != nil {
 		logger.Error("load configuration", "error", err)
 		os.Exit(1)
 	}
+	logger = opslog.NewLogger(baseLogHandler, nil, cfg.ServiceName, cfg.Environment)
 	if cfg.DatabaseDriver != "postgres" {
 		logger.Error("Agent worker requires PostgreSQL", "database_driver", cfg.DatabaseDriver)
 		os.Exit(1)
@@ -41,9 +45,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	if durableLogs, ok := any(store).(opslog.Store); ok {
+		logger = opslog.NewLogger(baseLogHandler, durableLogs, cfg.ServiceName, cfg.Environment)
+		logger.Info("system log capture enabled", "event", "opslog.capture.enabled")
+	}
 	agentStore, ok := any(store).(agent.Store)
 	if !ok {
 		logger.Error("database does not implement the Agent Run store")
+		os.Exit(1)
+	}
+	configurationStore, ok := any(store).(controlplane.Store)
+	if !ok {
+		logger.Error("database does not implement the configuration control-plane store")
 		os.Exit(1)
 	}
 	workerID, err := id.New()
@@ -51,22 +64,70 @@ func main() {
 		logger.Error("create worker id", "error", err)
 		os.Exit(1)
 	}
+	runtimeStartedAt := time.Now().UTC()
 	service := agent.NewService(agentStore)
+	configuration := controlplane.NewService(configurationStore, cfg.Environment)
 	metrics := newAgentWorkerMetrics()
+	reportModelConfiguration := func(observation modelConfigurationObservation) {
+		status, lastError := controlplane.RuntimeStatusApplied, ""
+		if observation.Err != nil {
+			status, lastError = controlplane.RuntimeStatusError, observation.Err.Error()
+			if len(lastError) > 1024 {
+				lastError = lastError[:1024]
+			}
+		}
+		reportCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, reportErr := configuration.ReportRuntimeConfig(reportCtx, controlplane.RuntimeConfigReport{
+			InstanceID: workerID, Service: cfg.ServiceName, Kind: controlplane.KindModelProfile,
+			Key: controlplane.DefaultModelProfileKey, VersionID: observation.VersionID,
+			Revision: observation.Revision, Fingerprint: observation.Fingerprint,
+			Status: status, LastError: lastError, StartedAt: runtimeStartedAt,
+		})
+		cancel()
+		if reportErr != nil {
+			logger.Warn("report runtime model configuration", "error", reportErr)
+		}
+	}
 	executorConfig := agent.PythonRuntimeExecutor{
 		Executable: cfg.PythonExecutable,
 		ModulePath: cfg.PythonWorkerPath,
 		Timeout:    cfg.AgentWorkerTimeout,
 		OnObserve:  metrics.observePythonRuntime,
 	}
-	var executor agent.RuntimeExecutor = executorConfig
+	activeModelVersionID := ""
+	if cfg.ModelProvider == "openrouter" {
+		snapshot, snapshotErr := configuration.ActiveModelRuntime(ctx, controlplane.DefaultModelProfileKey)
+		if snapshotErr == nil {
+			snapshotErr = snapshot.ValidateCredentialEnvironment(os.LookupEnv)
+		}
+		if snapshotErr != nil {
+			observation := modelConfigurationObservation{Outcome: "error", Err: snapshotErr}
+			metrics.observeModelConfiguration(observation)
+			reportModelConfiguration(observation)
+			logger.Warn("load governed Agent model configuration; retaining startup environment", "error", snapshotErr)
+		} else {
+			executorConfig.Environment = snapshot.Variables
+			activeModelVersionID = snapshot.VersionID
+			observation := modelConfigurationObservation{
+				Outcome: "applied", Revision: snapshot.Revision, VersionID: snapshot.VersionID,
+				ConfigVersion: snapshot.ConfigVersion, Fingerprint: snapshot.Fingerprint,
+			}
+			metrics.observeModelConfiguration(observation)
+			reportModelConfiguration(observation)
+			logger.Info("loaded governed Agent model configuration", "revision", snapshot.Revision, "version_id", snapshot.VersionID, "config_version", snapshot.ConfigVersion, "fingerprint", snapshot.Fingerprint)
+		}
+	}
+	var executor agent.RuntimeExecutor
+	var modelEnvironmentTarget modelRuntimeEnvironmentTarget
 	if cfg.AgentPythonPoolEnabled {
 		pool := agent.NewPythonRuntimePool(executorConfig, cfg.AgentWorkerConcurrency)
+		modelEnvironmentTarget = pool
 		pool.SetObservationHandler(func(observation agent.PythonRuntimeObservation) {
 			metrics.observePythonRuntime(observation)
 			logger.Info(
 				"Agent Python execution",
 				"run_id", observation.RunID,
+				"trace_id", observation.TraceID,
 				"execution_mode", observation.ExecutionMode,
 				"result_status", observation.ResultStatus,
 				"pool_wait_ms", observation.PoolWait.Milliseconds(),
@@ -116,6 +177,10 @@ func main() {
 			)
 		}()
 		executor = pool
+	} else {
+		reloadable := agent.NewReloadablePythonRuntimeExecutor(executorConfig)
+		executor = reloadable
+		modelEnvironmentTarget = reloadable
 	}
 	runtimeWorker := agent.NewRuntimeWorker(
 		service,
@@ -134,6 +199,7 @@ func main() {
 		logger.Info(
 			"Agent execution retry scheduled",
 			"run_id", observation.RunID,
+			"trace_id", observation.TraceID,
 			"attempt", observation.Attempt,
 			"maximum_attempts", observation.MaximumAttempts,
 			"delay_ms", observation.Delay.Milliseconds(),
@@ -151,7 +217,7 @@ func main() {
 	runtimeWorker.SetToolReadinessProbe(agent.SkillTaskReadinessProbe{Store: store})
 
 	runCtx, cancelRun := context.WithCancel(ctx)
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	runners := 1
 	reconcileInterval := cfg.AgentWorkerPollInterval
 	dispatchMode := "database"
@@ -162,6 +228,27 @@ func main() {
 	go runNamed(errCh, "Agent Run reconciler", func() error {
 		return runtimeWorker.RunReconciler(runCtx, reconcileInterval)
 	})
+	if cfg.ModelProvider == "openrouter" {
+		runners++
+		go runNamed(errCh, "Agent model configuration watcher", func() error {
+			return runModelConfigurationWatcher(
+				runCtx, cfg.AgentModelConfigPollInterval, configuration,
+				modelEnvironmentTarget, activeModelVersionID, os.LookupEnv,
+				func(observation modelConfigurationObservation) {
+					reportModelConfiguration(observation)
+					if observation.Outcome == "unchanged" {
+						return
+					}
+					metrics.observeModelConfiguration(observation)
+					if observation.Err != nil {
+						logger.Warn("reload governed Agent model configuration; retaining current snapshot", "error", observation.Err)
+						return
+					}
+					logger.Info("reloaded governed Agent model configuration", "revision", observation.Revision, "version_id", observation.VersionID, "config_version", observation.ConfigVersion, "fingerprint", observation.Fingerprint)
+				},
+			)
+		})
+	}
 
 	var consumer *eventbus.KafkaConsumer
 	var dispatcher *agent.RunDispatcher
@@ -203,6 +290,7 @@ func main() {
 			logger.Info(
 				"Agent run dispatch completed",
 				"run_id", observation.RunID,
+				"trace_id", observation.TraceID,
 				"queue_wait_ms", observation.QueueWait.Milliseconds(),
 				"execution_duration_ms", observation.ExecutionDuration.Milliseconds(),
 				"replay", observation.Replay,
@@ -214,7 +302,7 @@ func main() {
 		go runNamed(errCh, "Agent Run dispatcher", func() error {
 			return dispatcher.Run(runCtx)
 		})
-		processor := newAgentEventProcessor(service, dispatcher, func(observation toolWakeObservation) {
+		baseProcessor := newAgentEventProcessor(service, dispatcher, func(observation toolWakeObservation) {
 			metrics.observeToolWake(observation)
 			values := []any{
 				"task_id", observation.TaskID,
@@ -231,6 +319,16 @@ func main() {
 			}
 			logger.Info("Agent tool task wake", values...)
 		}, metrics.trackCanaryRun)
+		processor := eventbus.ProcessorFunc(func(ctx context.Context, event eventbus.Event) error {
+			logger.InfoContext(ctx, "Agent Kafka event received",
+				"event", "agent.kafka.received",
+				"event_id", event.ID,
+				"event_type", event.Type,
+				"aggregate_id", event.AggregateID,
+				"trace_id", event.TraceID,
+			)
+			return baseProcessor.Process(ctx, event)
+		})
 		runner := eventbus.NewConsumerRunner(
 			store,
 			consumer,
@@ -279,6 +377,8 @@ func main() {
 		"python_pool_enabled", cfg.AgentPythonPoolEnabled,
 		"python_pool_warm_size", cfg.AgentPythonPoolWarmSize,
 		"control_poll_interval", cfg.AgentControlPollInterval,
+		"model_config_poll_interval", cfg.AgentModelConfigPollInterval,
+		"model_config_version_id", activeModelVersionID,
 		"metrics_address", cfg.AgentMetricsAddr,
 	)
 	runErr := <-errCh

@@ -86,9 +86,9 @@ func (s *Store) CreateDocument(ctx context.Context, item document.Document) (doc
 	}
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'document',$2,'document.ingest.v1',1,$3,$4)`,
-		eventID, item.ID, payload, item.CreatedAt,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'document',$2,'document.ingest.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, item.ID, payload, item.CreatedAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return item, false, err
 	}
@@ -269,9 +269,9 @@ func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, n
 	})
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
-			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at
-		) VALUES ($1,'document',$2,'document.cleanup.v1',1,$3,$4)`,
-		eventID, documentID, payload, now,
+			id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'document',$2,'document.cleanup.v1',1,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''))`,
+		eventID, documentID, payload, now, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return err
 	}
@@ -424,9 +424,9 @@ func (s *Store) FailCleanupJob(ctx context.Context, job document.CleanupJob, wor
 	if _, err = tx.ExecContext(ctx, `
 		INSERT INTO eventing.outbox_events (
 			id,aggregate_type,aggregate_id,event_type,event_version,payload,
-			occurred_at,status,available_at
-		) VALUES ($1,'document',$2,'document.cleanup.v1',1,$3,$4,'pending',$5)`,
-		eventID, job.DocumentID, payload, now, retryAt,
+			occurred_at,status,available_at,trace_id,traceparent,tracestate
+		) VALUES ($1,'document',$2,'document.cleanup.v1',1,$3,$4,'pending',$5,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
+		eventID, job.DocumentID, payload, now, retryAt, outboxTraceID(ctx), outboxTraceParent(ctx), outboxTraceState(ctx),
 	); err != nil {
 		return err
 	}

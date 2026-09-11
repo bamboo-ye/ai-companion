@@ -9,8 +9,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import contextmanager
-from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any, Callable, Iterator, Mapping, cast
 
@@ -24,6 +24,7 @@ from ai_companion_worker.agent_runtime import (
     RepairDecision,
     validate_arguments_against_schema,
 )
+from ai_companion_worker.langfuse_observability import LangfuseTelemetry
 
 _MAX_RESPONSE_BYTES = 4 << 20
 _DEFAULT_TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
@@ -45,6 +46,15 @@ _PRESENTATION_TOOLS = frozenset(
 _STRUCTURED_PRESENTATION_TOOLS = frozenset(("work_generate_table_pptx",))
 _PRESENTATION_SUBTOOLS = frozenset(("work_generate_table_pptx", "work_generate_visual_pptx"))
 _MAX_COMPOSER_CONTRACT_BREAKER_SCOPES = 256
+_RUNTIME_MODEL_ROLES = (
+    "planner",
+    "router",
+    "composer",
+    "assessor",
+    "responder",
+    "companion_responder",
+    "repairer",
+)
 
 
 def _presentation_capabilities(context: Mapping[str, Any]) -> tuple[str, ...]:
@@ -205,98 +215,115 @@ class OpenRouterConfig:
     max_prompt_price: float = 0.3
     max_completion_price: float = 2.5
     require_pinned_models: bool = False
+    role_max_tokens: Mapping[str, int] = field(default_factory=dict)
+    role_timeout_seconds: Mapping[str, float] = field(default_factory=dict)
+    role_attempt_timeout_seconds: Mapping[str, float] = field(default_factory=dict)
+    role_reasoning_efforts: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
-    def from_env(cls) -> OpenRouterConfig:
-        primary_model = os.getenv("MODEL_NAME", "").strip()
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> OpenRouterConfig:
+        environment = os.environ if environ is None else environ
+        env_get = environment.get
+        primary_model = env_get("MODEL_NAME", "").strip()
         model_names = (
             _non_empty(
                 (
                     primary_model,
-                    *os.getenv("MODEL_FALLBACK_NAMES", "").split(","),
+                    *env_get("MODEL_FALLBACK_NAMES", "").split(","),
                 )
             )
             if primary_model
             else (_DEFAULT_TEXT_MODEL, _DEFAULT_QUALITY_FALLBACK_MODEL)
         )
         config = cls(
-            base_url=os.getenv(
+            base_url=env_get(
                 "MODEL_BASE_URL",
                 "https://openrouter.ai/api/v1",
             ),
-            api_key=os.environ["MODEL_API_KEY"],
+            api_key=environment["MODEL_API_KEY"],
             models=model_names,
             planner_models=_role_models(
                 "PLANNER",
                 (_DEFAULT_TEXT_MODEL, _DEFAULT_QUALITY_FALLBACK_MODEL),
+                environment,
             ),
             router_models=_role_models(
                 "ROUTER",
                 (_DEFAULT_TEXT_MODEL, _DEFAULT_LIGHT_FALLBACK_MODEL),
+                environment,
             ),
             composer_models=_role_models(
                 "COMPOSER",
                 (_DEFAULT_TEXT_MODEL, _DEFAULT_QUALITY_FALLBACK_MODEL),
+                environment,
             ),
             assessor_models=_role_models(
                 "ASSESSOR",
                 (_DEFAULT_TEXT_MODEL, _DEFAULT_LIGHT_FALLBACK_MODEL),
+                environment,
             ),
-            responder_models=_role_models("RESPONDER", model_names),
+            responder_models=_role_models("RESPONDER", model_names, environment),
             companion_responder_models=_role_models(
                 "COMPANION_RESPONDER",
                 _DEFAULT_COMPANION_RESPONDER_MODELS,
+                environment,
             ),
-            repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,)),
-            timeout_seconds=float(os.getenv("MODEL_TIMEOUT_SECONDS", "30")),
-            attempt_timeout_seconds=float(os.getenv("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
-            composer_timeout_seconds=float(os.getenv("MODEL_COMPOSER_TIMEOUT_SECONDS", "90")),
+            repairer_models=_role_models("REPAIRER", (_DEFAULT_TEXT_MODEL,), environment),
+            timeout_seconds=float(env_get("MODEL_TIMEOUT_SECONDS", "30")),
+            attempt_timeout_seconds=float(env_get("MODEL_ATTEMPT_TIMEOUT_SECONDS", "15")),
+            composer_timeout_seconds=float(env_get("MODEL_COMPOSER_TIMEOUT_SECONDS", "90")),
             composer_attempt_timeout_seconds=float(
-                os.getenv("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "30")
+                env_get("MODEL_COMPOSER_ATTEMPT_TIMEOUT_SECONDS", "30")
             ),
             min_fallback_timeout_seconds=float(
-                os.getenv("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
+                env_get("MODEL_MIN_FALLBACK_TIMEOUT_SECONDS", "5")
             ),
-            max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "1024")),
-            composer_max_tokens=int(os.getenv("MODEL_COMPOSER_MAX_TOKENS", "12288")),
-            composer_batch_max_tokens=int(os.getenv("MODEL_COMPOSER_BATCH_MAX_TOKENS", "6144")),
-            repairer_max_tokens=int(os.getenv("MODEL_REPAIRER_MAX_TOKENS", "256")),
-            data_collection=os.getenv("MODEL_DATA_COLLECTION", "deny"),
-            zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False),
-            reasoning_effort=os.getenv("MODEL_REASONING_EFFORT", "minimal"),
-            planner_reasoning_effort=os.getenv(
+            max_tokens=int(env_get("MODEL_MAX_TOKENS", "1024")),
+            composer_max_tokens=int(env_get("MODEL_COMPOSER_MAX_TOKENS", "12288")),
+            composer_batch_max_tokens=int(env_get("MODEL_COMPOSER_BATCH_MAX_TOKENS", "6144")),
+            repairer_max_tokens=int(env_get("MODEL_REPAIRER_MAX_TOKENS", "256")),
+            data_collection=env_get("MODEL_DATA_COLLECTION", "deny"),
+            zdr_required=_env_bool("MODEL_ZDR_REQUIRED", False, environment),
+            reasoning_effort=env_get("MODEL_REASONING_EFFORT", "minimal"),
+            planner_reasoning_effort=env_get(
                 "MODEL_PLANNER_REASONING_EFFORT",
                 "high",
             ),
-            router_reasoning_effort=os.getenv(
+            router_reasoning_effort=env_get(
                 "MODEL_ROUTER_REASONING_EFFORT",
                 "low",
             ),
-            composer_reasoning_effort=os.getenv(
+            composer_reasoning_effort=env_get(
                 "MODEL_COMPOSER_REASONING_EFFORT",
                 "low",
             ),
-            assessor_reasoning_effort=os.getenv(
+            assessor_reasoning_effort=env_get(
                 "MODEL_ASSESSOR_REASONING_EFFORT",
                 "minimal",
             ),
-            fallback_reasoning_effort=os.getenv(
+            fallback_reasoning_effort=env_get(
                 "MODEL_FALLBACK_REASONING_EFFORT",
                 "low",
             ),
-            reasoning_exclude=_env_bool("MODEL_REASONING_EXCLUDE", True),
-            http_referer=os.getenv("MODEL_HTTP_REFERER", ""),
-            app_title=os.getenv("MODEL_APP_TITLE", "AI Companion"),
-            config_version=os.getenv("MODEL_CONFIG_VERSION", DEFAULT_MODEL_CONFIG_VERSION),
-            provider_sort=os.getenv("MODEL_PROVIDER_SORT", "price"),
+            reasoning_exclude=_env_bool("MODEL_REASONING_EXCLUDE", True, environment),
+            http_referer=env_get("MODEL_HTTP_REFERER", ""),
+            app_title=env_get("MODEL_APP_TITLE", "AI Companion"),
+            config_version=env_get("MODEL_CONFIG_VERSION", DEFAULT_MODEL_CONFIG_VERSION),
+            provider_sort=env_get("MODEL_PROVIDER_SORT", "price"),
             preferred_max_latency_p90=float(
-                os.getenv("MODEL_PREFERRED_MAX_LATENCY_P90_SECONDS", "8")
+                env_get("MODEL_PREFERRED_MAX_LATENCY_P90_SECONDS", "8")
             ),
-            allow_provider_fallbacks=_env_bool("MODEL_ALLOW_PROVIDER_FALLBACKS", True),
-            require_parameters=_env_bool("MODEL_REQUIRE_PARAMETERS", True),
-            max_prompt_price=float(os.getenv("MODEL_MAX_PROMPT_PRICE", "0.3")),
-            max_completion_price=float(os.getenv("MODEL_MAX_COMPLETION_PRICE", "2.5")),
-            require_pinned_models=_env_bool("MODEL_REQUIRE_PINNED", True),
+            allow_provider_fallbacks=_env_bool("MODEL_ALLOW_PROVIDER_FALLBACKS", True, environment),
+            require_parameters=_env_bool("MODEL_REQUIRE_PARAMETERS", True, environment),
+            max_prompt_price=float(env_get("MODEL_MAX_PROMPT_PRICE", "0.3")),
+            max_completion_price=float(env_get("MODEL_MAX_COMPLETION_PRICE", "2.5")),
+            require_pinned_models=_env_bool("MODEL_REQUIRE_PINNED", True, environment),
+            role_max_tokens=_role_int_settings("MAX_TOKENS", environment),
+            role_timeout_seconds=_role_float_settings("TIMEOUT_SECONDS", environment),
+            role_attempt_timeout_seconds=_role_float_settings(
+                "ATTEMPT_TIMEOUT_SECONDS", environment
+            ),
+            role_reasoning_efforts=_role_string_settings("REASONING_EFFORT", environment),
         )
         config.validate()
         return config
@@ -361,8 +388,8 @@ class OpenRouterConfig:
             raise ValueError(
                 "MODEL_COMPOSER_BATCH_MAX_TOKENS must be between 64 and MODEL_COMPOSER_MAX_TOKENS"
             )
-        if self.repairer_max_tokens < 64 or self.repairer_max_tokens > 1024:
-            raise ValueError("MODEL_REPAIRER_MAX_TOKENS must be between 64 and 1024")
+        if self.repairer_max_tokens < 64 or self.repairer_max_tokens > 32768:
+            raise ValueError("MODEL_REPAIRER_MAX_TOKENS must be between 64 and 32768")
         if self.data_collection not in ("allow", "deny"):
             raise ValueError("MODEL_DATA_COLLECTION must be allow or deny")
         valid_reasoning_efforts = {
@@ -374,7 +401,7 @@ class OpenRouterConfig:
             "xhigh",
             "max",
         }
-        for name, value in (
+        for name, reasoning_value in (
             ("MODEL_REASONING_EFFORT", self.reasoning_effort),
             ("MODEL_PLANNER_REASONING_EFFORT", self.planner_reasoning_effort),
             ("MODEL_ROUTER_REASONING_EFFORT", self.router_reasoning_effort),
@@ -382,8 +409,25 @@ class OpenRouterConfig:
             ("MODEL_ASSESSOR_REASONING_EFFORT", self.assessor_reasoning_effort),
             ("MODEL_FALLBACK_REASONING_EFFORT", self.fallback_reasoning_effort),
         ):
-            if value not in valid_reasoning_efforts:
+            if reasoning_value not in valid_reasoning_efforts:
                 raise ValueError(f"{name} must be none, minimal, low, medium, high, xhigh or max")
+        for role in _RUNTIME_MODEL_ROLES:
+            role_tokens = self.max_tokens_for(role)
+            if role_tokens < 64 or role_tokens > 32768:
+                raise ValueError(f"MODEL_{role.upper()}_MAX_TOKENS must be between 64 and 32768")
+            role_timeout = self.timeout_for(role)
+            role_attempt_timeout = self.attempt_timeout_for(role)
+            if (
+                not math.isfinite(role_timeout)
+                or not math.isfinite(role_attempt_timeout)
+                or role_timeout <= 0
+                or role_timeout > 120
+                or role_attempt_timeout <= 0
+                or role_attempt_timeout > role_timeout
+            ):
+                raise ValueError(f"MODEL_{role.upper()} timeout settings are invalid")
+            if self.reasoning_effort_for(role) not in valid_reasoning_efforts:
+                raise ValueError(f"MODEL_{role.upper()}_REASONING_EFFORT is invalid")
         if not self.config_version.strip():
             raise ValueError("MODEL_CONFIG_VERSION is required")
         if self.provider_sort not in ("price", "latency", "throughput"):
@@ -444,6 +488,47 @@ class OpenRouterConfig:
         }.get(role, ())
         return configured or self.models
 
+    def max_tokens_for(self, role: str) -> int:
+        configured = self.role_max_tokens.get(role)
+        if configured is not None:
+            return configured
+        return {
+            "planner": min(self.max_tokens, 1024),
+            "router": self.max_tokens,
+            "composer": self.composer_max_tokens,
+            "assessor": min(self.max_tokens, 160),
+            "responder": self.max_tokens,
+            "companion_responder": self.max_tokens,
+            "repairer": self.repairer_max_tokens,
+        }.get(role, self.max_tokens)
+
+    def timeout_for(self, role: str) -> float:
+        configured = self.role_timeout_seconds.get(role)
+        if configured is not None:
+            return configured
+        return self.composer_timeout_seconds if role == "composer" else self.timeout_seconds
+
+    def attempt_timeout_for(self, role: str) -> float:
+        configured = self.role_attempt_timeout_seconds.get(role)
+        if configured is not None:
+            return configured
+        return (
+            self.composer_attempt_timeout_seconds
+            if role == "composer"
+            else self.attempt_timeout_seconds
+        )
+
+    def reasoning_effort_for(self, role: str) -> str:
+        configured = self.role_reasoning_efforts.get(role)
+        if configured is not None:
+            return configured
+        return {
+            "planner": self.planner_reasoning_effort,
+            "router": self.router_reasoning_effort,
+            "composer": self.composer_reasoning_effort,
+            "assessor": self.assessor_reasoning_effort,
+        }.get(role, self.reasoning_effort)
+
 
 class OpenRouterDecisionPort:
     """Model-assisted intent routing over the exact Go-owned tool catalog."""
@@ -453,17 +538,25 @@ class OpenRouterDecisionPort:
         config: OpenRouterConfig,
         *,
         monotonic: Callable[[], float] = time.monotonic,
+        telemetry: LangfuseTelemetry | None = None,
     ) -> None:
         config.validate()
         self._config = config
         self._monotonic = monotonic
+        self._telemetry = telemetry
         self._observability_local = threading.local()
+        self._trace_headers: dict[str, str] = {}
         self._composer_contract_breaker_lock = threading.Lock()
         self._composer_contract_breakers: dict[str, set[str]] = {}
 
     @classmethod
-    def from_env(cls) -> OpenRouterDecisionPort:
-        return cls(OpenRouterConfig.from_env())
+    def from_env(
+        cls,
+        environ: Mapping[str, str] | None = None,
+        *,
+        telemetry: LangfuseTelemetry | None = None,
+    ) -> OpenRouterDecisionPort:
+        return cls(OpenRouterConfig.from_env(environ), telemetry=telemetry)
 
     def model_manifest(self) -> dict[str, Any]:
         return {
@@ -485,33 +578,40 @@ class OpenRouterDecisionPort:
             "roles": {
                 "planner": {
                     "models": list(self._config.models_for("planner")),
-                    "max_output_tokens": min(self._config.max_tokens, 1024),
+                    "max_output_tokens": self._config.max_tokens_for("planner"),
+                    **self._role_runtime_manifest("planner"),
                 },
                 "router": {
                     "models": list(self._config.models_for("router")),
-                    "max_output_tokens": min(self._config.max_tokens, 256),
+                    "max_output_tokens": self._config.max_tokens_for("router"),
+                    **self._role_runtime_manifest("router"),
                 },
                 "composer": {
                     "models": list(self._config.models_for("composer")),
-                    "max_output_tokens": self._config.composer_max_tokens,
+                    "max_output_tokens": self._config.max_tokens_for("composer"),
                     "batch_max_output_tokens": self._config.composer_batch_max_tokens,
+                    **self._role_runtime_manifest("composer"),
                 },
                 "assessor": {
                     "models": list(self._config.models_for("assessor")),
-                    "max_output_tokens": min(self._config.max_tokens, 160),
+                    "max_output_tokens": self._config.max_tokens_for("assessor"),
+                    **self._role_runtime_manifest("assessor"),
                 },
                 "responder": {
                     "models": list(self._config.models_for("responder")),
-                    "max_output_tokens": self._config.max_tokens,
+                    "max_output_tokens": self._config.max_tokens_for("responder"),
+                    **self._role_runtime_manifest("responder"),
                 },
                 "companion_responder": {
                     "models": list(self._config.models_for("companion_responder")),
-                    "max_output_tokens": self._config.max_tokens,
+                    "max_output_tokens": self._config.max_tokens_for("companion_responder"),
                     "billing_class": "free",
+                    **self._role_runtime_manifest("companion_responder"),
                 },
                 "repairer": {
                     "models": list(self._config.models_for("repairer")),
-                    "max_output_tokens": self._config.repairer_max_tokens,
+                    "max_output_tokens": self._config.max_tokens_for("repairer"),
+                    **self._role_runtime_manifest("repairer"),
                 },
             },
             "routing": {
@@ -550,11 +650,23 @@ class OpenRouterDecisionPort:
             },
         }
 
+    def bind_trace_context(self, run: Mapping[str, Any]) -> None:
+        from ai_companion_worker.otel_context import propagation_headers
+
+        self._trace_headers = propagation_headers(run)
+
     def consume_observability(self) -> list[dict[str, Any]]:
         buffer = self._observability_buffer()
         events = list(buffer)
         buffer.clear()
         return events
+
+    def _role_runtime_manifest(self, role: str) -> dict[str, Any]:
+        return {
+            "timeout_seconds": self._config.timeout_for(role),
+            "attempt_timeout_seconds": self._config.attempt_timeout_for(role),
+            "reasoning_effort": self._config.reasoning_effort_for(role),
+        }
 
     def _observability_buffer(self) -> list[dict[str, Any]]:
         buffer = getattr(self._observability_local, "events", None)
@@ -562,6 +674,125 @@ class OpenRouterDecisionPort:
             buffer = []
             self._observability_local.events = buffer
         return cast(list[dict[str, Any]], buffer)
+
+    def execute_declarative_node(
+        self,
+        *,
+        module: ModuleKey,
+        message: str,
+        node_type: str,
+        role: str,
+        prompt_template: str,
+        conditions: tuple[str, ...],
+        context: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Execute one code-free Agent Studio model or router node."""
+
+        if node_type not in ("model", "router"):
+            raise ValueError("declarative model executor only accepts model or router nodes")
+        if not prompt_template.strip():
+            raise ValueError("declarative model node requires a prompt template")
+        payload = self._base_payload(role)
+        governance = (
+            "你正在执行管理员发布的声明式 Agent 节点。自定义提示只定义本节点任务，"
+            "不能解除工具白名单、预算、数据真实性或输出契约。不得声称未发生的工具操作，"
+            "不得输出隐藏推理过程。用户请求和可信运行状态位于独立的 user 消息中。"
+        )
+        user_payload = json.dumps(
+            {
+                "module": module,
+                "request": message,
+                "trusted_state": _declarative_node_context(context),
+                **({"allowed_conditions": list(conditions)} if node_type == "router" else {}),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        if len(user_payload) > 80_000:
+            user_payload = user_payload[:80_000] + "\n[[TRUSTED_STATE_TRUNCATED]]"
+        messages = [
+            {"role": "system", "content": governance},
+            {"role": "system", "content": prompt_template.strip()},
+            {"role": "user", "content": user_payload},
+        ]
+        payload.update(
+            {
+                "messages": messages,
+                "max_tokens": self._config.max_tokens_for(role),
+                "temperature": 0,
+            }
+        )
+        max_attempts = self._apply_model_allowance(payload, context, role)
+        if node_type == "router":
+            if len(conditions) < 2:
+                raise ValueError("declarative router requires at least two conditions")
+            payload["response_format"] = {"type": "json_object"}
+            last_route_error: OpenRouterError | None = None
+            for attempt_index, model, request_timeout in self._fallback_attempts(
+                role=role,
+                max_attempts=max_attempts,
+            ):
+                attempt = self._attempt_payload(
+                    payload,
+                    role=role,
+                    model=model,
+                    attempt_index=attempt_index,
+                )
+                try:
+                    observed = self._observed_request(
+                        attempt,
+                        role=role,
+                        requested_model=model,
+                        timeout_seconds=request_timeout,
+                    )
+                    routed = _plan_arguments(_choice_message(observed).get("content"))
+                    condition = routed.get("condition")
+                    response = routed.get("response", "")
+                    if condition not in conditions or not isinstance(response, str):
+                        raise OpenRouterError(
+                            "OpenRouter returned an invalid declarative route"
+                        )
+                    return {"condition": condition, "response": response.strip()}
+                except OpenRouterError as exc:
+                    self._annotate_latest_contract_error(exc)
+                    last_route_error = exc
+                    if exc.status_code in (401, 403):
+                        raise
+            if last_route_error is not None:
+                raise last_route_error
+            raise OpenRouterError("OpenRouter declarative router fallback list is empty")
+
+        last_error: OpenRouterError | None = None
+        for attempt_index, model, request_timeout in self._fallback_attempts(
+            role=role,
+            max_attempts=max_attempts,
+        ):
+            attempt = self._attempt_payload(
+                payload,
+                role=role,
+                model=model,
+                attempt_index=attempt_index,
+            )
+            try:
+                result = self._observed_request(
+                    attempt,
+                    role=role,
+                    requested_model=model,
+                    timeout_seconds=request_timeout,
+                )
+                content = _choice_message(result).get("content")
+                if not isinstance(content, str) or not content.strip():
+                    raise OpenRouterError("OpenRouter returned an empty declarative response")
+                return {"response": content.strip()}
+            except OpenRouterError as exc:
+                self._annotate_latest_contract_error(exc)
+                last_error = exc
+                if exc.status_code in (401, 403):
+                    raise
+        if last_error is not None:
+            raise last_error
+        raise OpenRouterError("OpenRouter declarative model fallback list is empty")
 
     def plan(
         self,
@@ -641,7 +872,7 @@ class OpenRouterDecisionPort:
                 # reasoning is charged against the completion budget; a 512
                 # token cap caused otherwise valid planner fallbacks to end in
                 # truncated JSON.
-                "max_tokens": min(self._config.max_tokens, 1024),
+                "max_tokens": self._config.max_tokens_for("planner"),
             }
         )
         max_attempts = self._apply_model_allowance(payload, context, "planner")
@@ -817,7 +1048,7 @@ class OpenRouterDecisionPort:
                     if structured_life_routing or artifact_pending
                     else "auto"
                 ),
-                "max_tokens": self._config.max_tokens,
+                "max_tokens": self._config.max_tokens_for("router"),
             }
         )
         max_attempts = self._apply_model_allowance(payload, context, "router")
@@ -1108,15 +1339,15 @@ class OpenRouterDecisionPort:
                     "function": {"name": selected["name"]},
                 },
                 "max_tokens": (
-                    min(self._config.composer_max_tokens, 1200)
+                        min(self._config.max_tokens_for("composer"), 1200)
                     if tool_name == "work_draft_email"
                     else (
                         min(
-                            self._config.composer_max_tokens,
+                            self._config.max_tokens_for("composer"),
                             self._config.composer_batch_max_tokens,
                         )
                         if isinstance(document_round, Mapping)
-                        else self._config.composer_max_tokens
+                        else self._config.max_tokens_for("composer")
                     )
                 ),
             }
@@ -1300,7 +1531,7 @@ class OpenRouterDecisionPort:
                         "schema": schema,
                     },
                 },
-                "max_tokens": self._config.repairer_max_tokens,
+                "max_tokens": self._config.max_tokens_for("repairer"),
                 "temperature": 0,
             }
         )
@@ -1382,7 +1613,7 @@ class OpenRouterDecisionPort:
                         ),
                     },
                 ],
-                "max_tokens": self._config.max_tokens,
+                "max_tokens": self._config.max_tokens_for(role),
                 "temperature": 0,
             }
         )
@@ -1456,7 +1687,7 @@ class OpenRouterDecisionPort:
                     },
                 ],
                 "response_format": {"type": "json_object"},
-                "max_tokens": min(self._config.max_tokens, 160),
+                "max_tokens": self._config.max_tokens_for("assessor"),
             }
         )
         max_attempts = self._apply_model_allowance(payload, context, "assessor")
@@ -1680,7 +1911,7 @@ class OpenRouterDecisionPort:
         payload.update(
             {
                 "messages": messages,
-                "max_tokens": self._config.max_tokens,
+                "max_tokens": self._config.max_tokens_for(role),
             }
         )
         max_attempts = self._apply_model_allowance(payload, context, role)
@@ -1754,18 +1985,11 @@ class OpenRouterDecisionPort:
         model_order: tuple[str, ...] | None = None,
     ) -> Iterator[tuple[int, str, float]]:
         models = tuple((model_order or self._config.models_for(role))[:max_attempts])
-        if role == "composer":
-            policy = _FallbackTimeoutPolicy(
-                deadline_seconds=self._config.composer_timeout_seconds,
-                attempt_timeout_seconds=self._config.composer_attempt_timeout_seconds,
-                min_fallback_timeout_seconds=self._config.min_fallback_timeout_seconds,
-            )
-        else:
-            policy = _FallbackTimeoutPolicy(
-                deadline_seconds=self._config.timeout_seconds,
-                attempt_timeout_seconds=self._config.attempt_timeout_seconds,
-                min_fallback_timeout_seconds=self._config.min_fallback_timeout_seconds,
-            )
+        policy = _FallbackTimeoutPolicy(
+            deadline_seconds=self._config.timeout_for(role),
+            attempt_timeout_seconds=self._config.attempt_timeout_for(role),
+            min_fallback_timeout_seconds=self._config.min_fallback_timeout_seconds,
+        )
         started = self._monotonic()
         for index, model in enumerate(models):
             remaining_attempts = len(models) - index
@@ -1807,7 +2031,7 @@ class OpenRouterDecisionPort:
         fallback_model = attempt_index > 0 or model != self._config.models_for(role)[0]
         reasoning["effort"] = (
             self._config.fallback_reasoning_effort
-            if fallback_model
+            if fallback_model and role not in self._config.role_reasoning_efforts
             else self._primary_reasoning_effort(role)
         )
         reasoning["exclude"] = self._config.reasoning_exclude
@@ -1815,12 +2039,7 @@ class OpenRouterDecisionPort:
         return attempt
 
     def _primary_reasoning_effort(self, role: str) -> str:
-        return {
-            "planner": self._config.planner_reasoning_effort,
-            "router": self._config.router_reasoning_effort,
-            "composer": self._config.composer_reasoning_effort,
-            "assessor": self._config.assessor_reasoning_effort,
-        }.get(role, self._config.reasoning_effort)
+        return self._config.reasoning_effort_for(role)
 
     def _annotate_latest_contract_error(self, error: OpenRouterError) -> None:
         events = self._observability_buffer()
@@ -1853,10 +2072,18 @@ class OpenRouterDecisionPort:
         prompt_per_attempt = _prompt_token_upper_bound(payload)
         prompt_remaining = _non_negative_int(allowance.get("remaining_prompt_tokens"))
         max_attempts = min(max_attempts, prompt_remaining // prompt_per_attempt)
+        total_remaining = _non_negative_int(allowance.get("remaining_total_tokens"))
+        if "remaining_total_tokens" in allowance:
+            max_attempts = min(max_attempts, total_remaining // (prompt_per_attempt + 1))
         if max_attempts <= 0:
             raise ModelBudgetExceeded("输入 token 预算不足以覆盖一次模型请求")
 
         completion_remaining = _non_negative_int(allowance.get("remaining_completion_tokens"))
+        if "remaining_total_tokens" in allowance:
+            completion_remaining = min(
+                completion_remaining,
+                max(0, total_remaining - prompt_per_attempt * max_attempts),
+            )
         if completion_remaining <= 0:
             raise ModelBudgetExceeded("输出 token 预算不足以覆盖一次模型请求")
 
@@ -1902,11 +2129,21 @@ class OpenRouterDecisionPort:
         reasoning_effort = (
             str(reasoning.get("effort") or "") if isinstance(reasoning, Mapping) else ""
         )
-        try:
-            result = self._request(payload, timeout_seconds=timeout_seconds)
-        except OpenRouterError as exc:
-            self._observability_buffer().append(
-                {
+        generation_context = (
+            self._telemetry.observe_generation(
+                role=role,
+                requested_model=requested_model,
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
+            if self._telemetry is not None
+            else nullcontext(None)
+        )
+        with generation_context as generation:
+            try:
+                result = self._request(payload, timeout_seconds=timeout_seconds)
+            except OpenRouterError as exc:
+                event = {
                     "kind": "model_call",
                     "role": role,
                     "status": "error",
@@ -1927,19 +2164,20 @@ class OpenRouterDecisionPort:
                     "retryable": exc.retryable,
                     "retry_after": exc.retry_after[:128],
                 }
-            )
-            raise
-        usage = result.get("usage")
-        usage = usage if isinstance(usage, dict) else {}
-        prompt_details = usage.get("prompt_tokens_details")
-        prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
-        completion_details = usage.get("completion_tokens_details")
-        completion_details = completion_details if isinstance(completion_details, dict) else {}
-        returned_model = result.get("model")
-        upstream_provider = result.get("provider")
-        generation_id = result.get("id")
-        self._observability_buffer().append(
-            {
+                self._observability_buffer().append(event)
+                if generation is not None:
+                    generation.fail(exc, event)
+                raise
+            usage = result.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            prompt_details = usage.get("prompt_tokens_details")
+            prompt_details = prompt_details if isinstance(prompt_details, dict) else {}
+            completion_details = usage.get("completion_tokens_details")
+            completion_details = completion_details if isinstance(completion_details, dict) else {}
+            returned_model = result.get("model")
+            upstream_provider = result.get("provider")
+            generation_id = result.get("id")
+            event = {
                 "kind": "model_call",
                 "role": role,
                 "status": "succeeded",
@@ -1961,8 +2199,10 @@ class OpenRouterDecisionPort:
                 "error_status": 0,
                 "retryable": False,
             }
-        )
-        return result
+            self._observability_buffer().append(event)
+            if generation is not None:
+                generation.succeed(result, event)
+            return result
 
     def _request(
         self,
@@ -1983,6 +2223,7 @@ class OpenRouterDecisionPort:
                 "Authorization": f"Bearer {self._config.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                **self._trace_headers,
                 **(
                     {"HTTP-Referer": self._config.http_referer} if self._config.http_referer else {}
                 ),
@@ -2349,6 +2590,23 @@ def _routing_message(message: str, context: Mapping[str, Any]) -> str:
         compact_observations.append(compact)
     state["completed_observations"] = compact_observations
     return json.dumps(state, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _declarative_node_context(context: Mapping[str, Any]) -> dict[str, Any]:
+    """Project only model-safe runtime state into a Studio node prompt."""
+
+    projected: dict[str, Any] = {}
+    for key in ("timezone", "locale", "node_outputs", "tool_result"):
+        value = context.get(key)
+        if value is not None:
+            projected[key] = value
+    history = context.get("history")
+    if isinstance(history, list):
+        projected["history"] = history[-20:]
+    observations = context.get("observations")
+    if isinstance(observations, list):
+        projected["observations"] = observations[-8:]
+    return projected
 
 
 def _normalize_routing_user_message(message: str) -> str:
@@ -3051,8 +3309,12 @@ def _safe_repair_details(value: Any) -> dict[str, Any]:
     return result
 
 
-def _env_bool(name: str, fallback: bool) -> bool:
-    value = os.getenv(name)
+def _env_bool(
+    name: str,
+    fallback: bool,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    value = (os.environ if environ is None else environ).get(name)
     if value is None or not value.strip():
         return fallback
     normalized = value.strip().lower()
@@ -3067,12 +3329,56 @@ def _non_empty(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(value.strip() for value in values if value.strip())
 
 
-def _role_models(role: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
-    primary = os.getenv(f"MODEL_{role}_NAME")
-    fallback_names = os.getenv(f"MODEL_{role}_FALLBACK_NAMES", "")
+def _role_models(
+    role: str,
+    fallback: tuple[str, ...],
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    environment = os.environ if environ is None else environ
+    primary = environment.get(f"MODEL_{role}_NAME")
+    fallback_names = environment.get(f"MODEL_{role}_FALLBACK_NAMES", "")
     if primary is None or not primary.strip():
         return fallback
     return _non_empty((primary, *fallback_names.split(",")))
+
+
+def _role_string_settings(
+    suffix: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    environment = os.environ if environ is None else environ
+    result: dict[str, str] = {}
+    for role in _RUNTIME_MODEL_ROLES:
+        value = environment.get(f"MODEL_{role.upper()}_{suffix}")
+        if value is not None and value.strip():
+            result[role] = value.strip().lower()
+    return result
+
+
+def _role_int_settings(
+    suffix: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, int]:
+    environment = os.environ if environ is None else environ
+    result: dict[str, int] = {}
+    for role in _RUNTIME_MODEL_ROLES:
+        value = environment.get(f"MODEL_{role.upper()}_{suffix}")
+        if value is not None and value.strip():
+            result[role] = int(value.strip())
+    return result
+
+
+def _role_float_settings(
+    suffix: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, float]:
+    environment = os.environ if environ is None else environ
+    result: dict[str, float] = {}
+    for role in _RUNTIME_MODEL_ROLES:
+        value = environment.get(f"MODEL_{role.upper()}_{suffix}")
+        if value is not None and value.strip():
+            result[role] = float(value.strip())
+    return result
 
 
 def _prompt_token_upper_bound(payload: Mapping[str, Any]) -> int:
