@@ -769,7 +769,7 @@ validate-observability: ## Validate retry alerts and Grafana dashboard contracts
 	ruby scripts/validate_observability.rb --self-test
 	$(PYTHON) scripts/observability_drill.py self-test
 	PYTHONPATH=workers/python/src $(PYTHON) -m ai_companion_worker.evaluation.direct_traffic_preproduction_drill self-test
-	ruby -ryaml -e 'YAML.load_file("deploy/observability/prometheus.yml"); YAML.load_file("deploy/observability/prometheus-drill.yml"); YAML.load_file("deploy/observability/alertmanager-drill.yml"); YAML.load_file("deploy/observability/loki.yml"); puts "observability_yaml=valid"'
+	ruby -ryaml -e 'ARGV.each { |path| Psych.parse_file(path) }; puts "observability_yaml=valid"' deploy/observability/prometheus.yml deploy/observability/prometheus-drill.yml deploy/observability/alertmanager-drill.yml deploy/observability/loki.yml
 
 observability-drill: validate-observability ## Exercise Prometheus, Alertmanager, webhook firing and recovery in isolation
 	sh scripts/run_observability_drill.sh
