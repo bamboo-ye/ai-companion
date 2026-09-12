@@ -1,5 +1,7 @@
 # 伴AI
 
+[简体中文](README.zh-CN.md) | English
+
 伴AI is a conversational personal AI workspace spanning emotional companionship, life assistance, work skills, collaboration, billing/safety controls, and operator-run internal-release workflows.
 
 Current completion scope and verification are recorded in [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md).
