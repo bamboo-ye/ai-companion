@@ -160,7 +160,7 @@ jobs:
           go-version: "1.26.4"
           cache: true
       - run: cp .env.example .env
-      - run: make agent-worker-up
+      - run: make agent-worker-up-kafka-scale
       - run: >-
           METRICS_URL=http://127.0.0.1:8080/metrics
           OBSERVABILITY_ENVIRONMENT_ID=ci-agent-observability
@@ -182,4 +182,4 @@ jobs:
             artifacts/observability-eval/history-trend.json
           retention-days: 14
       - if: always()
-        run: docker compose --profile app --profile agent --profile agent-runtime --env-file .env -f deploy/compose/compose.yml down --volumes --remove-orphans
+        run: docker compose --profile app --profile agent --profile agent-runtime --profile kafka-scale --env-file .env -f deploy/compose/compose.yml down --volumes --remove-orphans

@@ -244,7 +244,7 @@ METRICS_INPUT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt test test-go test-python test-web eval-m2 eval-m4 build build-go run-api run-worker migrate infra-up infra-up-kafka-scale infra-down infra-config release-check release-evidence validate-release-evidence test-release-evidence-validator check docker-up-kafka-scale
+.PHONY: help fmt test test-go test-python test-web eval-m2 eval-m4 build build-go run-api run-worker migrate infra-up infra-up-kafka-scale infra-down infra-config release-check release-evidence validate-release-evidence test-release-evidence-validator check agent-worker-up-kafka-scale docker-up-kafka-scale
 .PHONY: certify-agent-direct-traffic-production-recovery-adapter verify-agent-direct-traffic-production-recovery-adapter attest-agent-direct-traffic-production-recovery-rollout evaluate-agent-direct-traffic-production-recovery-gate attest-agent-direct-traffic-production-recovery-gate verify-agent-direct-traffic-production-recovery-gate apply-agent-direct-traffic-production-recovery
 .PHONY: certify-agent-direct-traffic-production-expansion-adapter verify-agent-direct-traffic-production-expansion-adapter attest-agent-direct-traffic-production-expansion-rollout evaluate-agent-direct-traffic-production-expansion-gate attest-agent-direct-traffic-production-expansion-gate verify-agent-direct-traffic-production-expansion-gate apply-agent-direct-traffic-production-expansion
 .PHONY: certify-agent-direct-traffic-production-expansion-25-adapter verify-agent-direct-traffic-production-expansion-25-adapter attest-agent-direct-traffic-production-expansion-25-rollout evaluate-agent-direct-traffic-production-expansion-25-gate attest-agent-direct-traffic-production-expansion-25-gate verify-agent-direct-traffic-production-expansion-25-gate apply-agent-direct-traffic-production-expansion-25
@@ -847,6 +847,9 @@ agent-checkpoint-smoke: ## Verify LangGraph interrupt/resume against PostgreSQL
 
 agent-worker-up: ## Start API, Outbox Relay and the dedicated Agent worker
 	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build api worker agent-worker
+
+agent-worker-up-kafka-scale: ## Start Agent services with the Kafka transport required by observability canaries
+	KAFKA_ENABLED=true KAFKA_BROKERS=kafka:29092 docker compose --profile app --profile agent --profile agent-runtime --profile kafka-scale --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d --build api worker agent-worker
 
 agent-worker-logs: ## Follow the dedicated Agent worker
 	docker compose --profile app --profile agent --profile agent-runtime --env-file $(ENV_FILE) -f deploy/compose/compose.yml logs -f agent-worker
