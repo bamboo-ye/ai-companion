@@ -3,7 +3,6 @@ package eventbus
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,35 +118,30 @@ func TestConsumerRunnerRetriesTransientConsumerErrors(t *testing.T) {
 		errors:   []error{ErrConsumerUnavailable},
 		messages: []KafkaMessage{{Event: event}},
 	}
-	var calls int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
 	runner := NewConsumerRunner(store, consumer, ProcessorFunc(func(context.Context, Event) error {
-		atomic.AddInt32(&calls, 1)
+		calls++
+		cancel()
 		return nil
 	}), "memory-worker")
 	runner.backoff = time.Millisecond
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		done <- runner.Run(ctx)
 	}()
 
-	deadline := time.After(time.Second)
-	for atomic.LoadInt32(&calls) == 0 {
-		select {
-		case err := <-done:
-			t.Fatalf("runner stopped early: %v", err)
-		case <-deadline:
-			t.Fatal("runner did not retry before deadline")
-		default:
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
 		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not retry before deadline")
 	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if consumer.commits != 1 {
-		t.Fatalf("commits=%d", consumer.commits)
+	if calls != 1 || consumer.commits != 1 {
+		t.Fatalf("calls=%d commits=%d", calls, consumer.commits)
 	}
 }

@@ -309,6 +309,8 @@ capture-observability: ## Capture a sanitized snapshot from METRICS_URL or METRI
 
 observability-release-gate: ## Run before snapshot, Canary, after snapshot and promote/rollback decision
 	@test -n "$(METRICS_URL)" || (echo "METRICS_URL is required" >&2; exit 2)
+	mkdir -p "$(OBSERVABILITY_GATE_ROOT)"
+	chmod 700 "$(OBSERVABILITY_GATE_ROOT)"
 	PYTHONPATH=workers/python/src $(PYTHON) -m ai_companion_worker.evaluation.release_gate --metrics-url "$(METRICS_URL)" --baseline "$(OBSERVABILITY_BASELINE)" --canary-spec "$(OBSERVABILITY_CANARY_SPEC)" --output-root "$(OBSERVABILITY_GATE_ROOT)" --canary-lease-root "$(OBSERVABILITY_CANARY_LEASE_ROOT)" --environment-id "$(OBSERVABILITY_ENVIRONMENT_ID)" --history-ledger "$(OBSERVABILITY_GATE_HISTORY_LEDGER)"
 
 observability-release-trend: ## Verify the Gate history hash chain and emit a recent trend report
