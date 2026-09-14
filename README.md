@@ -6,6 +6,28 @@
 
 Current completion scope and verification are recorded in [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md).
 
+## Product preview
+
+> Screenshots are captured from the local development environment with synthetic demo data.
+
+### Companion conversations and long-term memory
+
+Create persona-based companions, continue conversations, and manage durable memories that carry useful context across sessions.
+
+![Companion dashboard with role conversations and memory management](docs/images/readme/companion-dashboard.jpg)
+
+### Life planning, reminders, and ledger
+
+The life workspace brings today's plans, reminders, and daily ledger entries together, with confirmation gates before sensitive data is written.
+
+![Life dashboard with plans, reminders, and ledger](docs/images/readme/life-dashboard.jpg)
+
+### Governed Skills and parallel Agent execution
+
+The workbench exposes versioned document, PDF, presentation, and spreadsheet Skills together with intent routing and MCP allowlists. Large inputs run through lossless chunking, bounded Agent fan-out/fan-in, deterministic merging, and targeted retries; generated files and write actions remain previewable and auditable.
+
+![Workbench with Skills, task routing, and MCP controls](docs/images/readme/workbench.jpg)
+
 ## Repository map
 
 ```text
