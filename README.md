@@ -34,6 +34,18 @@ The user describes an expense amount, purpose, and category directly in chat. Th
 
 ![Life-assistant conversation with a successful natural-language ledger entry](docs/images/readme/life-conversation.jpg)
 
+#### Result verification: ledger and reminder records
+
+Completed tool actions are reflected in their dedicated product views instead of existing only as chat messages. The ledger summarizes monthly income, expenses, and balance while showing the newly written CNY 18.00 entry; the reminder view preserves each title, trigger time, and notification channel for continued management.
+
+**Ledger record**
+
+![Life ledger with the conversation-created expense and monthly totals](docs/images/readme/life-ledger-result.jpg)
+
+**Reminder records**
+
+![Life reminders with the project-report reminder and trigger time](docs/images/readme/life-reminder-result.jpg)
+
 ### Governed Skills and parallel Agent execution
 
 The workbench exposes versioned document, PDF, presentation, and spreadsheet Skills together with intent routing and MCP allowlists. Large inputs run through lossless chunking, bounded Agent fan-out/fan-in, deterministic merging, and targeted retries; generated files and write actions remain previewable and auditable.
