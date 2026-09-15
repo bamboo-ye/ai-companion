@@ -36,15 +36,19 @@ The user describes an expense amount, purpose, and category directly in chat. Th
 
 #### Result verification: ledger and reminder records
 
-Completed tool actions are reflected in their dedicated product views instead of existing only as chat messages. The ledger summarizes monthly income, expenses, and balance while showing the newly written CNY 18.00 entry; the reminder view preserves each title, trigger time, and notification channel for continued management.
+Completed tool actions are reflected in their dedicated product views instead of existing only as chat messages. The ledger summarizes monthly income, expenses, and balance while showing the newly written CNY 18.00 entry. The reminder demo first creates “Prepare AI Companion demo materials” in chat, then verifies the matching title, trigger time, and notification channel in the reminder view.
 
 **Ledger record**
 
 ![Life ledger with the conversation-created expense and monthly totals](docs/images/readme/life-ledger-result.jpg)
 
-**Reminder records**
+**Reminder conversation**
 
-![Life reminders with the project-report reminder and trigger time](docs/images/readme/life-reminder-result.jpg)
+![Life-assistant conversation successfully creating a reminder](docs/images/readme/life-reminder-conversation.jpg)
+
+**Persisted reminder verification**
+
+![Life reminders with the conversation-created demo-materials reminder and trigger time](docs/images/readme/life-reminder-result.jpg)
 
 ### Governed Skills and parallel Agent execution
 
