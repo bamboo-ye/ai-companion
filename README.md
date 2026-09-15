@@ -16,17 +16,35 @@ Create persona-based companions, continue conversations, and manage durable memo
 
 ![Companion dashboard with role conversations and memory management](docs/images/readme/companion-dashboard.jpg)
 
+#### Conversation demo: emotional continuity and actionable guidance
+
+The user first shares presentation anxiety and then narrows it down to time pressure. The companion carries the earlier context into the next turn and responds with concrete suggestions for trimming content, allocating time, preparing an escape route, and rehearsing with spare capacity.
+
+![Companion conversation with contextual presentation guidance](docs/images/readme/companion-conversation.jpg)
+
 ### Life planning, reminders, and ledger
 
 The life workspace brings today's plans, reminders, and daily ledger entries together, with confirmation gates before sensitive data is written.
 
 ![Life dashboard with plans, reminders, and ledger](docs/images/readme/life-dashboard.jpg)
 
+#### Conversation demo: natural-language life tools
+
+The user requests a ledger entry and a reminder directly in chat. The Agent turns those requests into governed tool actions, writes only after confirmation, preserves the conversation when an attempt fails, exposes a retry, and reports the successful business result.
+
+![Life-assistant conversation with ledger, reminder, and retry results](docs/images/readme/life-conversation.jpg)
+
 ### Governed Skills and parallel Agent execution
 
 The workbench exposes versioned document, PDF, presentation, and spreadsheet Skills together with intent routing and MCP allowlists. Large inputs run through lossless chunking, bounded Agent fan-out/fan-in, deterministic merging, and targeted retries; generated files and write actions remain previewable and auditable.
 
 ![Workbench with Skills, task routing, and MCP controls](docs/images/readme/workbench.jpg)
+
+#### Conversation demo: from intent to a structured work task
+
+A plain-language request for a seven-slide project outline is routed to the PPTX outline Skill. Chat reports execution status, while task history retains the structured output, the `receive → validate → plan → execute → deliver` stage trail, quality gates, and source-coverage metadata for auditing and retry.
+
+![Work-partner conversation triggering a structured presentation task](docs/images/readme/work-conversation.jpg)
 
 ## Repository map
 
