@@ -62,21 +62,39 @@ A plain-language request for a seven-slide project outline is routed to the PPTX
 
 ![Work-partner conversation triggering a structured presentation task](docs/images/readme/work-conversation.jpg)
 
-#### Result verification: seven-slide structured PPTX outline
+#### Generated artifact: seven-slide PPTX deck
 
-Task history exposes the concrete artifact behind the completion message: a structured outline titled *AI Companion Project Review*, a completed status, and the full `receive → validate → plan → execute → deliver` execution trail.
+The work partner uses the `PPTX multimodal generation` Skill to produce *AI Companion: Technical Highlights and Implementation*. The seven-slide deck includes AI-generated visuals for the product-positioning and large-file-processing pages, passes the generation quality gate, and is delivered as a downloadable `.pptx` file.
 
-![Completed AI Companion PPTX outline and execution stages](docs/images/readme/work-result.jpg)
+[Download the complete PPTX: ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
-| Slide | Title | Generated focus |
-| --- | --- | --- |
-| 1 | AI Companion Project Review | Presentation title and target audience |
-| 2 | Problem and goals | User pain points, business goals, and success metrics |
-| 3 | Solution overview | Core capabilities, value proposition, architecture, and data flow |
-| 4 | Technical highlights | Realtime chat, RAG, multimodality, performance, scale, and privacy |
-| 5 | Demo plan | Demo scenarios, flow, environment, and fallback plan |
-| 6 | Next steps and milestones | Actions, owners, timeline, and acceptance criteria |
-| 7 | Recap | Problem, solution, technology, demo, and next-step summary |
+**Slide 1: Cover**
+
+![Generated PPT slide 1: AI Companion technical highlights and implementation](docs/images/readme/generated-ppt/slide-1.png)
+
+**Slide 2: Product positioning and capabilities**
+
+![Generated PPT slide 2: one entry point for companion, life, and work](docs/images/readme/generated-ppt/slide-2.png)
+
+**Slide 3: Large-file processing and parallel Agents**
+
+![Generated PPT slide 3: lossless chunking, deterministic merging, and parallel Agents](docs/images/readme/generated-ppt/slide-3.png)
+
+**Slide 4: Reliability design**
+
+![Generated PPT slide 4: durable checkpoints, human confirmation, and observability](docs/images/readme/generated-ppt/slide-4.png)
+
+**Slide 5: Product demonstrations**
+
+![Generated PPT slide 5: real product demonstrations across three modules](docs/images/readme/generated-ppt/slide-5.png)
+
+**Slide 6: Next steps**
+
+![Generated PPT slide 6: mobile clients, scaled evaluation, and production release](docs/images/readme/generated-ppt/slide-6.png)
+
+**Slide 7: Recap**
+
+![Generated PPT slide 7: content recap and follow-up action](docs/images/readme/generated-ppt/slide-7.png)
 
 ## Repository map
 

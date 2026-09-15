@@ -68,21 +68,39 @@
 
 ![工作伙伴对话：自然语言触发结构化汇报任务](docs/images/readme/work-conversation.jpg)
 
-#### 成果验证：7 页 PPTX 结构化大纲
+#### 实际生成成果：7 页 PPTX 演示文稿
 
-历史任务页展示了对话触发后的实际产物，而不只是完成状态：系统生成标题为《AI Companion 项目汇报》的结构化大纲，标记任务已完成，并完整记录 `receive → validate → plan → execute → deliver` 五个执行阶段。
+工作伙伴通过 `PPTX 多模态生成` Skill 直接产出《AI Companion 项目技术亮点与实现效果》。文件包含 7 张幻灯片，其中项目定位与大文件处理页面使用 AI 生成配图；生成过程通过质量门禁后交付可下载的 `.pptx` 文件。
 
-![工作伙伴成果：已完成的 AI Companion PPTX 大纲与执行阶段](docs/images/readme/work-result.jpg)
+[下载完整 PPTX：ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
-| 页码 | 页面标题 | 生成内容重点 |
-| --- | --- | --- |
-| 1 | AI Companion 项目汇报 | 汇报标题与目标受众 |
-| 2 | 问题与目标 | 用户痛点、业务目标与衡量指标 |
-| 3 | 方案概述 | 核心功能、价值主张、系统架构与数据流 |
-| 4 | 技术亮点 | 实时对话、RAG、多模态、性能、扩展性与隐私 |
-| 5 | 演示计划 | 演示场景、流程、环境与回退方案 |
-| 6 | 下一步与里程碑 | 行动项、负责人、时间节点与验收标准 |
-| 7 | 要点回顾 | 问题、方案、技术、演示与下一步总结 |
+**第 1 页：封面**
+
+![生成的 PPT 第 1 页：AI Companion 项目技术亮点与实现效果](docs/images/readme/generated-ppt/slide-1.png)
+
+**第 2 页：项目定位与系统能力**
+
+![生成的 PPT 第 2 页：情感陪伴、生活助手与工作伙伴统一入口](docs/images/readme/generated-ppt/slide-2.png)
+
+**第 3 页：大文件处理与 Agent 并行化**
+
+![生成的 PPT 第 3 页：无损分片、确定性合并与 Agent 并行化](docs/images/readme/generated-ppt/slide-3.png)
+
+**第 4 页：可靠性设计**
+
+![生成的 PPT 第 4 页：持久化检查点、人工确认与可观测性](docs/images/readme/generated-ppt/slide-4.png)
+
+**第 5 页：系统演示效果**
+
+![生成的 PPT 第 5 页：三个模块的真实运行效果](docs/images/readme/generated-ppt/slide-5.png)
+
+**第 6 页：下一步计划**
+
+![生成的 PPT 第 6 页：移动端、规模化评测与生产发布](docs/images/readme/generated-ppt/slide-6.png)
+
+**第 7 页：要点回顾**
+
+![生成的 PPT 第 7 页：内容回顾与后续行动](docs/images/readme/generated-ppt/slide-7.png)
 
 ## 核心能力
 
