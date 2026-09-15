@@ -30,9 +30,9 @@ The life workspace brings today's plans, reminders, and daily ledger entries tog
 
 #### Conversation demo: natural-language life tools
 
-The user requests a ledger entry and a reminder directly in chat. The Agent turns those requests into governed tool actions, writes only after confirmation, preserves the conversation when an attempt fails, exposes a retry, and reports the successful business result.
+The user describes an expense amount, purpose, and category directly in chat. The Agent converts that request into a governed ledger action, writes only after confirmation, and reports the successful business result in the conversation, completing the flow from intent recognition to an authorized write.
 
-![Life-assistant conversation with ledger, reminder, and retry results](docs/images/readme/life-conversation.jpg)
+![Life-assistant conversation with a successful natural-language ledger entry](docs/images/readme/life-conversation.jpg)
 
 ### Governed Skills and parallel Agent execution
 
