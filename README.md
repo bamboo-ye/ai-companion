@@ -56,15 +56,27 @@ The workbench exposes versioned document, PDF, presentation, and spreadsheet Ski
 
 ![Workbench with Skills, task routing, and MCP controls](docs/images/readme/workbench.jpg)
 
-#### Conversation demo: from intent to a structured work task
+#### Conversation demo: the exact PPT generation prompt sent to the platform
 
-A plain-language request for a seven-slide project outline is routed to the PPTX outline Skill. Chat reports execution status, while task history retains the structured output, the `receive → validate → plan → execute → deliver` stage trail, quality gates, and source-coverage metadata for auditing and retry.
+The screenshots below show the exact prompt received by the platform. It instructs the work partner to retrieve the project RAG document, add the technical highlights, implemented features, and usage guidance to context, and generate an eleven-slide Chinese PPTX from three real product screenshots. It explicitly requires visual storytelling and two editable tables: a three-module capability-and-usage comparison and an Agent three-layer parallelism comparison. The next-step and key-takeaway slides are both retained.
 
-![Work-partner conversation triggering a structured presentation task](docs/images/readme/work-conversation.jpg)
+[View the exact prompt sent to the platform](docs/demo/ai-companion-platform-prompt.txt)
+
+**Goals, source material, and slide structure**
+
+![Work-partner conversation showing the actual PPT goals, source material, and eleven-slide structure](docs/images/readme/work-prompt-overview.jpg)
+
+**Visual storytelling requirements**
+
+![Work-partner conversation requiring real screenshots, flow diagrams, architecture diagrams, icons, or tables on each core slide](docs/images/readme/work-prompt-visual.jpg)
+
+**Editable tables and slide plan**
+
+![Work-partner conversation requiring module and Agent-parallelism comparison tables while retaining next steps and key takeaways](docs/images/readme/work-prompt-table.jpg)
 
 #### Generated artifact: RAG-enriched eight-slide PPTX deck
 
-The work partner first indexes the project's positioning, technical highlights, implemented features, usage flows, and FAQ material, then retrieves evidence for product capabilities, large-file processing, Agent parallelism, and governance. Those results are passed to the `PPTX multimodal generation` Skill together with three real product screenshots for Companion, Life Assistant, and Work Partner. The final deck keeps one cover and seven content slides, removes the next-step and recap pages, and uses the original product screenshots instead of AI-generated replacements.
+The work partner first indexes the project's positioning, technical highlights, implemented features, usage flows, and FAQ material, then retrieves evidence for product capabilities, large-file processing, Agent parallelism, and governance. Those results are passed to the `PPTX multimodal generation` Skill together with three real product screenshots for Companion, Life Assistant, and Work Partner. The verified artifact shown below is the earlier eight-slide deliverable; the newly submitted platform prompt expands the target to eleven slides, restores next steps and key takeaways, and adds visual-storytelling and editable-table requirements. All three product screenshots come directly from the running system rather than AI-generated replacements.
 
 [View the project knowledge document used for RAG retrieval](docs/demo/ai-companion-rag-knowledge.txt)
 
