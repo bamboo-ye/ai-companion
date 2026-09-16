@@ -68,9 +68,11 @@
 
 ![工作伙伴对话：自然语言触发结构化汇报任务](docs/images/readme/work-conversation.jpg)
 
-#### 实际生成成果：7 页 PPTX 演示文稿
+#### 实际生成成果：RAG 增强的 8 页 PPTX 演示文稿
 
-工作伙伴通过 `PPTX 多模态生成` Skill 直接产出《AI Companion 项目技术亮点与实现效果》。文件包含 7 张幻灯片，其中项目定位与大文件处理页面使用 AI 生成配图；生成过程通过质量门禁后交付可下载的 `.pptx` 文件。
+工作伙伴先将项目定位、技术亮点、功能实现、使用方式和常见问答写入文档知识库，再围绕核心功能、大文件处理、Agent 并行化与治理机制执行检索。检索结果作为文字上下文交给 `PPTX 多模态生成` Skill，同时附带情感陪伴、生活助手和工作伙伴三张真实主页截图。最终文件保留封面与 7 个内容页，取消“下一步计划”和“要点回顾”；三张产品截图均直接来自系统实拍，未使用 AI 生成图片替换。
+
+[查看用于 RAG 检索的项目知识文档](docs/demo/ai-companion-rag-knowledge.txt)
 
 [下载完整 PPTX：ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
@@ -78,29 +80,33 @@
 
 ![生成的 PPT 第 1 页：AI Companion 项目技术亮点与实现效果](docs/images/readme/generated-ppt/slide-1.png)
 
-**第 2 页：项目定位与系统能力**
+**第 2 页：项目定位与整体架构**
 
-![生成的 PPT 第 2 页：情感陪伴、生活助手与工作伙伴统一入口](docs/images/readme/generated-ppt/slide-2.png)
+![生成的 PPT 第 2 页：统一工作台、服务边界与数据架构](docs/images/readme/generated-ppt/slide-2.png)
 
-**第 3 页：大文件处理与 Agent 并行化**
+**第 3 页：情感陪伴实现效果**
 
-![生成的 PPT 第 3 页：无损分片、确定性合并与 Agent 并行化](docs/images/readme/generated-ppt/slide-3.png)
+![生成的 PPT 第 3 页：情感陪伴主页与长期记忆能力](docs/images/readme/generated-ppt/slide-3.png)
 
-**第 4 页：可靠性设计**
+**第 4 页：生活助手实现效果**
 
-![生成的 PPT 第 4 页：持久化检查点、人工确认与可观测性](docs/images/readme/generated-ppt/slide-4.png)
+![生成的 PPT 第 4 页：生活助手主页、计划、提醒与账本闭环](docs/images/readme/generated-ppt/slide-4.png)
 
-**第 5 页：系统演示效果**
+**第 5 页：工作伙伴与使用流程**
 
-![生成的 PPT 第 5 页：三个模块的真实运行效果](docs/images/readme/generated-ppt/slide-5.png)
+![生成的 PPT 第 5 页：工作伙伴工作台、RAG 与版本化 Skill](docs/images/readme/generated-ppt/slide-5.png)
 
-**第 6 页：下一步计划**
+**第 6 页：大文件无损分片**
 
-![生成的 PPT 第 6 页：移动端、规模化评测与生产发布](docs/images/readme/generated-ppt/slide-6.png)
+![生成的 PPT 第 6 页：Source IR、双重有界分片、确定性合并与局部重试](docs/images/readme/generated-ppt/slide-6.png)
 
-**第 7 页：要点回顾**
+**第 7 页：Agent 三层并行化**
 
-![生成的 PPT 第 7 页：内容回顾与后续行动](docs/images/readme/generated-ppt/slide-7.png)
+![生成的 PPT 第 7 页：运行级、进程级和图节点级并行](docs/images/readme/generated-ppt/slide-7.png)
+
+**第 8 页：RAG、记忆与治理**
+
+![生成的 PPT 第 8 页：文档检索、长期记忆、工具网关与可观测性](docs/images/readme/generated-ppt/slide-8.png)
 
 ## 核心能力
 

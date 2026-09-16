@@ -62,9 +62,11 @@ A plain-language request for a seven-slide project outline is routed to the PPTX
 
 ![Work-partner conversation triggering a structured presentation task](docs/images/readme/work-conversation.jpg)
 
-#### Generated artifact: seven-slide PPTX deck
+#### Generated artifact: RAG-enriched eight-slide PPTX deck
 
-The work partner uses the `PPTX multimodal generation` Skill to produce *AI Companion: Technical Highlights and Implementation*. The seven-slide deck includes AI-generated visuals for the product-positioning and large-file-processing pages, passes the generation quality gate, and is delivered as a downloadable `.pptx` file.
+The work partner first indexes the project's positioning, technical highlights, implemented features, usage flows, and FAQ material, then retrieves evidence for product capabilities, large-file processing, Agent parallelism, and governance. Those results are passed to the `PPTX multimodal generation` Skill together with three real product screenshots for Companion, Life Assistant, and Work Partner. The final deck keeps one cover and seven content slides, removes the next-step and recap pages, and uses the original product screenshots instead of AI-generated replacements.
+
+[View the project knowledge document used for RAG retrieval](docs/demo/ai-companion-rag-knowledge.txt)
 
 [Download the complete PPTX: ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
@@ -72,29 +74,33 @@ The work partner uses the `PPTX multimodal generation` Skill to produce *AI Comp
 
 ![Generated PPT slide 1: AI Companion technical highlights and implementation](docs/images/readme/generated-ppt/slide-1.png)
 
-**Slide 2: Product positioning and capabilities**
+**Slide 2: Product positioning and architecture**
 
-![Generated PPT slide 2: one entry point for companion, life, and work](docs/images/readme/generated-ppt/slide-2.png)
+![Generated PPT slide 2: unified workspace, service boundaries, and data architecture](docs/images/readme/generated-ppt/slide-2.png)
 
-**Slide 3: Large-file processing and parallel Agents**
+**Slide 3: Companion implementation**
 
-![Generated PPT slide 3: lossless chunking, deterministic merging, and parallel Agents](docs/images/readme/generated-ppt/slide-3.png)
+![Generated PPT slide 3: Companion home and long-term memory capabilities](docs/images/readme/generated-ppt/slide-3.png)
 
-**Slide 4: Reliability design**
+**Slide 4: Life Assistant implementation**
 
-![Generated PPT slide 4: durable checkpoints, human confirmation, and observability](docs/images/readme/generated-ppt/slide-4.png)
+![Generated PPT slide 4: plans, reminders, and ledger flow on the Life Assistant home](docs/images/readme/generated-ppt/slide-4.png)
 
-**Slide 5: Product demonstrations**
+**Slide 5: Work Partner workflow**
 
-![Generated PPT slide 5: real product demonstrations across three modules](docs/images/readme/generated-ppt/slide-5.png)
+![Generated PPT slide 5: Work Partner workbench, RAG, and versioned Skills](docs/images/readme/generated-ppt/slide-5.png)
 
-**Slide 6: Next steps**
+**Slide 6: Lossless large-file chunking**
 
-![Generated PPT slide 6: mobile clients, scaled evaluation, and production release](docs/images/readme/generated-ppt/slide-6.png)
+![Generated PPT slide 6: Source IR, bounded chunking, deterministic merging, and targeted retry](docs/images/readme/generated-ppt/slide-6.png)
 
-**Slide 7: Recap**
+**Slide 7: Three-layer Agent parallelism**
 
-![Generated PPT slide 7: content recap and follow-up action](docs/images/readme/generated-ppt/slide-7.png)
+![Generated PPT slide 7: run-level, process-level, and graph-node parallelism](docs/images/readme/generated-ppt/slide-7.png)
+
+**Slide 8: RAG, memory, and governance**
+
+![Generated PPT slide 8: document retrieval, long-term memory, tool gateway, and observability](docs/images/readme/generated-ppt/slide-8.png)
 
 ## Repository map
 
