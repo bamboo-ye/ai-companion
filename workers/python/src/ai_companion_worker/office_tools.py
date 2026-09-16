@@ -83,6 +83,8 @@ PRESENTATION_ACCENT_COLOR = RGBColor(72, 104, 183)
 PRESENTATION_TEXT_COLOR = RGBColor(31, 41, 55)
 PRESENTATION_MUTED_COLOR = RGBColor(91, 100, 116)
 PRESENTATION_BODY_FONT_FAMILY = "WenQuanYi Zen Hei"
+PRESENTATION_VISUAL_CONTENT_TOP_INCHES = 1.38
+PRESENTATION_VISUAL_CONTENT_HEIGHT_INCHES = 5.08
 CJK_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -1667,9 +1669,13 @@ def _style_body_placeholder(
     """Give narrative text a stable reading column and consistent rhythm."""
 
     placeholder.left = Inches(0.78 if has_visual else 1.08)
-    placeholder.top = Inches(1.42)
+    placeholder.top = Inches(
+        PRESENTATION_VISUAL_CONTENT_TOP_INCHES if has_visual else 1.42
+    )
     placeholder.width = Inches(5.45 if has_visual else 10.86)
-    placeholder.height = Inches(5.28)
+    placeholder.height = Inches(
+        PRESENTATION_VISUAL_CONTENT_HEIGHT_INCHES if has_visual else 5.28
+    )
     frame = placeholder.text_frame
     frame.word_wrap = True
     frame.margin_left = Inches(0.04)
@@ -1679,7 +1685,7 @@ def _style_body_placeholder(
     total_characters = sum(len(value) for value in bullets)
     frame.vertical_anchor = (
         MSO_ANCHOR.MIDDLE
-        if not has_visual and len(bullets) <= 3 and total_characters <= 260
+        if has_visual or (len(bullets) <= 3 and total_characters <= 260)
         else MSO_ANCHOR.TOP
     )
     paragraph_spacing, line_spacing = _presentation_body_rhythm(
@@ -2127,9 +2133,9 @@ def _add_presentation_visual(
     visual: dict[str, Any],
 ) -> None:
     frame_left = int(Inches(6.63))
-    frame_top = int(Inches(1.38))
+    frame_top = int(Inches(PRESENTATION_VISUAL_CONTENT_TOP_INCHES))
     frame_width = int(Inches(6.08))
-    frame_height = int(Inches(5.08))
+    frame_height = int(Inches(PRESENTATION_VISUAL_CONTENT_HEIGHT_INCHES))
     image_width = max(1, int(visual.get("width") or 1))
     image_height = max(1, int(visual.get("height") or 1))
     image_ratio = image_width / image_height

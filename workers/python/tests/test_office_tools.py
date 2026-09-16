@@ -18,6 +18,7 @@ from PIL import Image
 from docx import Document
 from openpyxl import Workbook
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Inches, Pt
 from reportlab.lib.utils import ImageReader
@@ -1082,8 +1083,27 @@ class OfficeToolsTest(unittest.TestCase):
         deck = Presentation(io.BytesIO(generated))
         self.assertEqual(
             deck.slides[1].placeholders[1].text_frame.vertical_anchor,
-            MSO_ANCHOR.TOP,
+            MSO_ANCHOR.MIDDLE,
         )
+        body = deck.slides[1].placeholders[1]
+        bullet_texts = [
+            shape
+            for shape in deck.slides[1].shapes
+            if shape.name.startswith("Bullet Text ")
+        ]
+        picture = next(
+            shape
+            for shape in deck.slides[1].shapes
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE
+        )
+        bullet_center = (
+            min(shape.top for shape in bullet_texts)
+            + max(shape.top + shape.height for shape in bullet_texts)
+        ) / 2
+        picture_center = picture.top + picture.height / 2
+        self.assertEqual(body.top, Inches(1.38))
+        self.assertEqual(body.height, Inches(5.08))
+        self.assertAlmostEqual(bullet_center, picture_center, delta=Pt(1))
         with ZipFile(io.BytesIO(generated)) as archive:
             self.assertTrue(any(name.startswith("ppt/media/") for name in archive.namelist()))
 
@@ -1183,7 +1203,7 @@ class OfficeToolsTest(unittest.TestCase):
                 PRESENTATION_BODY_FONT_FAMILY,
             )
             self.assertFalse(_presentation_body_text_overflow_risk(shape))
-        self.assertEqual(body.text_frame.vertical_anchor, MSO_ANCHOR.TOP)
+        self.assertEqual(body.text_frame.vertical_anchor, MSO_ANCHOR.MIDDLE)
 
     def test_presentation_gate_detects_wrapped_body_overflow_risk(self) -> None:
         deck = Presentation()
