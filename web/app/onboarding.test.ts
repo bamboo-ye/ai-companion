@@ -35,7 +35,7 @@ test("guide search matches examples, prerequisites, routes and mixed case keywor
 
 test("every guide chapter has a unique id and its navigation stays within the correct frontend", () => {
   for (const { topics, targets } of [
-    { topics: userGuideTopics, targets: ["companion", "life", "work", "memories", "work-tools", "task-history", "documents"] },
+    { topics: userGuideTopics, targets: ["companion", "life", "work", "memories", "work-tools", "task-history", "documents", "profile"] },
     { topics: adminGuideTopics, targets: ["observability", "logs", "incidents", "performance", "configuration", "studio"] },
   ]) {
     assert.equal(new Set(topics.map((topic) => topic.id)).size, topics.length);

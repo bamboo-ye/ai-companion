@@ -1,4 +1,4 @@
-export type UserGuideTarget = "companion" | "life" | "work" | "memories" | "work-tools" | "task-history" | "documents";
+export type UserGuideTarget = "companion" | "life" | "work" | "memories" | "work-tools" | "task-history" | "documents" | "profile";
 export type AdminGuideTarget = "observability" | "logs" | "incidents" | "performance" | "configuration" | "studio";
 export type GuideScope = "user" | "admin";
 
@@ -28,6 +28,12 @@ export const userGuideTopics: readonly GuideTopic<UserGuideTarget>[] = [
     summary: "创建自己的账户，登录后继续访问角色、会话和资料。",
     steps: ["首次使用点击「立即注册」，填写昵称、邮箱和至少 8 位的密码，提交注册。", "注册成功后返回登录页，用刚才的邮箱和密码登录。", "浏览器会尝试恢复登录状态；如果提示登录过期，请重新登录。在侧栏点击「退出登录」可结束当前会话。"],
     tip: "登录页也有指南入口，可以先了解功能再注册。后台管理使用独立的管理密钥。",
+  },
+  {
+    id: "profile", group: "快速开始", title: "个人主页与账户安全", path: "侧栏 → 个人主页",
+    summary: "查看账户资料，并在验证当前密码后设置新密码。",
+    steps: ["点击侧栏底部的头像或昵称进入个人主页，查看登录邮箱、时区、语言和加入时间。", "在「账户安全」中依次输入当前密码、新密码并确认新密码，然后点击「更新密码」。", "密码更新成功后，当前设备会保持登录，其他设备上的登录会自动退出；之后请使用新密码登录。"],
+    tip: "新密码需要 8–128 位，不能与当前密码相同。请勿与其他网站共用密码。", target: "profile", action: "打开个人主页",
   },
   {
     id: "characters", group: "陪伴与记忆", title: "创建角色与管理会话", path: "任意模块 → 添加角色 / 角色会话",
@@ -90,10 +96,10 @@ export const userGuideTopics: readonly GuideTopic<UserGuideTarget>[] = [
     tip: "简报可以按行写章节；具体的受众、目的和素材能帮助生成更合适的内容。", example: "标题：季度复盘；受众：管理层；6 页；风格：简洁专业；内容包含成果、问题和下季度计划。", target: "work-tools", action: "打开工作台",
   },
   {
-    id: "documents", group: "工作与文件", title: "文档库与证据检索", path: "工作伙伴 → 文档库",
-    summary: "上传资料，基于文档内容检索并核对引用来源。",
-    steps: ["选择文本 PDF 或 UTF-8 TXT 文件，点击「上传文档」，等待状态从等待解析变为可检索。", "在「向已解析文档提问」中输入具体问题，点击「检索证据」。至少需要一份解析完成的文档。", "查看回答和引用中的文档名、页码及原文片段。证据不足时可细化问题或补充资料；过期资料可在列表中删除。"],
-    tip: "纯图片扫描件不等同于文本 PDF。若解析失败，检查格式与内容，再尝试上传。", example: "项目计划什么时候启动？请给出对应页码。", target: "documents", action: "打开文档库",
+    id: "documents", group: "工作与文件", title: "Wiki 与证据检索", path: "工作伙伴 → Wiki",
+    summary: "向 Wiki 上传资料，基于文档内容检索并核对引用来源。",
+    steps: ["选择文本 PDF 或 UTF-8 TXT 文件，点击「上传到 Wiki」，等待状态从等待解析变为可检索。", "在「向 Wiki 提问」中输入具体问题，点击「检索证据」。至少需要一份解析完成的文档。", "查看回答和引用中的文档名、页码及原文片段。证据不足时可细化问题或补充资料；过期资料可在列表中删除。"],
+    tip: "纯图片扫描件不等同于文本 PDF。若解析失败，检查格式与内容，再尝试上传。", example: "项目计划什么时候启动？请给出对应页码。", target: "documents", action: "打开 Wiki",
   },
   {
     id: "task-history", group: "工作与文件", title: "任务进度、确认和下载", path: "工作伙伴 → 历史任务",

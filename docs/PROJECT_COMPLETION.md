@@ -17,7 +17,7 @@ This completion status covers the repository implementation, local quality gates
 |---|---|---|
 | M0 engineering foundation | Complete | `docs/M0_STATUS.md` |
 | M1 account, persona, reliable chat | Complete | `docs/M1_STATUS.md` |
-| M2 context, memory, RAG | Complete | `docs/M2_STATUS.md` |
+| M2 context, memory, Wiki | Complete | `docs/M2_STATUS.md` |
 | M3 life assistant | Complete | `docs/M3_STATUS.md` |
 | M4 Skill platform and office tools | Complete | `docs/M4_STATUS.md` |
 | M5 financial research | Skipped by product decision | `docs/DEVELOPMENT_PLAN.md` |

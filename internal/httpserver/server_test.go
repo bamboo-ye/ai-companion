@@ -127,8 +127,8 @@ func TestDocumentQuerySkipsRAGUnderDegradedPolicy(t *testing.T) {
 		server.ObserveReliability(reliability.Sample{QueueLag: 120}, now.Add(time.Duration(i)*time.Second))
 	}
 	register := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
-		"email": "rag-degrade@example.com", "password": "correct-horse-battery", "display_name": "RAG", "timezone": "Asia/Shanghai",
-		"device": map[string]any{"device_key": "rag", "name": "RAG", "platform": "web"},
+		"email": "rag-degrade@example.com", "password": "correct-horse-battery", "display_name": "Wiki", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "rag", "name": "Wiki", "platform": "web"},
 	})
 	var tokens struct {
 		AccessToken string `json:"access_token"`

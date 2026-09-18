@@ -10,11 +10,12 @@ import { TaskHistoryPanel } from "./task-history-panel";
 import { WorkPanel } from "./work-panel";
 import { OnboardingGuide } from "./onboarding-guide";
 import { userGuideTopics, type UserGuideTarget } from "./onboarding-content";
+import { ProfilePanel, type UserProfile } from "./profile-panel";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 type ModuleKey = "companion" | "life" | "work";
-type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories";
+type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories" | "profile";
 type AuthMode = "login" | "register";
 
 type Character = {
@@ -42,6 +43,7 @@ type TokenPair = {
   refresh_token: string;
   access_expires_at?: string;
   refresh_expires_at?: string;
+  user?: UserProfile;
   message?: string;
 };
 
@@ -63,6 +65,7 @@ export function CompanionStart() {
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [loginEmail, setLoginEmail] = useState("");
   const [token, setToken] = useState("");
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeModule, setActiveModule] = useState<ModuleKey>("companion");
@@ -74,12 +77,13 @@ export function CompanionStart() {
 
   const loadDashboard = useCallback(async (accessToken: string) => {
     const headers = { Authorization: `Bearer ${accessToken}` };
-    const [characterResponse, conversationResponse] = await Promise.all([
+    const [characterResponse, conversationResponse, profileResponse] = await Promise.all([
       fetch(`${apiBase}/v1/characters`, { headers }),
       fetch(`${apiBase}/v1/conversations`, { headers }),
+      fetch(`${apiBase}/v1/users/me`, { headers }),
     ]);
-    if (!characterResponse.ok || !conversationResponse.ok) {
-      const failed = !characterResponse.ok ? characterResponse : conversationResponse;
+    if (!characterResponse.ok || !conversationResponse.ok || !profileResponse.ok) {
+      const failed = !characterResponse.ok ? characterResponse : !conversationResponse.ok ? conversationResponse : profileResponse;
       const payload = await failed.json().catch(() => ({ message: "" })) as { message?: string };
       throw new AuthRequestError(
         payload.message || (failed.status === 401 ? "登录状态无效或已过期" : "暂时无法加载账户数据"),
@@ -88,8 +92,10 @@ export function CompanionStart() {
     }
     const characterPayload = (await characterResponse.json()) as { items: Character[] };
     const conversationPayload = (await conversationResponse.json()) as { items: Conversation[] };
+    const profilePayload = (await profileResponse.json()) as UserProfile;
     setCharacters(characterPayload.items);
     setConversations(conversationPayload.items);
+    setCurrentUser(profilePayload);
   }, []);
 
   useEffect(() => {
@@ -157,6 +163,7 @@ export function CompanionStart() {
         if (!active) return;
         storeSession(pair);
         setToken(pair.access_token);
+        if (pair.user) setCurrentUser(pair.user);
       } catch (error) {
         if (!active) return;
         if (isUnauthorized(error)) {
@@ -164,6 +171,7 @@ export function CompanionStart() {
           setToken("");
           setCharacters([]);
           setConversations([]);
+          setCurrentUser(null);
           setMessage("登录已过期，请重新登录");
           return;
         }
@@ -307,6 +315,7 @@ export function CompanionStart() {
     setToken("");
     setCharacters([]);
     setConversations([]);
+    setCurrentUser(null);
     setScreen("dashboard");
     setActiveCharacter(null);
     setMessage("");
@@ -330,6 +339,13 @@ export function CompanionStart() {
   function navigateFromGuide(target: UserGuideTarget) {
     if (target === "companion" || target === "life" || target === "work") {
       chooseModule(target);
+      return;
+    }
+    if (target === "profile") {
+      setScreen("profile");
+      setActiveCharacter(null);
+      setShowCharacterForm(false);
+      setMessage("");
       return;
     }
     setActiveModule(target === "memories" ? "companion" : "work");
@@ -430,7 +446,13 @@ export function CompanionStart() {
             </button>
           ))}
         </nav>
-        <div className="sidebarFooter"><button type="button" onClick={() => void signOut()}>退出登录</button></div>
+        <div className="sidebarFooter">
+          <button className={`sidebarProfile ${screen === "profile" ? "active" : ""}`} type="button" onClick={() => { setScreen("profile"); setActiveCharacter(null); setShowCharacterForm(false); setMessage(""); }}>
+            <span aria-hidden="true">{currentUser ? (Array.from(currentUser.display_name.trim())[0] ?? currentUser.email.slice(0, 1).toUpperCase()) : "我"}</span>
+            <div><strong>{currentUser?.display_name ?? "个人主页"}</strong><small>个人主页</small></div>
+          </button>
+          <button className="sidebarLogout" type="button" onClick={() => void signOut()}>退出登录</button>
+        </div>
       </aside>
 
       <section className="appWorkspace">
@@ -453,7 +475,7 @@ export function CompanionStart() {
           <>
             <div className="moduleTools">
               {activeModule === "companion" && <button type="button" onClick={() => setScreen("memories")}><span>✦</span><div><strong>记忆管理</strong><small>查看与维护长期记忆</small></div></button>}
-              {activeModule === "work" && <><button type="button" onClick={() => setScreen("work-tools")}><span>⚙</span><div><strong>工作台</strong><small>技能配置与文件生成</small></div></button><button type="button" onClick={() => setScreen("task-history")}><span>↻</span><div><strong>历史任务</strong><small>状态、结果与失败重试</small></div></button><button type="button" onClick={() => setScreen("documents")}><span>▤</span><div><strong>文档库</strong><small>上传、解析与检索资料</small></div></button></>}
+              {activeModule === "work" && <><button type="button" onClick={() => setScreen("work-tools")}><span>⚙</span><div><strong>工作台</strong><small>技能配置与文件生成</small></div></button><button type="button" onClick={() => setScreen("task-history")}><span>↻</span><div><strong>历史任务</strong><small>状态、结果与失败重试</small></div></button><button type="button" onClick={() => setScreen("documents")}><span>▤</span><div><strong>Wiki</strong><small>上传、解析与检索资料</small></div></button></>}
             </div>
 
             {activeModule === "life" && <LifePanel token={token} embedded />}
@@ -506,6 +528,7 @@ export function CompanionStart() {
         {screen === "work-tools" && <WorkPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "task-history" && <TaskHistoryPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "documents" && <DocumentPanel token={token} onClose={() => setScreen("dashboard")} />}
+        {screen === "profile" && currentUser && <ProfilePanel token={token} user={currentUser} onClose={() => setScreen("dashboard")} />}
       </section>
     </main>
   );

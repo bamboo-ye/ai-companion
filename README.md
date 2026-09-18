@@ -58,7 +58,7 @@ The workbench exposes versioned document, PDF, presentation, and spreadsheet Ski
 
 #### Conversation demo: the exact PPT generation prompt sent to the platform
 
-The screenshots below show the exact prompt received by the platform. It instructs the work partner to retrieve the project RAG document, add the technical highlights, implemented features, and usage guidance to context, and generate an eleven-slide Chinese PPTX from three real product screenshots. It explicitly requires visual storytelling and two editable tables: a three-module capability-and-usage comparison and an Agent three-layer parallelism comparison. The next-step and key-takeaway slides are both retained.
+The screenshots below show the exact prompt received by the platform. It instructs the work partner to retrieve the project Wiki document, add the technical highlights, implemented features, and usage guidance to context, and generate an eleven-slide Chinese PPTX from three real product screenshots. It explicitly requires visual storytelling and two editable tables: a three-module capability-and-usage comparison and an Agent three-layer parallelism comparison. The next-step and key-takeaway slides are both retained.
 
 [View the exact prompt sent to the platform](docs/demo/ai-companion-platform-prompt.txt)
 
@@ -74,11 +74,11 @@ The screenshots below show the exact prompt received by the platform. It instruc
 
 ![Work-partner conversation requiring module and Agent-parallelism comparison tables while retaining next steps and key takeaways](docs/images/readme/work-prompt-table.jpg)
 
-#### Generated artifact: RAG-enriched eight-slide PPTX deck
+#### Generated artifact: Wiki-enriched eight-slide PPTX deck
 
 The work partner first indexes the project's positioning, technical highlights, implemented features, usage flows, and FAQ material, then retrieves evidence for product capabilities, large-file processing, Agent parallelism, and governance. Those results are passed to the `PPTX multimodal generation` Skill together with three real product screenshots for Companion, Life Assistant, and Work Partner. The verified artifact shown below is the earlier eight-slide deliverable; the newly submitted platform prompt expands the target to eleven slides, restores next steps and key takeaways, and adds visual-storytelling and editable-table requirements. All three product screenshots come directly from the running system rather than AI-generated replacements.
 
-[View the project knowledge document used for RAG retrieval](docs/demo/ai-companion-rag-knowledge.txt)
+[View the project knowledge document used for Wiki retrieval](docs/demo/ai-companion-wiki-knowledge.txt)
 
 [Download the complete PPTX: ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
@@ -100,7 +100,7 @@ The work partner first indexes the project's positioning, technical highlights, 
 
 **Slide 5: Work Partner workflow**
 
-![Generated PPT slide 5: Work Partner workbench, RAG, and versioned Skills](docs/images/readme/generated-ppt/slide-5.png)
+![Generated PPT slide 5: Work Partner workbench, Wiki, and versioned Skills](docs/images/readme/generated-ppt/slide-5.png)
 
 **Slide 6: Lossless large-file chunking**
 
@@ -110,7 +110,7 @@ The work partner first indexes the project's positioning, technical highlights, 
 
 ![Generated PPT slide 7: run-level, process-level, and graph-node parallelism](docs/images/readme/generated-ppt/slide-7.png)
 
-**Slide 8: RAG, memory, and governance**
+**Slide 8: Wiki, memory, and governance**
 
 ![Generated PPT slide 8: document retrieval, long-term memory, tool gateway, and observability](docs/images/readme/generated-ppt/slide-8.png)
 
@@ -749,6 +749,6 @@ pnpm dev
 
 M0-M4, M6, and the M8 Web/backend platform scope are complete. M5 financial research and M7 native Android/iOS client expansion are skipped by explicit product decision for this completion pass.
 
-The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/RAG, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, cross-Kafka Trace correlation, reliability/degradation controls, team workspaces, email delivery/replay operations, unified billing/Agent/model-cost quota guards with append-only corrections, minor-mode safety gating, operator MFA/RBAC/admin APIs, an independent `/admin` Operations Console, Loki-backed redacted structured logs with PostgreSQL fallback and Run/Trace/Langfuse correlation, incident workflows, runtime configuration convergence, visual Agent Studio with node debugging and Prompt versioning, cost/quality budgets and review exports, audit CSV export, release-readiness checks, automated release evidence collection/validation, and fail-open Langfuse export for LLM/Agent traces, generations, node observations and scores. Langfuse and Loki remain optional at runtime; Tempo remains a future scale integration.
+The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/Wiki, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, cross-Kafka Trace correlation, reliability/degradation controls, team workspaces, email delivery/replay operations, unified billing/Agent/model-cost quota guards with append-only corrections, minor-mode safety gating, operator MFA/RBAC/admin APIs, an independent `/admin` Operations Console, Loki-backed redacted structured logs with PostgreSQL fallback and Run/Trace/Langfuse correlation, incident workflows, runtime configuration convergence, visual Agent Studio with node debugging and Prompt versioning, cost/quality budgets and review exports, audit CSV export, release-readiness checks, automated release evidence collection/validation, and fail-open Langfuse export for LLM/Agent traces, generations, node observations and scores. Langfuse and Loki remain optional at runtime; Tempo remains a future scale integration.
 
 See [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md), [`docs/M6_STATUS.md`](docs/M6_STATUS.md), and [`docs/M8_STATUS.md`](docs/M8_STATUS.md) for acceptance evidence and remaining deployment-only prerequisites.

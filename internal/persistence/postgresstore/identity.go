@@ -37,6 +37,38 @@ func (s *Store) GetUser(ctx context.Context, userID string) (identity.User, erro
 	return scanUser(s.db.QueryRowContext(ctx, userSelect+` WHERE id=$1 AND status='active'`, userID))
 }
 
+func (s *Store) ChangePassword(ctx context.Context, userID, currentHash, nextHash, keepSessionID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE app.users SET password_hash=$1,updated_at=$2
+		WHERE id=$3 AND password_hash=$4 AND status='active'
+		AND EXISTS (
+			SELECT 1 FROM app.refresh_sessions
+			WHERE id=$5 AND user_id=app.users.id AND revoked_at IS NULL
+		)`,
+		nextHash, now, userID, currentHash, keepSessionID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return identity.ErrUnauthorized
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE app.refresh_sessions SET revoked_at=$1,last_used_at=$1
+		WHERE user_id=$2 AND id<>$3 AND revoked_at IS NULL`,
+		now, userID, keepSessionID,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpsertDevice(ctx context.Context, device identity.Device) (identity.Device, error) {
 	err := s.db.QueryRowContext(ctx, `
 		INSERT INTO app.user_devices (

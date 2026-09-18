@@ -126,6 +126,33 @@ paths:
       responses:
         "204": { description: All user sessions revoked. }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/users/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Identity]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current user's account profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/users/me/password:
+    post:
+      operationId: changeCurrentUserPassword
+      tags: [Identity]
+      security: [{ bearerAuth: [] }]
+      description: Changes the password, keeps the current session active, and revokes all other sessions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: Password changed and other sessions revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
   /v1/billing/me:
     get:
       operationId: getBillingSummary
@@ -3387,6 +3414,13 @@ components:
         password: { type: string }
         timezone: { type: string }
         device: { $ref: "#/components/schemas/DeviceInput" }
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, minLength: 1, maxLength: 128 }
+        new_password: { type: string, minLength: 8, maxLength: 128 }
     User:
       type: object
       additionalProperties: false

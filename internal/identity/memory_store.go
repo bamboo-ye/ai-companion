@@ -62,6 +62,27 @@ func (s *MemoryStore) GetUser(_ context.Context, userID string) (User, error) {
 	return user, nil
 }
 
+func (s *MemoryStore) ChangePassword(_ context.Context, userID, currentHash, nextHash, keepSessionID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	currentSession, sessionExists := s.sessions[keepSessionID]
+	if !ok || (user.Status != "" && user.Status != "active") || user.PasswordHash != currentHash || !sessionExists || currentSession.UserID != userID || currentSession.RevokedAt != nil {
+		return ErrUnauthorized
+	}
+	user.PasswordHash = nextHash
+	user.UpdatedAt = now
+	s.users[userID] = user
+	for key, session := range s.sessions {
+		if session.UserID == userID && session.ID != keepSessionID && session.RevokedAt == nil {
+			session.RevokedAt = &now
+			session.LastUsedAt = now
+			s.sessions[key] = session
+		}
+	}
+	return nil
+}
+
 func (s *MemoryStore) UpsertDevice(_ context.Context, device Device) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

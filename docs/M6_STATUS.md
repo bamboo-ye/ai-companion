@@ -10,7 +10,7 @@ Implemented:
 
 - A concurrency-safe L0-L3 degradation controller driven by runnable durable-job count, oldest runnable-job age, recent generation failure ratio, and five-minute model latency p95.
 - Consecutive-sample entry hysteresis, candidate reset when signals flap, minimum dwell time, and one-level-at-a-time recovery from L3 to L0.
-- Explicit policies for full RAG, memory extraction, model class, durable long-task queuing, and L3 accept-only behavior. This slice exposes policy state; later slices apply every policy to the relevant execution path.
+- Explicit policies for full Wiki retrieval, memory extraction, model class, durable long-task queuing, and L3 accept-only behavior. This slice exposes policy state; later slices apply every policy to the relevant execution path.
 - Real MySQL sampling for expired/queued Skill and document leases, generation failures/timeouts, and model usage latency.
 - W3C/OpenTelemetry `traceparent`/`tracestate` extraction and propagation on every HTTP response, with normalized `X-Trace-ID` compatibility; request logs use canonical trace/span IDs, bounded route patterns, status, and duration without logging request bodies.
 - Prometheus text metrics for route/status counts, cumulative duration, degradation level, queue lag/age, model error ratio, and p95 latency.
@@ -120,8 +120,8 @@ Implemented:
 - Chat generation now reads the live reliability policy instead of only exposing it. L3 `accept_only` persists the user message and accepted generation job but does not start model execution.
 - Worker chat consumers also honor L3 `accept_only`: Kafka commands can be acknowledged while the durable job remains accepted for later reconciler takeover after recovery.
 - Model-selected explicit memory writes honor the live policy inside chat processing. The Worker acknowledges legacy `memory.extract.v1` events without creating new memory so historical queues can drain safely.
-- Chat context construction skips long-term recall when policy disables full RAG/context enrichment and emits a traceable `rag_skipped` generation event.
-- Document Q&A applies the same full-RAG policy and returns a degraded, evidence-insufficient response without hitting the vector index during L1-L3 protection.
+- Chat context construction skips long-term recall when policy disables full Wiki/context enrichment and emits a traceable `rag_skipped` generation event.
+- Document Q&A applies the same full-Wiki policy and returns a degraded, evidence-insufficient response without hitting the vector index during L1-L3 protection.
 - Model providers are wrapped with a configurable dependency circuit breaker. When the model circuit is open, claimed jobs are deferred back to `accepted` with a later `available_at` instead of being marked failed.
 - API and Worker both sample reliability signals and wire the current policy into chat execution, so request preservation works in background processing as well as inline tests.
 
@@ -133,7 +133,7 @@ Implemented:
 | Circuit breaker half-opens after cooldown and closes on success | Passed |
 | L3 chat accept-only preserves the user message and accepted job without calling the provider | Passed |
 | Open model circuit defers a claimed job back to `accepted` rather than failing it | Passed |
-| Degraded document query skips RAG and returns `degraded=true` with no fabricated evidence | Passed |
+| Degraded document query skips Wiki retrieval and returns `degraded=true` with no fabricated evidence | Passed |
 | Targeted Go tests for reliability, conversation, HTTP server, config, and MySQL store | Passed |
 
 ## Slice 6: internal release observability and runbooks

@@ -64,7 +64,7 @@
 
 #### 对话实测：平台实际接收的 PPT 生成 Prompt
 
-为确保演示截图与真实任务完全一致，下面展示平台实际收到的提示词。Prompt 要求工作伙伴先检索项目 RAG 知识文档，将技术亮点、功能实现和使用方法加入上下文，再使用三张真实系统截图生成 11 页中文 PPTX；视觉上明确要求图文并茂，并使用“三个模块的功能与用法对照”和“Agent 三层并行化对照”两张可编辑表格。“下一步计划”和“要点回顾”均作为正式页面保留。
+为确保演示截图与真实任务完全一致，下面展示平台实际收到的提示词。Prompt 要求工作伙伴先检索项目 Wiki 知识文档，将技术亮点、功能实现和使用方法加入上下文，再使用三张真实系统截图生成 11 页中文 PPTX；视觉上明确要求图文并茂，并使用“三个模块的功能与用法对照”和“Agent 三层并行化对照”两张可编辑表格。“下一步计划”和“要点回顾”均作为正式页面保留。
 
 [查看实际发送到平台的完整 Prompt](docs/demo/ai-companion-platform-prompt.txt)
 
@@ -80,11 +80,11 @@
 
 ![工作伙伴对话：要求使用模块对照表、Agent 三层并行对照表并保留后续计划与要点回顾](docs/images/readme/work-prompt-table.jpg)
 
-#### 实际生成成果：RAG 增强的 8 页 PPTX 演示文稿
+#### 实际生成成果：Wiki 增强的 8 页 PPTX 演示文稿
 
 工作伙伴先将项目定位、技术亮点、功能实现、使用方式和常见问答写入文档知识库，再围绕核心功能、大文件处理、Agent 并行化与治理机制执行检索。检索结果作为文字上下文交给 `PPTX 多模态生成` Skill，同时附带情感陪伴、生活助手和工作伙伴三张真实主页截图。下方展示的是仓库中已经通过校验的 8 页成品；本次重新发送的平台 Prompt 已升级为 11 页，恢复“下一步计划”和“要点回顾”，并新增图文并茂与可编辑表格要求。三张产品截图均直接来自系统实拍，未使用 AI 生成图片替换。
 
-[查看用于 RAG 检索的项目知识文档](docs/demo/ai-companion-rag-knowledge.txt)
+[查看用于 Wiki 检索的项目知识文档](docs/demo/ai-companion-wiki-knowledge.txt)
 
 [下载完整 PPTX：ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
 
@@ -106,7 +106,7 @@
 
 **第 5 页：工作伙伴与使用流程**
 
-![生成的 PPT 第 5 页：工作伙伴工作台、RAG 与版本化 Skill](docs/images/readme/generated-ppt/slide-5.png)
+![生成的 PPT 第 5 页：工作伙伴工作台、Wiki 与版本化 Skill](docs/images/readme/generated-ppt/slide-5.png)
 
 **第 6 页：大文件无损分片**
 
@@ -116,14 +116,14 @@
 
 ![生成的 PPT 第 7 页：运行级、进程级和图节点级并行](docs/images/readme/generated-ppt/slide-7.png)
 
-**第 8 页：RAG、记忆与治理**
+**第 8 页：Wiki、记忆与治理**
 
 ![生成的 PPT 第 8 页：文档检索、长期记忆、工具网关与可观测性](docs/images/readme/generated-ppt/slide-8.png)
 
 ## 核心能力
 
 - **可靠对话**：支持持久化会话、流式生成、重试、取消、故障恢复以及陪伴、生活、工作三类对话模块。
-- **长期记忆与 RAG**：支持记忆提取、受限上下文组装、PDF/文本解析、结构化分块、Qdrant 检索、引用溯源、证据不足提示和数据删除。
+- **长期记忆与 Wiki**：支持记忆提取、受限上下文组装、PDF/文本解析、结构化分块、Qdrant 检索、引用溯源、证据不足提示和数据删除。
 - **生活助手**：覆盖记账候选确认、账目管理、Excel 导出、计划、提醒和应用内通知。
 - **工作技能平台**：提供版本化 Skill 运行时、意图路由、大文件分片处理、文档/表格/演示文稿生成、长任务执行和生成文件访问控制。
 - **可治理 Agent**：通过持久化图执行实现规划、工具调用、人工确认、中断恢复、超时与取消；业务写入始终由 Go 服务鉴权并落库。
@@ -179,7 +179,7 @@ Agent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态�
 
 ### 6. 有证据边界的记忆与知识检索
 
-文档处理链路包含页面级解析、结构化分块、向量索引、检索和引用返回。系统不仅提供 RAG 结果，还显式处理“证据不足”，并支持原文与索引清理，降低无来源回答和数据残留风险。仓库内置 100 条检索质量用例作为 M2 阻断门禁。
+文档处理链路包含页面级解析、结构化分块、向量索引、检索和引用返回。系统不仅提供 Wiki 检索结果，还显式处理“证据不足”，并支持原文与索引清理，降低无来源回答和数据残留风险。仓库内置 100 条检索质量用例作为 M2 阻断门禁。
 
 ### 7. 受控的 Skill 与 MCP 扩展机制
 
@@ -401,7 +401,7 @@ make release-check
 专项质量检查：
 
 ```bash
-make eval-m2        # 100 条 RAG 检索质量用例
+make eval-m2        # 100 条 Wiki 检索质量用例
 make eval-m4        # 意图路由回归门禁
 make eval-agent     # Agent 结果与执行链契约
 make eval-agent-runtime  # 并发、背压与异步恢复契约
@@ -425,7 +425,7 @@ api/openapi/             HTTP API 契约
 events/schemas/          事件契约
 migrations/              正向与回滚数据库迁移
 deploy/                  Compose、镜像、Caddy 与可观测性配置
-evals/                   RAG、Agent 与发布质量基线
+evals/                   Wiki、Agent 与发布质量基线
 docs/adr/                架构决策记录
 docs/runbooks/           运维、演练与发布手册
 ```

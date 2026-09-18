@@ -92,6 +92,27 @@ func (s *Server) logoutAll(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) getCurrentUser(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, currentAuth(r).User)
+}
+
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var input identity.ChangePasswordInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	current := currentAuth(r)
+	if err := s.identity.ChangePassword(r.Context(), current.User.ID, current.Claims.SessionID, input); err != nil {
+		if errors.Is(err, identity.ErrUnauthorized) {
+			writeJSON(w, http.StatusUnauthorized, apiError{Code: "invalid_current_password", Message: "当前密码不正确"})
+			return
+		}
+		writeDomainError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")

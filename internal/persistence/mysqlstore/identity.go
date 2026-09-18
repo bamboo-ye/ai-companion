@@ -29,6 +29,26 @@ func (s *Store) GetUser(ctx context.Context, userID string) (identity.User, erro
 	return scanUser(s.db.QueryRowContext(ctx, `SELECT BIN_TO_UUID(id),email,password_hash,display_name,timezone,locale,status,created_at,updated_at FROM users WHERE id=UUID_TO_BIN(?) AND status='active'`, userID))
 }
 
+func (s *Store) ChangePassword(ctx context.Context, userID, currentHash, nextHash, keepSessionID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE users SET password_hash=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND password_hash=? AND status='active' AND EXISTS (SELECT 1 FROM refresh_sessions WHERE id=UUID_TO_BIN(?) AND user_id=users.id AND revoked_at IS NULL)`, nextHash, now, userID, currentHash, keepSessionID)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		return identity.ErrUnauthorized
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE refresh_sessions SET revoked_at=?,last_used_at=? WHERE user_id=UUID_TO_BIN(?) AND id<>UUID_TO_BIN(?) AND revoked_at IS NULL`, now, now, userID, keepSessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpsertDevice(ctx context.Context, device identity.Device) (identity.Device, error) {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_devices (id,user_id,device_key,name,platform,timezone,last_seen_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),platform=VALUES(platform),timezone=VALUES(timezone),last_seen_at=VALUES(last_seen_at)`, device.ID, device.UserID, device.DeviceKey, device.Name, device.Platform, device.Timezone, device.LastSeen)
 	if err != nil {

@@ -254,6 +254,8 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.HandleFunc("POST /v1/auth/refresh", server.refresh)
 	mux.Handle("POST /v1/auth/logout", server.requireAuth(http.HandlerFunc(server.logout)))
 	mux.Handle("POST /v1/auth/logout-all", server.requireAuth(http.HandlerFunc(server.logoutAll)))
+	mux.Handle("GET /v1/users/me", server.requireAuth(http.HandlerFunc(server.getCurrentUser)))
+	mux.Handle("POST /v1/users/me/password", server.requireAuth(http.HandlerFunc(server.changePassword)))
 	mux.Handle("GET /v1/billing/me", server.requireAuth(http.HandlerFunc(server.getBillingSummary)))
 	mux.Handle("GET /v1/safety/me", server.requireAuth(http.HandlerFunc(server.getSafetyPolicy)))
 	mux.Handle("PATCH /v1/safety/me", server.requireAuth(http.HandlerFunc(server.updateSafetyPolicy)))

@@ -1,4 +1,4 @@
-# M2 Context, Memory, and RAG Status
+# M2 Context, Memory, and Wiki Status
 
 Date: 2026-07-03
 
@@ -46,7 +46,7 @@ Date: 2026-07-03
 - MySQL summary writes serialize per conversation and are idempotent under competing generation jobs.
 - Generation events expose summary rolls and their recent/summary token measurements for diagnosis.
 - Type-aware exponential date decay for long-term memory recall; stable preferences decay more slowly than commitments.
-- A checked-in 100-case Chinese/English RAG baseline covering context precision/recall, citation correctness, faithfulness, and insufficient-evidence accuracy.
+- A checked-in 100-case Chinese/English Wiki baseline covering context precision/recall, citation correctness, faithfulness, and insufficient-evidence accuracy.
 - MySQL migration `000007_conversation_context` and `make eval-m2` quality gate.
 
 ## Verification
@@ -87,7 +87,7 @@ Date: 2026-07-03
 | Rolling summary range, version, idempotency, and strict token budget | Passed |
 | Real MySQL long conversation produced 3 summary versions and 3 diagnostic events | Passed (maximum 64 / 64 summary tokens) |
 | Type-aware memory date-decay ranking | Passed |
-| M2 Chinese/English offline RAG quality gate | Passed (100 cases; all five baseline metrics 1.000) |
+| M2 Chinese/English offline Wiki quality gate | Passed (100 cases; all five baseline metrics 1.000) |
 | Fresh migration (7 versions / 21 tables) and second-run idempotency | Passed |
 
 ## Deferred production upgrades
@@ -96,4 +96,4 @@ Date: 2026-07-03
 - OCR/visual fallback, bounding boxes, MinIO adapter, outbox publisher, cleanup reconciliation, and retry/DLQ controls.
 - Expand the deterministic 100-case gate with provider-specific and adversarial evaluation after model/region/privacy approval.
 
-M2 is complete against its development-plan acceptance criteria: controllable memory, bounded recent context, durable rolling summaries, text-PDF RAG with page citations, insufficient-evidence behavior, idempotent ingestion/deletion, and a repeatable 100-case quality gate. The upgrades above are retained as Beta/production hardening and do not block starting M3.
+M2 is complete against its development-plan acceptance criteria: controllable memory, bounded recent context, durable rolling summaries, text-PDF Wiki retrieval with page citations, insufficient-evidence behavior, idempotent ingestion/deletion, and a repeatable 100-case quality gate. The upgrades above are retained as Beta/production hardening and do not block starting M3.

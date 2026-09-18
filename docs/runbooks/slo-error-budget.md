@@ -17,7 +17,7 @@ This runbook defines the internal-release reliability bar. It is intentionally c
 | Model health | error ratio < 20% | `ai_companion_model_error_ratio`. |
 | Agent retry recovery | >= 80% when at least 5 retrying runs settle in 5 min | `ai_companion_agent_execution_retry_recovery_ratio` guarded by settled outcomes. |
 | Agent retry pressure | < 20 schedules in 5 min | `ai_companion_agent_execution_retries_recent{outcome="scheduled"}`. |
-| Evidence safety | no fabricated RAG answer in degraded mode | Document query returns `degraded=true` or `sufficient=false` when evidence is unavailable. |
+| Evidence safety | no fabricated Wiki answer in degraded mode | Document query returns `degraded=true` or `sufficient=false` when evidence is unavailable. |
 | Backup posture | RPO <= 15 min, RTO <= 2 h | Backup/restore drill evidence. |
 
 ## Error budget policy

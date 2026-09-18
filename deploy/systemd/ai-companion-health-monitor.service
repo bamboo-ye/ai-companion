@@ -9,7 +9,7 @@ ExecStart=/opt/ai-companion/current/scripts/monitor_production_health.sh
 Environment=COMPOSE_PROJECT=ai-companion
 Environment=HEALTH_STATE_DIR=/var/lib/ai-companion-monitor
 Environment=LOCAL_READY_URL=http://127.0.0.1:8080/readyz
-Environment=PUBLIC_READY_URL=https://or.windcry1.com/readyz
+Environment=PUBLIC_READY_URL=https://kentucky-permitted-thumbnail-grams.trycloudflare.com/readyz
 Environment=CPU_WARN_PERCENT=80
 StateDirectory=ai-companion-monitor
 NoNewPrivileges=true

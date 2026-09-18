@@ -6,7 +6,7 @@ CURL_BIN=${CURL_BIN:-curl}
 COMPOSE_PROJECT=${COMPOSE_PROJECT:-ai-companion}
 HEALTH_STATE_DIR=${HEALTH_STATE_DIR:-/var/lib/ai-companion-monitor}
 LOCAL_READY_URL=${LOCAL_READY_URL:-http://127.0.0.1:8080/readyz}
-PUBLIC_READY_URL=${PUBLIC_READY_URL:-https://or.windcry1.com/readyz}
+PUBLIC_READY_URL=${PUBLIC_READY_URL:-https://kentucky-permitted-thumbnail-grams.trycloudflare.com/readyz}
 CPU_WARN_PERCENT=${CPU_WARN_PERCENT:-80}
 HEALTH_CHECK_SERVICES=${HEALTH_CHECK_SERVICES:-"postgres redis kafka qdrant minio api worker agent-worker web"}
 

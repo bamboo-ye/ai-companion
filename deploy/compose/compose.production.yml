@@ -27,7 +27,7 @@ services:
     image: ai-companion-web:${APP_IMAGE_TAG:-production}
     build:
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://or.windcry1.com}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://kentucky-permitted-thumbnail-grams.trycloudflare.com}
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3000/"]
       interval: 30s

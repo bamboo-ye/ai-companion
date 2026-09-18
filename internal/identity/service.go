@@ -56,6 +56,7 @@ type Store interface {
 	CreateUser(context.Context, User) error
 	FindUserByEmail(context.Context, string) (User, error)
 	GetUser(context.Context, string) (User, error)
+	ChangePassword(context.Context, string, string, string, string, time.Time) error
 	UpsertDevice(context.Context, Device) (Device, error)
 	CreateSession(context.Context, Session) error
 	GetSession(context.Context, string) (Session, error)
@@ -85,6 +86,11 @@ type LoginInput struct {
 	Password string      `json:"password"`
 	Timezone string      `json:"timezone"`
 	Device   DeviceInput `json:"device"`
+}
+
+type ChangePasswordInput struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
 }
 
 type TokenPair struct {
@@ -194,6 +200,36 @@ func (s *Service) Logout(ctx context.Context, sessionID string) error {
 
 func (s *Service) LogoutAll(ctx context.Context, userID string) error {
 	return s.store.RevokeUserSessions(ctx, userID, s.now().UTC())
+}
+
+// ChangePassword verifies the caller's current credential, updates the password
+// hash, and revokes every other session. The session making the change remains
+// usable so the user is not unexpectedly signed out of the current device.
+func (s *Service) ChangePassword(ctx context.Context, userID, sessionID string, input ChangePasswordInput) error {
+	if len(input.CurrentPassword) == 0 || len(input.CurrentPassword) > 128 {
+		return ErrUnauthorized
+	}
+	if len(input.NewPassword) < 8 || len(input.NewPassword) > 128 {
+		return fmt.Errorf("%w: new_password must contain 8-128 characters", ErrValidation)
+	}
+	if input.CurrentPassword == input.NewPassword {
+		return fmt.Errorf("%w: new_password must be different from current_password", ErrValidation)
+	}
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil || !verifyPassword(user.PasswordHash, input.CurrentPassword) {
+		return ErrUnauthorized
+	}
+	nextHash, err := hashPassword(input.NewPassword)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if err := s.store.ChangePassword(ctx, user.ID, user.PasswordHash, nextHash, sessionID, s.now().UTC()); err != nil {
+		if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrNotFound) {
+			return ErrUnauthorized
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) createSession(ctx context.Context, user User, input DeviceInput, timezone string) (TokenPair, error) {

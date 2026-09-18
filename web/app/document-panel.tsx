@@ -39,7 +39,7 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
     const response = await fetch(`${apiBase}/v1/documents`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) throw new Error("无法加载文档");
+    if (!response.ok) throw new Error("无法加载 Wiki");
     setItems(((await response.json()) as { items: DocumentItem[] }).items);
   }, [token]);
 
@@ -121,11 +121,11 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
   }
 
   return (
-    <section className="documentPanel" aria-label="文档库">
+    <section className="documentPanel" aria-label="Wiki">
       <header>
         <div>
-          <small>M2 · 文档摄取</small>
-          <h3>我的文档</h3>
+          <small>M2 · 知识摄取</small>
+          <h3>我的 Wiki</h3>
         </div>
         <button className="textButton" type="button" onClick={onClose}>返回角色</button>
       </header>
@@ -134,12 +134,12 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
           选择文本 PDF 或 UTF-8 文本文件
           <input name="file" type="file" accept=".pdf,.txt,application/pdf,text/plain" required />
         </label>
-        <button type="submit" disabled={busy}>{busy ? "正在检查并保存…" : "上传文档"}</button>
+        <button type="submit" disabled={busy}>{busy ? "正在检查并保存…" : "上传到 Wiki"}</button>
       </form>
       <div className="documentNotice">解析完成后可基于页级片段检索；回答必须显示文档名和页码，证据不足时不会猜测。</div>
       {message && <p className="formMessage" role="status">{message}</p>}
       <div className="documentList">
-        {items.length === 0 ? <p className="emptyState">还没有文档。</p> : items.map((item) => (
+        {items.length === 0 ? <p className="emptyState">Wiki 中还没有资料。</p> : items.map((item) => (
           <article key={item.id}>
             <div>
               <strong>{item.name}</strong>
@@ -152,13 +152,13 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
       </div>
       <form className="documentQuery" onSubmit={queryDocuments}>
         <label>
-          向已解析文档提问
+          向 Wiki 提问
           <input name="query" minLength={2} maxLength={1000} required placeholder="例如：项目计划什么时候启动？" />
         </label>
         <button type="submit" disabled={busy || !items.some((item) => item.status === "ready")}>检索证据</button>
       </form>
       {queryResult && (
-        <section className={`queryResult ${queryResult.sufficient ? "sufficient" : "insufficient"}`} aria-label="文档检索结果">
+        <section className={`queryResult ${queryResult.sufficient ? "sufficient" : "insufficient"}`} aria-label="Wiki 检索结果">
           <p>{queryResult.answer}</p>
           {queryResult.citations.length > 0 && (
             <ol>
