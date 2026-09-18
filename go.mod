@@ -6,7 +6,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.3
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/go-webauthn/webauthn v0.18.1
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/twmb/franz-go v1.21.0
 	go.opentelemetry.io/otel v1.44.0
