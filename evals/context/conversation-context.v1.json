@@ -1,0 +1,28 @@
+{
+  "version": "conversation-context-v1",
+  "history": [
+    {"id": "m7", "role": "user", "content": "请继续准备项目汇报。", "sequence": 7, "bubble": 1},
+    {"id": "m8", "role": "assistant", "content": "接下来整理技术亮点。", "sequence": 8, "bubble": 1}
+  ],
+  "summary": {
+    "content": "用户要求：汇报必须使用中文，不要超过六分钟。",
+    "estimated_tokens": 24,
+    "source": {"kind": "summary", "id": "s1", "conversation_id": "c1", "version": "1", "start_sequence": 1, "end_sequence": 6}
+  },
+  "memories": [
+    {"content": "我不吃香菜", "estimated_tokens": 5, "source": {"kind": "memory", "id": "fact1", "conversation_id": "c0", "message_id": "original-fact"}}
+  ],
+  "manifest": {
+    "version": "conversation-context-v1",
+    "sources": [
+      {"kind": "message", "id": "m7", "conversation_id": "c1", "start_sequence": 7, "end_sequence": 7},
+      {"kind": "message", "id": "m8", "conversation_id": "c1", "start_sequence": 8, "end_sequence": 8},
+      {"kind": "summary", "id": "s1", "conversation_id": "c1", "version": "1", "start_sequence": 1, "end_sequence": 6},
+      {"kind": "memory", "id": "fact1", "conversation_id": "c0", "message_id": "original-fact"}
+    ],
+    "recent_tokens": 33,
+    "summary_tokens": 24,
+    "memory_tokens": 49,
+    "memory_omitted": 0
+  }
+}

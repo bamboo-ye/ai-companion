@@ -11,7 +11,8 @@ This is the M8 internal-release test plan. It is not a replacement for external 
 | Auth | Invalid/expired tokens are rejected; refresh token reuse is rejected. |
 | Operator surface | `/v1/ops/*` rejects end-user tokens, requires operator auth, and production requires TOTP-backed operator accounts. |
 | Operator roles | `viewer` can inspect, `support` can replay/moderate, and only `admin` can manage operator accounts, export audit CSV, and view release-readiness. |
-| Operator bootstrap | Legacy `OPERATOR_TOKEN` is used only for bootstrap when MFA is not required; production has `OPERATOR_MFA_REQUIRED=true`. |
+| Operator bootstrap | Web administrators enroll through single-use invitations issued by the offline `admin-invite` command or an authorized admin. Production retains `OPERATOR_MFA_REQUIRED=true`; CLI Bearer + TOTP remains supported. |
+| Admin Passkey sessions | UV, RP ID, origin and signatures are required; challenges are consumed once. Cookies are HttpOnly/Secure/SameSite, writes validate Origin and CSRF header and require recent verification. Disable/re-enable must not revive old sessions. See `docs/ADMIN_PASSKEY_LOGIN.md`. |
 | Operator lockout prevention | Disabling the last active `admin` or last MFA-enabled admin returns `operator_admin_lockout_protection`. |
 | Object access | Skill files, ledger exports, and uploaded documents cannot be downloaded by another user. |
 | Prompt injection | Retrieved document content is treated as evidence, not tool/system instructions. |

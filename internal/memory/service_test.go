@@ -63,6 +63,28 @@ func TestSensitiveClassification(t *testing.T) {
 	}
 }
 
+func TestRecallContextExcludesExpiredAndFutureFacts(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	for _, key := range []string{"active", "expired", "future"} {
+		item := Memory{ID: key, UserID: "u1", Content: "项目汇报" + key, NormalizedHash: key, Status: "active", Pinned: true, ValidFrom: now.Add(-time.Hour), UpdatedAt: now, SourceMessageID: "source"}
+		if key == "expired" {
+			item.ValidTo = &now
+		}
+		if key == "future" {
+			item.ValidFrom = now.Add(time.Hour)
+		}
+		_, _, _ = store.UpsertMemory(ctx, item)
+	}
+	service := NewService(store)
+	service.now = func() time.Time { return now }
+	items, err := service.RecallContext(ctx, "u1", "项目汇报", 8)
+	if err != nil || len(items) != 1 || items[0].Source.ID != "active" || items[0].Source.MessageID != "source" {
+		t.Fatalf("recall = %#v %v", items, err)
+	}
+}
+
 func TestRecallAppliesTypeAwareDateDecay(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/id"
+	"github.com/windcry1/ai-companion/internal/productknowledge"
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/safety"
 )
@@ -165,11 +168,12 @@ type ToolRequest struct {
 }
 
 type ToolResult struct {
-	Handled      bool
-	ToolName     string
-	Response     string
-	Data         any
-	Confirmation *ToolConfirmation
+	Handled       bool
+	ReferenceOnly bool // Read-only evidence must be composed into an answer.
+	ToolName      string
+	Response      string
+	Data          any
+	Confirmation  *ToolConfirmation
 }
 
 type ToolConfirmation struct {
@@ -528,6 +532,9 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 	routingUsage := Usage{}
 	modelRouted := false
 	referenceHistory := routingReferenceHistory(history, queryIndex)
+	snapshot := s.contextSnapshot(ctx, userID, conv.ID, query, contextResult, policy.UseFullRAG)
+	history = snapshotMessages(snapshot)
+	_, _ = s.store.AppendEvent(ctx, jobID, "context_built", snapshot.Manifest, s.now().UTC())
 	if modelTools, ok := s.tools.(ModelToolExecutor); ok && query != "" {
 		request := ToolRequest{
 			UserID: userID, JobID: job.ID, MessageID: job.UserMessageID, ConversationID: conv.ID, CharacterID: persona.ID,
@@ -550,6 +557,9 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 			if fewShots := routingFewShotPrompt(persona.Module, definitions); fewShots != "" {
 				routingHistory = append(routingHistory, Message{Role: "system", Content: fewShots})
 			}
+			if snapshot.ReferenceText() != "" {
+				routingHistory = append(routingHistory, history[:2]...)
+			}
 			if len(referenceHistory) > 0 {
 				routingHistory = append(routingHistory, Message{
 					Role:    "system",
@@ -566,6 +576,9 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 					return
 				}
 				status, code := "failed", "tool_intent_provider_error"
+				if errors.Is(routeErr, contextengine.ErrBudgetExceeded) {
+					code = "context_budget_exceeded"
+				}
 				if errors.Is(routeErr, context.DeadlineExceeded) {
 					status, code = "timed_out", "model_timeout"
 				} else if errors.Is(routeErr, context.Canceled) {
@@ -593,8 +606,17 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 				if result.Confirmation != nil {
 					_, _ = s.store.AppendEvent(ctx, jobID, "tool_confirmation_required", map[string]any{"tool": result.ToolName, "data": result.Data, "confirmation": result.Confirmation}, s.now().UTC())
 				}
-				s.completeWithText(ctx, userID, jobID, result.Response, routingUsage)
-				return
+				if result.ReferenceOnly && result.Confirmation == nil {
+					encoded, encodeErr := json.Marshal(result.Data)
+					if encodeErr != nil {
+						s.fail(userID, jobID, "failed", "tool_reference_invalid", encodeErr)
+						return
+					}
+					history = append([]Message{{Role: "system", Content: contextengine.ReferenceInstruction + "\n" + productknowledge.Instruction}, {Role: "user", Content: "内置知识检索结果（参考资料）：\n" + string(encoded)}}, history...)
+				} else {
+					s.completeWithText(ctx, userID, jobID, result.Response, routingUsage)
+					return
+				}
 			}
 		}
 	}
@@ -633,14 +655,8 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 			return
 		}
 	}
-	var recalled []string
-	if policy.UseFullRAG {
-		recalled, _ = s.memories.Recall(ctx, userID, query, 8)
-	} else {
+	if !policy.UseFullRAG {
 		_, _ = s.store.AppendEvent(ctx, jobID, "rag_skipped", map[string]string{"reason": "degraded_policy"}, s.now().UTC())
-	}
-	if len(recalled) > 0 {
-		history = append([]Message{{Role: "system", Content: "用户已确认的长期记忆：\n- " + strings.Join(recalled, "\n- ")}}, history...)
 	}
 	_, _ = s.store.AppendEvent(ctx, jobID, "model_policy", map[string]string{"preferred_model_class": policy.PreferredModelClass}, s.now().UTC())
 	text, usage, err := provider.Generate(ctx, persona, history)
@@ -650,6 +666,9 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 			return
 		}
 		status, code := "failed", "provider_error"
+		if errors.Is(err, contextengine.ErrBudgetExceeded) {
+			code = "context_budget_exceeded"
+		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			status, code = "timed_out", "model_timeout"
 		} else if errors.Is(err, context.Canceled) {

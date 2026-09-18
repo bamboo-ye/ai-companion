@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { WikiPanel } from "./wiki-panel";
+import { BuiltinKnowledgePanel } from "./builtin-knowledge-panel";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -124,11 +126,13 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
     <section className="documentPanel" aria-label="Wiki">
       <header>
         <div>
-          <small>M2 · 知识摄取</small>
+          <small>知识与来源</small>
           <h3>我的 Wiki</h3>
         </div>
         <button className="textButton" type="button" onClick={onClose}>返回角色</button>
       </header>
+      <BuiltinKnowledgePanel token={token} />
+      <WikiPanel token={token} />
       <form className="documentUpload" onSubmit={upload}>
         <label>
           选择文本 PDF 或 UTF-8 文本文件
@@ -146,13 +150,13 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
               <small>{formatBytes(item.size_bytes)} · {item.media_type}</small>
               <p>{statusLabels[item.status]}{item.status === "ready" ? ` · ${item.page_count} 页 / ${item.chunk_count} 个片段` : ""}</p>
             </div>
-            <button className="dangerButton" type="button" onClick={() => void remove(item)}>删除</button>
+            <div className="wikiActions">{item.status === "ready" && <button type="button" onClick={() => void fetch(`${apiBase}/v1/documents/${item.id}/wiki/rebuild`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).then(response => { if (!response.ok) throw new Error("重建失败"); setMessage("知识页面已进入重建队列。"); }).catch(error => setMessage(error.message))}>重建知识</button>}<button className="dangerButton" type="button" onClick={() => void remove(item)}>删除</button></div>
           </article>
         ))}
       </div>
       <form className="documentQuery" onSubmit={queryDocuments}>
         <label>
-          向 Wiki 提问
+          检索原始文档
           <input name="query" minLength={2} maxLength={1000} required placeholder="例如：项目计划什么时候启动？" />
         </label>
         <button type="submit" disabled={busy || !items.some((item) => item.status === "ready")}>检索证据</button>

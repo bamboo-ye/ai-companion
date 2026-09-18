@@ -12,7 +12,7 @@ import (
 )
 
 func (s *Store) FindOperatorByTokenHash(ctx context.Context, tokenHash string) (opsauth.Account, error) {
-	account, err := scanOperatorAccount(s.db.QueryRowContext(ctx, `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at FROM operator_accounts WHERE token_hash=?`, tokenHash))
+	account, err := scanOperatorAccount(s.db.QueryRowContext(ctx, `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at,session_version,EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id) FROM operator_accounts WHERE token_hash=?`, tokenHash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return opsauth.Account{}, opsauth.ErrUnauthorized
 	}
@@ -25,7 +25,7 @@ func (s *Store) RecordOperatorAuthenticated(ctx context.Context, id string, now 
 }
 
 func (s *Store) ListOperators(ctx context.Context, filter opsauth.OperatorFilter) ([]opsauth.Account, error) {
-	query := `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at FROM operator_accounts WHERE 1=1`
+	query := `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at,session_version,EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id) FROM operator_accounts WHERE 1=1`
 	args := make([]any, 0, 3)
 	if filter.Role != "" {
 		query += ` AND role=?`
@@ -54,7 +54,7 @@ func (s *Store) ListOperators(ctx context.Context, filter opsauth.OperatorFilter
 }
 
 func (s *Store) GetOperator(ctx context.Context, id string) (opsauth.Account, error) {
-	account, err := scanOperatorAccount(s.db.QueryRowContext(ctx, `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at FROM operator_accounts WHERE id=?`, id))
+	account, err := scanOperatorAccount(s.db.QueryRowContext(ctx, `SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,created_at,updated_at,last_authenticated_at,session_version,EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id) FROM operator_accounts WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return opsauth.Account{}, opsauth.ErrNotFound
 	}
@@ -91,7 +91,7 @@ func (s *Store) SetOperatorStatus(ctx context.Context, id, status string, audit 
 	defer tx.Rollback()
 	var role, current string
 	var mfaEnabled bool
-	if err = tx.QueryRowContext(ctx, `SELECT role,status,mfa_enabled FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&role, &current, &mfaEnabled); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT role,status,(mfa_enabled OR EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id)) FROM operator_accounts WHERE id=? FOR UPDATE`, id).Scan(&role, &current, &mfaEnabled); errors.Is(err, sql.ErrNoRows) {
 		return opsauth.Account{}, opsauth.ErrNotFound
 	} else if err != nil {
 		return opsauth.Account{}, err
@@ -101,7 +101,7 @@ func (s *Store) SetOperatorStatus(ctx context.Context, id, status string, audit 
 			return opsauth.Account{}, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET status=?,updated_at=? WHERE id=?`, status, audit.Now, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET session_version=session_version+1,status=?,updated_at=? WHERE id=?`, status, audit.Now, id); err != nil {
 		return opsauth.Account{}, err
 	}
 	if err = insertOperatorAudit(ctx, tx, audit, id, map[string]string{"from_status": current, "to_status": status}); err != nil {
@@ -124,7 +124,7 @@ func (s *Store) ResetOperatorToken(ctx context.Context, id, tokenHash string, au
 	} else if err != nil {
 		return opsauth.Account{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET token_hash=?,updated_at=? WHERE id=?`, tokenHash, audit.Now, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET session_version=session_version+1,token_hash=?,updated_at=? WHERE id=?`, tokenHash, audit.Now, id); err != nil {
 		if isDuplicate(err) {
 			return opsauth.Account{}, opsauth.ErrConflict
 		}
@@ -153,11 +153,15 @@ func (s *Store) ResetOperatorMFA(ctx context.Context, id, secret string, enabled
 		return opsauth.Account{}, err
 	}
 	if !enabled {
-		if err = preventOperatorAdminLockout(ctx, tx, role, current, previous, false, true); err != nil {
+		var hasPasskey bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id) FROM operator_accounts WHERE id=?`, id).Scan(&hasPasskey); err != nil {
+			return opsauth.Account{}, err
+		}
+		if err = preventOperatorAdminLockout(ctx, tx, role, current, previous && !hasPasskey, false, true); err != nil {
 			return opsauth.Account{}, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET totp_secret=?,mfa_enabled=?,updated_at=? WHERE id=?`, secret, enabled, audit.Now, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE operator_accounts SET session_version=session_version+1,totp_secret=?,mfa_enabled=?,updated_at=? WHERE id=?`, secret, enabled, audit.Now, id); err != nil {
 		return opsauth.Account{}, err
 	}
 	if err = insertOperatorAudit(ctx, tx, audit, id, map[string]string{"from_mfa_enabled": boolString(previous), "to_mfa_enabled": boolString(enabled)}); err != nil {
@@ -173,7 +177,7 @@ func preventOperatorAdminLockout(ctx context.Context, tx *sql.Tx, role, status s
 	if role != "admin" || status != "active" {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,mfa_enabled FROM operator_accounts WHERE role='admin' AND status='active' FOR UPDATE`)
+	rows, err := tx.QueryContext(ctx, `SELECT id,(mfa_enabled OR EXISTS (SELECT 1 FROM operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=operator_accounts.id)) FROM operator_accounts WHERE role='admin' AND status='active' FOR UPDATE`)
 	if err != nil {
 		return err
 	}
@@ -227,7 +231,7 @@ func boolString(value bool) string {
 func scanOperatorAccount(row rowScanner) (opsauth.Account, error) {
 	var account opsauth.Account
 	var last sql.NullTime
-	if err := row.Scan(&account.ID, &account.DisplayName, &account.Role, &account.Status, &account.TokenHash, &account.TOTPSecret, &account.MFAEnabled, &account.CreatedAt, &account.UpdatedAt, &last); err != nil {
+	if err := row.Scan(&account.ID, &account.DisplayName, &account.Role, &account.Status, &account.TokenHash, &account.TOTPSecret, &account.MFAEnabled, &account.CreatedAt, &account.UpdatedAt, &last, &account.SessionVersion, &account.PasskeyEnabled); err != nil {
 		return opsauth.Account{}, err
 	}
 	if last.Valid {

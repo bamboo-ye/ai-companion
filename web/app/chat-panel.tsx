@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { confirmationPrompt, executionResultNotice, visibleChatText } from "./chat-content";
+import { confirmationPrompt, executionResultNotice, visibleChatText, productKnowledgeSegments } from "./chat-content";
 import { isActiveRun, listSkillRuns } from "./skill-run-client";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
@@ -89,7 +89,7 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
           const canRetry=Boolean(failure&&item.reply_to_id&&latestAssistantByReply.get(item.reply_to_id)===item.id);
           return <div className={`messageBubble ${item.role}`} key={item.id}>
             <small>{item.role==="user"?"你":character.name}</small>
-            {visibleChatText(item.content)&&<p>{visibleChatText(item.content)}</p>}
+            {visibleChatText(item.content)&&<p>{productKnowledgeSegments(item.content).map((segment,index)=>segment.href?<a key={index} href={segment.href} target="_blank" rel="noopener noreferrer">{segment.text}</a>:segment.text)}</p>}
             {attached.length>0&&<div className="messageFiles">{attached.map(file=><span key={file}>📎 {file}</span>)}</div>}
             {files.length>0&&<div className="messageFiles">{files.map(file=><button key={file.fileID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadGeneratedFile(file)}>⬇ {file.name}</button>)}</div>}
             {ledgerFiles.length>0&&<div className="messageFiles">{ledgerFiles.map(file=><button key={file.exportID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadLedgerExport(file)}>⬇ {file.name}</button>)}</div>}

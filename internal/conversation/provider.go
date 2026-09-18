@@ -29,7 +29,7 @@ func (DevelopmentProvider) Generate(ctx context.Context, persona character.Chara
 			if item.Role == "user" {
 				latest = item.Content
 			}
-			if item.Role == "system" {
+			if item.Role == "system" || strings.HasPrefix(item.Content, "会话参考资料：\n") {
 				memoryContext += item.Content
 			}
 		}

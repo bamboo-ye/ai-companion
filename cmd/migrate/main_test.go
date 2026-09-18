@@ -15,7 +15,7 @@ func TestLoadMigrationConfigPostgres(t *testing.T) {
 	if cfg.driver != "postgres" || cfg.directory != "migrations/postgres" || cfg.dsn == "" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
-	if len(cfg.requiredTables) != 27 || cfg.requiredTables[0] != "agent.runs" || cfg.requiredTables[13] != "app.billing_usage_adjustments" || cfg.requiredTables[16] != "eventing.outbox_events" ||
+	if len(cfg.requiredTables) != 32 || cfg.requiredTables[0] != "agent.runs" || cfg.requiredTables[13] != "app.billing_usage_adjustments" || cfg.requiredTables[16] != "eventing.outbox_events" ||
 		cfg.requiredTables[19] != "ops.system_logs" || cfg.requiredTables[20] != "ops.alert_rules" || cfg.requiredTables[21] != "ops.incidents" ||
 		cfg.requiredTables[22] != "ops.alert_subscriptions" || cfg.requiredTables[23] != "ops.incident_notifications" || cfg.requiredTables[24] != "ops.performance_budgets" ||
 		cfg.requiredTables[25] != "ops.performance_budget_recommendation_decisions" || cfg.requiredTables[26] != "ops.runtime_config_reports" {

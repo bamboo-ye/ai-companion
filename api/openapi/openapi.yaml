@@ -6,6 +6,625 @@ info:
 servers:
   - url: http://localhost:8080
 paths:
+  /v1/knowledge/builtin/pages:
+    $ref: "./product-knowledge.yaml#/paths/~1v1~1knowledge~1builtin~1pages"
+  /v1/knowledge/builtin/pages/{page_id}:
+    $ref: "./product-knowledge.yaml#/paths/~1v1~1knowledge~1builtin~1pages~1{page_id}"
+  /v1/knowledge/builtin/search:
+    $ref: "./product-knowledge.yaml#/paths/~1v1~1knowledge~1builtin~1search"
+  /v1/ops/auth/passkey/login/options:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1passkey~1login~1options"
+  /v1/ops/auth/passkey/login/verify:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1passkey~1login~1verify"
+  /v1/ops/auth/passkey/register/options:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1passkey~1register~1options"
+  /v1/ops/auth/passkey/register/verify:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1passkey~1register~1verify"
+  /v1/ops/auth/logout:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1logout"
+  /v1/ops/auth/invitations:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1invitations"
+  /v1/ops/auth/sessions/revoke:
+    $ref: "./admin-passkey.yaml#/paths/~1v1~1ops~1auth~1sessions~1revoke"
+  /v1/wiki/pages:
+    get:
+      operationId: listPersonalWikiPages
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: All dependencies must be visible. Workspace access additionally
+        requires active membership. Stale list entries have no body.
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: &id002
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: &id001
+                      $ref: '#/components/schemas/WikiPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/search:
+    post:
+      operationId: searchPersonalWiki
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: &id003
+              type: object
+              required:
+              - query
+              properties:
+                query:
+                  type: string
+                  minLength: 2
+                  maxLength: 1000
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 8
+                token_budget:
+                  type: integer
+                  minimum: 128
+                  maximum: 6000
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WikiSearchResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}:
+    get:
+      operationId: readPersonalWikiPage
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id001
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    patch:
+      operationId: updateWikiPage
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - version
+              - title
+              - body
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                body:
+                  type: string
+                  maxLength: 24000
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id001
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}/links:
+    get:
+      operationId: followPersonalWikiLinks
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: At most four linked pages, each authorized and checked against
+        current source versions.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id002
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/workspaces/{workspace_id}/wiki/pages:
+    get:
+      operationId: listWorkspaceWikiPages
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: All dependencies must be visible. Workspace access additionally
+        requires active membership. Stale list entries have no body.
+      parameters:
+      - in: path
+        name: workspace_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id002
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/workspaces/{workspace_id}/wiki/search:
+    post:
+      operationId: searchWorkspaceWiki
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: workspace_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: *id003
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WikiSearchResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/workspaces/{workspace_id}/wiki/pages/{page_id}:
+    get:
+      operationId: readWorkspaceWikiPage
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: workspace_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id001
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/workspaces/{workspace_id}/wiki/pages/{page_id}/links:
+    get:
+      operationId: followWorkspaceWikiLinks
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: At most four linked pages, each authorized and checked against
+        current source versions.
+      parameters:
+      - in: path
+        name: workspace_id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id002
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}/versions:
+    get:
+      operationId: getWikiVersions
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema: *id002
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}/export:
+    get:
+      operationId: exportWikiMarkdown
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}/rebuild:
+    post:
+      operationId: resetWikiPage
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Explicitly release manual edit protection and queue recompilation;
+        historical revisions remain stored.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - version
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+      responses:
+        '202':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/wiki/pages/{page_id}/feedback:
+    post:
+      operationId: submitWikiFeedback
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - version
+              - rating
+              properties:
+                version:
+                  type: integer
+                rating:
+                  type: string
+                  enum:
+                  - helpful
+                  - incorrect
+                  - outdated
+                note:
+                  type: string
+                  maxLength: 1000
+      responses:
+        '204':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/documents/{document_id}/wiki/rebuild:
+    post:
+      operationId: rebuildDocumentWiki
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: document_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/documents/{document_id}/reindex:
+    post:
+      operationId: reindexContextDocument
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Authenticated, source-authorized Wiki access.
+      parameters:
+      - in: path
+        name: document_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/memories/{memory_id}/corrections:
+    post:
+      operationId: correctLongTermMemory
+      tags:
+      - Context
+      security:
+      - bearerAuth: []
+      description: Atomically supersede an owned active memory and close its validity
+        interval.
+      parameters:
+      - in: path
+        name: memory_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              properties:
+                content:
+                  type: string
+                  minLength: 2
+                  maxLength: 2000
+      responses:
+        '201':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/ops/context/metrics:
+    get:
+      operationId: getContextMetrics
+      tags:
+      - Context
+      security:
+      - operatorBearerAuth: []
+      - adminSession: []
+      description: Authenticated, source-authorized Wiki access.
+      responses:
+        '200':
+          description: Success
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /v1/ops/context/backfill:
+    post:
+      operationId: queueContextBackfill
+      tags:
+      - Context
+      security:
+      - operatorBearerAuth: []
+      - adminSession: []
+      description: Queue up to 200 ready sources for durable Wiki/index rebuilding;
+        use next_cursor while has_more is true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cursor:
+                  type: string
+      responses:
+        '202':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued:
+                    type: integer
+                  next_cursor:
+                    type: string
+                  has_more:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Page revision or source version changed; refresh and retry.
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /metrics:
     get:
       operationId: getPrometheusMetrics
@@ -1280,7 +1899,7 @@ paths:
     get:
       operationId: listDeadLetterOutboxEvents
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }]
       responses:
         "200":
@@ -1297,7 +1916,7 @@ paths:
     get:
       operationId: getOutboxEvent
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: event_id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -1315,7 +1934,7 @@ paths:
     post:
       operationId: replayDeadLetterOutboxEvent
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: event_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1342,7 +1961,7 @@ paths:
     get:
       operationId: listKafkaPoisonMessages
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }]
       responses:
         "200":
@@ -1359,7 +1978,7 @@ paths:
     get:
       operationId: listEmailDeliveries
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: status, in: query, required: false, schema: { type: string, enum: [queued, processing, sent, failed] } }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
@@ -1379,7 +1998,7 @@ paths:
     get:
       operationId: getEmailDelivery
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -1397,7 +2016,7 @@ paths:
     post:
       operationId: replayEmailDelivery
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: delivery_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1424,7 +2043,7 @@ paths:
     get:
       operationId: listOperatorUsers
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 320 } }
         - { name: status, in: query, required: false, schema: { type: string, enum: [active, disabled, deleted] } }
@@ -1445,7 +2064,7 @@ paths:
     get:
       operationId: getOperatorUser
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: user_id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -1463,7 +2082,7 @@ paths:
     post:
       operationId: disableOperatorUser
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1489,7 +2108,7 @@ paths:
     post:
       operationId: enableOperatorUser
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1515,7 +2134,7 @@ paths:
     get:
       operationId: listOperatorAccounts
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: role, in: query, required: false, schema: { type: string, enum: [viewer, support, admin] } }
         - { name: status, in: query, required: false, schema: { type: string, enum: [active, disabled], default: active } }
@@ -1536,7 +2155,7 @@ paths:
     post:
       operationId: createOperatorAccount
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
@@ -1558,7 +2177,7 @@ paths:
     get:
       operationId: getOperatorAccount
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }]
       responses:
         "200":
@@ -1577,7 +2196,7 @@ paths:
     post:
       operationId: disableOperatorAccount
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1603,7 +2222,7 @@ paths:
     post:
       operationId: enableOperatorAccount
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1629,7 +2248,7 @@ paths:
     post:
       operationId: resetOperatorAccountToken
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1652,7 +2271,7 @@ paths:
     post:
       operationId: resetOperatorAccountMFA
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: operator_id, in: path, required: true, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
@@ -1674,7 +2293,7 @@ paths:
     get:
       operationId: getOperatorConsoleBootstrap
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Admin console navigation, capability, filter, and limit contract for the authenticated operator.
@@ -1686,7 +2305,7 @@ paths:
     get:
       operationId: getOperatorReliability
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Current reliability controller snapshot for the operator dashboard.
@@ -1698,7 +2317,7 @@ paths:
     get:
       operationId: listOperatorSystemLogs
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Queries Loki structured operational logs with explicit PostgreSQL fallback after server-side secret and content redaction. Prompt, response, request-body, credential, token, and cookie values are never returned.
       parameters:
         - { name: since, in: query, required: false, description: Defaults to one hour before until., schema: { type: string, format: date-time } }
@@ -1722,7 +2341,7 @@ paths:
     get:
       operationId: listOperatorAlertRules
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Persistent log-based alert rules.
@@ -1737,7 +2356,7 @@ paths:
     post:
       operationId: createOperatorAlertRule
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertRuleRequest" } } }
@@ -1758,7 +2377,7 @@ paths:
     patch:
       operationId: setOperatorAlertRuleEnabled
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: rule_id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1781,7 +2400,7 @@ paths:
     get:
       operationId: listOperatorAlertSubscriptions
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Admin-visible incident email routing subscriptions.
@@ -1797,7 +2416,7 @@ paths:
     post:
       operationId: createOperatorAlertSubscription
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/CreateAlertSubscriptionRequest" } } }
@@ -1820,7 +2439,7 @@ paths:
     patch:
       operationId: setOperatorAlertSubscriptionEnabled
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: subscription_id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1843,7 +2462,7 @@ paths:
     post:
       operationId: evaluateOperatorAlerts
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Immediate evaluation report. The API also evaluates enabled rules periodically.
@@ -1860,7 +2479,7 @@ paths:
     get:
       operationId: listOperatorIncidents
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: status, in: query, required: false, schema: { type: string, enum: [open, acknowledged, resolved] } }
         - { name: severity, in: query, required: false, schema: { type: string, enum: [warning, critical] } }
@@ -1882,7 +2501,7 @@ paths:
     get:
       operationId: getOperatorIncident
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -1900,7 +2519,7 @@ paths:
     get:
       operationId: listOperatorIncidentNotifications
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
       responses:
         "200":
@@ -1918,7 +2537,7 @@ paths:
     get:
       operationId: exportOperatorIncidentEvidence
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: format, in: query, required: false, schema: { type: string, enum: [json, markdown], default: json } }
@@ -1937,7 +2556,7 @@ paths:
     post:
       operationId: acknowledgeOperatorIncident
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1961,7 +2580,7 @@ paths:
     post:
       operationId: resolveOperatorIncident
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: incident_id, in: path, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1985,7 +2604,7 @@ paths:
     get:
       operationId: listOperatorAgentRuns
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists privacy-reduced Agent Run metadata. Prompts, responses, tool arguments, and tool results are not returned.
       parameters:
         - { name: status, in: query, required: false, schema: { type: string, enum: [accepted, queued, running, waiting_approval, waiting_tool, completed, failed, cancel_requested, cancelled, timed_out] } }
@@ -2014,7 +2633,7 @@ paths:
     get:
       operationId: getOperatorAgentRun
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Returns a redacted trace. User prompts, assistant responses, tool arguments/results, and confirmation secrets are excluded.
       parameters:
         - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2031,7 +2650,7 @@ paths:
     get:
       operationId: listOperatorVersionPerformance
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Aggregates privacy-safe success, quality, latency, token, and cost metrics by immutable Agent or model-profile version.
       parameters:
         - { name: dimension, in: query, required: false, schema: { type: string, enum: [agent_version, model_profile], default: agent_version } }
@@ -2052,7 +2671,7 @@ paths:
     get:
       operationId: listOperatorModelPerformance
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Aggregates the provider and model actually returned for persisted Agent model calls, including failures and cost.
       parameters:
         - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
@@ -2072,7 +2691,7 @@ paths:
     get:
       operationId: getOperatorPerformanceAnomalies
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Compares a recent completed-run window with the immediately preceding baseline and suppresses decisions when sample counts are too small.
       parameters:
         - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
@@ -2090,7 +2709,7 @@ paths:
     get:
       operationId: listOperatorPerformanceTrend
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Returns privacy-safe cost, success, call-volume, and latency buckets. Ranges up to seven days use hourly buckets; longer ranges use daily buckets.
       parameters:
         - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
@@ -2107,7 +2726,7 @@ paths:
     get:
       operationId: getOperatorPerformanceForecast
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Projects each matching budget to the end of its current period using actual burn rate over the selected history window. It also proposes lower-cost observed models only when sample, error-rate, and P95-latency guardrails pass. Recommendations are read-only and require validation before adoption.
       parameters:
         - { name: module, in: query, required: false, schema: { type: string, enum: [companion, life, work] } }
@@ -2124,7 +2743,7 @@ paths:
     get:
       operationId: listOperatorPerformanceBudgets
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Evaluates persisted daily and monthly cost guardrails against actual Agent model-call costs and returns each budget's proactive forecast policy.
       responses:
         "200":
@@ -2141,7 +2760,7 @@ paths:
     post:
       operationId: createOperatorPerformanceBudget
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Creates one audited budget per module scope and period. Requires the admin role.
       requestBody:
         required: true
@@ -2163,7 +2782,7 @@ paths:
     get:
       operationId: getOperatorPerformanceBudgetForecastHistory
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Reports outcomes for incidents initially opened by a projected budget exceedance and produces conservative read-only policy recommendations. A hit means the same incident later escalated to an actual exceedance; a cleared prediction may reflect successful mitigation and is not labelled a false positive. Observing predictions are excluded from hit-rate calculations. Recommendations require at least five decided outcomes and must pass impact preview before any manual update. Regressed effects can be acknowledged and closed through separately audited, admin-only endpoints that never update the budget.
       parameters:
         - { name: range, in: query, required: false, schema: { type: string, enum: [30d, 90d, 365d], default: 90d } }
@@ -2179,7 +2798,7 @@ paths:
     get:
       operationId: exportOperatorPerformanceBudgetReview
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Downloads a privacy-safe periodic review containing current budget status, complete forecast outcomes, human decisions, effect observations, rollback plans, and post-rollback verification. It never evaluates budgets or sends notifications.
       parameters:
         - { name: range, in: query, required: false, schema: { type: string, enum: [30d, 90d, 365d], default: 90d } }
@@ -2198,7 +2817,7 @@ paths:
     post:
       operationId: evaluateOperatorPerformanceBudgets
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Immediately evaluates every persisted budget and reconciles forecast-warning, actual-warning, critical, escalation, and recovery incident transitions. Each budget controls whether forecast incidents are enabled, the 1-90 day history window, and the 5-10000 completed-run sample minimum. The API also runs this evaluation periodically.
       responses:
         "200":
@@ -2217,7 +2836,7 @@ paths:
     patch:
       operationId: updateOperatorPerformanceBudget
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Replaces mutable budget fields using an optimistic revision check and records the reason in the audit log. Requires the admin role.
       parameters:
         - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2242,7 +2861,7 @@ paths:
     post:
       operationId: previewOperatorPerformanceBudgetImpact
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Compares the persisted budget with a proposed complete definition using the same actual-cost and forecast rules as incident evaluation. This admin-only operation is read-only and never saves the budget, reconciles incidents, or sends notifications.
       parameters:
         - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2267,7 +2886,7 @@ paths:
     post:
       operationId: decideOperatorPerformanceBudgetRecommendation
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Records an admin's accepted or rejected decision against the exact recommendation snapshot. This operation is audited and never updates the budget, creates an incident, or sends a notification. Reusing the same snapshot key revises the recorded decision while preserving audit history.
       parameters:
         - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2295,7 +2914,7 @@ paths:
     post:
       operationId: acknowledgeOperatorPerformanceBudgetEffect
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Records or revises an admin disposition for a currently reviewable regressed effect. The audit event binds the evidence snapshot, application revision, observation window, and rollback parameters. This operation never updates the budget.
       parameters:
         - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2322,7 +2941,7 @@ paths:
     post:
       operationId: closeOperatorPerformanceBudgetEffect
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Closes an acknowledged effect disposition with an audited reason. Closed dispositions are immutable; this operation never updates or rolls back the budget.
       parameters:
         - { name: budget_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2349,7 +2968,7 @@ paths:
     get:
       operationId: getOperatorRuntimeConfigurationConvergence
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Compares durable heartbeats from API and Agent Worker instances with the currently deployed immutable configuration versions.
       responses:
         "200":
@@ -2361,7 +2980,7 @@ paths:
     get:
       operationId: listOperatorBillingPlanConfiguration
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists immutable billing-plan versions and the active deployment for the current environment.
       parameters:
         - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
@@ -2376,7 +2995,7 @@ paths:
     post:
       operationId: createOperatorBillingPlanVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Creates an immutable billing-plan draft. Requires an admin operator.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2401,7 +3020,7 @@ paths:
     post:
       operationId: rollbackOperatorBillingPlan
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Rolls the active billing plan back to an earlier published version. Requires admin, verified MFA, and approval separation.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2422,7 +3041,7 @@ paths:
     get:
       operationId: getOperatorUserBillingUsage
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Returns a support-safe unified quota view from durable documents, Skill Runs, Agent Runs, model costs, workspaces, and append-only adjustments.
       parameters:
         - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2435,7 +3054,7 @@ paths:
     get:
       operationId: listOperatorUserBillingAdjustments
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
@@ -2454,7 +3073,7 @@ paths:
     post:
       operationId: createOperatorUserBillingAdjustment
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Appends an audited usage correction without mutating source events. Requires admin and verified MFA; the legacy development key is accepted only when MFA enforcement is disabled.
       parameters:
         - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2482,7 +3101,7 @@ paths:
     get:
       operationId: listOperatorModelProviders
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Safe provider metadata. Credential values are never returned.
@@ -2499,7 +3118,7 @@ paths:
     get:
       operationId: listOperatorModelCatalog
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Governed model catalog available to model profiles.
@@ -2516,7 +3135,7 @@ paths:
     get:
       operationId: listOperatorModelProfileConfiguration
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists immutable model-routing profiles and active deployments.
       parameters:
         - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
@@ -2531,7 +3150,7 @@ paths:
     post:
       operationId: createOperatorModelProfileVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Creates a validated-against-catalog model-profile draft. Requires an admin operator.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2556,7 +3175,7 @@ paths:
     post:
       operationId: rollbackOperatorModelProfile
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Rolls the desired model profile back to an earlier published version. Requires admin, verified MFA, and approval separation.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2577,7 +3196,7 @@ paths:
     get:
       operationId: listOperatorPrompts
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists independently versioned Prompt assets and active deployments.
       parameters:
         - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
@@ -2592,7 +3211,7 @@ paths:
     post:
       operationId: createOperatorPromptVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Creates an immutable Prompt draft. Requires an admin operator.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2617,7 +3236,7 @@ paths:
     post:
       operationId: rollbackOperatorPrompt
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Rolls the active Prompt deployment back without changing previously pinned Agent versions.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2638,7 +3257,7 @@ paths:
     get:
       operationId: listOperatorAgentDefinitions
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists immutable Agent Studio definition versions and active deployments.
       parameters:
         - { name: key, in: query, required: false, schema: { type: string, maxLength: 96 } }
@@ -2653,7 +3272,7 @@ paths:
     post:
       operationId: compileOperatorAgentDefinition
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Compiles and validates a declarative Agent graph without persisting it or invoking models and tools.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2676,7 +3295,7 @@ paths:
     post:
       operationId: dryRunOperatorAgentDefinition
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Executes a draft with the production declarative LangGraph compiler and isolated synthetic model/tool fixtures. It cannot access production data or invoke external providers. Requires support or admin.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2695,7 +3314,7 @@ paths:
     post:
       operationId: createOperatorAgentDefinitionVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Creates an immutable declarative Agent graph draft. Requires an admin operator.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2720,7 +3339,7 @@ paths:
     post:
       operationId: rollbackOperatorAgentDefinition
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Rolls an Agent definition deployment back to an earlier published version. Requires admin, MFA, and approval separation.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2741,7 +3360,7 @@ paths:
     post:
       operationId: dryRunOperatorAgentDefinitionVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Executes an immutable Agent definition version with isolated synthetic fixtures. Requires support or admin.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2761,7 +3380,7 @@ paths:
     post:
       operationId: evaluateOperatorAgentDefinitionVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Runs and persists a bounded agent-eval-case-v1 suite against the exact immutable Agent version. Requires support or admin.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2781,7 +3400,7 @@ paths:
     get:
       operationId: listOperatorAgentEvaluationRuns
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists persistent evaluation history for one immutable Agent version.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2803,7 +3422,7 @@ paths:
     get:
       operationId: getOperatorAgentEvaluationRun
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Gets the immutable suite, per-case assertions, baseline comparison, and Gate decision for one evaluation run.
       parameters:
         - { name: run_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2817,7 +3436,7 @@ paths:
     post:
       operationId: startOperatorAgentRollout
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Starts a deterministic user-cohort Canary for a submitted Agent version against the currently published baseline. Requires a separate admin approver and verified MFA.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2838,7 +3457,7 @@ paths:
     get:
       operationId: listOperatorAgentRollouts
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Lists the persistent online rollout and Gate history for one Agent key.
       parameters:
         - { name: config_key, in: path, required: true, schema: { type: string, pattern: "^[a-z0-9_-]{1,96}$" } }
@@ -2860,7 +3479,7 @@ paths:
     get:
       operationId: getOperatorAgentRollout
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
@@ -2873,7 +3492,7 @@ paths:
     post:
       operationId: refreshOperatorAgentRollout
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Recomputes candidate and baseline metrics from persisted Agent Runs. Insufficient samples continue collecting; any violation automatically pauses candidate routing. Requires support or admin.
       parameters:
         - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2889,7 +3508,7 @@ paths:
     post:
       operationId: abortOperatorAgentRollout
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Stops candidate routing and returns all new Runs to the published baseline. Requires admin and verified MFA.
       parameters:
         - { name: rollout_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2909,7 +3528,7 @@ paths:
     post:
       operationId: validateOperatorConfigurationVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Revalidates a draft against the current schema and governed catalog. Requires an admin operator.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2934,7 +3553,7 @@ paths:
     post:
       operationId: submitOperatorConfigurationVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Submits a validated version for approval. Agent definitions require a passing evaluation bound to the exact version fingerprint. Requires an admin operator.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2956,7 +3575,7 @@ paths:
     post:
       operationId: publishOperatorConfigurationVersion
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       description: Publishes a submitted version. Agent definitions recheck their fingerprint-bound evaluation and, when replacing an active version, atomically require and promote a passing online Canary. Requires a different admin from the author/submitter and verified MFA.
       parameters:
         - { name: version_id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2974,7 +3593,7 @@ paths:
     get:
       operationId: getReleaseReadiness
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       responses:
         "200":
           description: Admin-only release readiness checklist for production/internal release gates.
@@ -2987,7 +3606,7 @@ paths:
     get:
       operationId: listAuditLogs
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: actor_type, in: query, required: false, schema: { type: string, enum: [user, operator, system] } }
         - { name: action, in: query, required: false, schema: { type: string, maxLength: 128 } }
@@ -3010,7 +3629,7 @@ paths:
     get:
       operationId: exportAuditLogs
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: format, in: query, required: false, schema: { type: string, enum: [csv], default: csv } }
         - { name: actor_type, in: query, required: false, schema: { type: string, enum: [user, operator, system] } }
@@ -3033,7 +3652,7 @@ paths:
     get:
       operationId: listCompensationRecords
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters: [{ name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }]
       responses:
         "200":
@@ -3049,7 +3668,7 @@ paths:
     post:
       operationId: createCompensationRecord
       tags: [Operations]
-      security: [{ operatorBearerAuth: [] }]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
       parameters:
         - { name: X-Operator-ID, in: header, required: false, schema: { type: string, maxLength: 128 } }
         - { name: X-Operator-TOTP, in: header, required: false, schema: { type: string, pattern: "^\\d{6}$" } }
@@ -3233,6 +3852,11 @@ paths:
                   items: { type: array, items: { $ref: "#/components/schemas/MCPServerSummary" } }
 components:
   securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: __Host-ai_admin
+      description: Opaque WebAuthn administrator session. Localhost HTTP uses ai_admin. Browser writes additionally require an exact Origin, X-Admin-CSRF=1, and verification in the last five minutes. The same-origin web proxy manages cookies.
     bearerAuth:
       type: http
       scheme: bearer
@@ -3266,6 +3890,99 @@ components:
       description: The isolated runtime or a required service is temporarily unavailable.
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
   schemas:
+    WikiSource:
+      type: object
+      required:
+      - document_id
+      - version
+      - name
+      properties:
+        document_id:
+          type: string
+        version:
+          type: string
+        name:
+          type: string
+    WikiEvidence:
+      type: object
+      properties:
+        document_id:
+          type: string
+        chunk_id:
+          type: string
+        quote:
+          type: string
+        page:
+          type: integer
+    WikiPage:
+      type: object
+      required:
+      - id
+      - version
+      - kind
+      - title
+      - sources
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        kind:
+          type: string
+          enum:
+          - source
+          - topic
+          - entity
+          - decision
+        title:
+          type: string
+        body:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/WikiSource'
+        evidence:
+          type: array
+          items:
+            $ref: '#/components/schemas/WikiEvidence'
+        links:
+          type: array
+          items:
+            type: string
+        conflicts:
+          type: array
+          items:
+            type: string
+        edited:
+          type: boolean
+        stale:
+          type: boolean
+        compiler:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    WikiSearchResult:
+      type: object
+      properties:
+        hits:
+          type: array
+          items:
+            type: object
+            properties:
+              page:
+                $ref: '#/components/schemas/WikiPage'
+              score:
+                type: number
+        tokens:
+          type: integer
+        omitted:
+          type: integer
+        cache_hit:
+          type: boolean
+        degraded:
+          type: boolean
     Error:
       type: object
       additionalProperties: false
@@ -5632,6 +6349,7 @@ components:
         role: { type: string, enum: [viewer, support, admin] }
         status: { type: string, enum: [active, disabled] }
         mfa_enabled: { type: boolean }
+        passkey_enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         last_authenticated_at: { type: string, format: date-time }

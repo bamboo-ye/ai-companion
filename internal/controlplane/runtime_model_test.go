@@ -16,6 +16,9 @@ func TestActiveModelRuntimeProjectsPublishedProfile(t *testing.T) {
 		t.Fatalf("snapshot metadata = %#v", snapshot)
 	}
 	variables := snapshot.Variables
+	if variables["MODEL_RESPONDER_CONTEXT_WINDOW"] != "131072" {
+		t.Fatalf("fallback minimum context window = %q", variables["MODEL_RESPONDER_CONTEXT_WINDOW"])
+	}
 	if variables["MODEL_PROVIDER"] != "openrouter" || variables["MODEL_PLANNER_NAME"] != "deepseek/deepseek-v4-flash-0731" {
 		t.Fatalf("runtime variables = %#v", variables)
 	}
@@ -43,5 +46,26 @@ func TestActiveModelRuntimeRequiresKnownDeploymentAndCredential(t *testing.T) {
 	}
 	if err = snapshot.ValidateCredentialEnvironment(func(string) (string, bool) { return "", false }); !errors.Is(err, ErrValidation) {
 		t.Fatalf("missing credential error = %v", err)
+	}
+}
+
+func TestRoleContextWindowUsesSmallerFallbackAndDoesNotMutateSnapshot(t *testing.T) {
+	store := NewMemoryStore()
+	service := NewService(store, "test")
+	before, err := service.ActiveModelRuntime(context.Background(), DefaultModelProfileKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range store.models {
+		if store.models[index].ModelID == "google/gemma-4-31b-it:free" {
+			store.models[index].ContextWindow = 65536
+		}
+	}
+	after, err := service.ActiveModelRuntime(context.Background(), DefaultModelProfileKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Variables["MODEL_COMPANION_RESPONDER_CONTEXT_WINDOW"] != "65536" || before.Variables["MODEL_COMPANION_RESPONDER_CONTEXT_WINDOW"] != "131072" {
+		t.Fatal("role window is not an immutable minimum")
 	}
 }

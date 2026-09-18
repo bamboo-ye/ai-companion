@@ -1,0 +1,128 @@
+openapi: 3.1.0
+info:
+  title: Administrator Passkey Authentication
+  version: 1.0.0
+  description: Browser calls use the same-origin /api/admin proxy. Every POST requires Origin equal to WEB_ORIGIN and X-Admin-CSRF set to "1". WebAuthn user verification is required; PIN selection is controlled by the device. Responses must not be cached.
+paths:
+  /v1/ops/auth/passkey/login/options:
+    post:
+      operationId: beginAdminPasskeyLogin
+      summary: Begin discoverable administrator login
+      description: Returns publicKey request options and an HttpOnly ceremony cookie. Challenge expires in five minutes and is consumed once. If a valid admin session exists, login is bound to that same account. Rate limited to 120 begin requests per transport peer per minute.
+      responses:
+        '200':
+          description: WebAuthn request options and ceremony cookie
+          content:
+            application/json:
+              schema: { type: object, required: [publicKey], properties: { publicKey: { type: object, additionalProperties: true } } }
+        '403': { description: Origin or CSRF header rejected }
+        '429': { description: Rate limit exceeded; Retry-After is 60 seconds }
+        '503': { description: Passkey configuration or persistent store unavailable }
+  /v1/ops/auth/passkey/login/verify:
+    post:
+      operationId: finishAdminPasskeyLogin
+      summary: Verify assertion and rotate the admin session
+      description: Requires the matching login ceremony cookie. Validates challenge, origin, RP ID, signature, UV, ownership and authenticator counter. Returns an opaque HttpOnly session cookie; the prior browser session is revoked.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [id, rawId, type, response], additionalProperties: true }
+      responses:
+        '200': { description: Authenticated; session cookie issued }
+        '401': { description: Invalid, expired, replayed or mismatched assertion }
+        '403': { description: Origin or CSRF header rejected }
+  /v1/ops/auth/passkey/register/options:
+    post:
+      operationId: beginAdminPasskeyRegistration
+      summary: Consume an invitation or enroll a backup passkey
+      description: A supplied invite is consumed immediately and must be reissued if enrollment is cancelled. With an empty invite, requires a valid admin session verified in the last five minutes, and binds a backup credential to that account. Resident credentials and user verification are required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties: { invite: { type: string, description: Single-use invitation or empty for a backup credential } }
+      responses:
+        '200':
+          description: WebAuthn creation options and registration ceremony cookie
+          content:
+            application/json:
+              schema: { type: object, required: [publicKey], properties: { publicKey: { type: object, additionalProperties: true } } }
+        '401': { description: Invitation invalid or recent verification required (operator_reauth_required) }
+        '403': { description: Origin or CSRF header rejected }
+        '429': { description: Rate limited }
+  /v1/ops/auth/passkey/register/verify:
+    post:
+      operationId: finishAdminPasskeyRegistration
+      summary: Verify and persist the public credential, then create a session
+      description: Requires the matching registration ceremony cookie. No device PIN or private key is transmitted to this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [id, rawId, type, response], additionalProperties: true }
+      responses:
+        '200': { description: Credential registered and session cookie issued }
+        '401': { description: Invalid, expired or already consumed ceremony }
+        '403': { description: Origin or CSRF header rejected }
+  /v1/ops/auth/logout:
+    post:
+      operationId: logoutAdminSession
+      summary: Revoke this browser session and clear admin cookies
+      responses:
+        '204': { description: Session revoked; idempotent for missing or expired sessions }
+        '403': { description: Origin or CSRF header rejected }
+        '503': { description: Session revocation unavailable; client must not claim logout succeeded }
+  /v1/ops/auth/invitations:
+    post:
+      operationId: inviteAdminMember
+      security: [{ adminSession: [] }, { operatorBearerAuth: [] }]
+      summary: Create or reissue a member's first-enrollment invitation
+      description: Requires admin role and recent verification for browser sessions. Reissue requires the existing account to have no passkeys and the same name and role; it invalidates previous invites. Cannot take over an enrolled account. The invite is a secret returned once, expires in 30 minutes, and should be shared using /admin#invite=TOKEN.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, name, role, reason]
+              properties:
+                id: { type: string, maxLength: 128 }
+                name: { type: string, maxLength: 128 }
+                role: { type: string, enum: [viewer, support, admin] }
+                reason: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        '201':
+          description: Invitation issued
+          content:
+            application/json:
+              schema: { type: object, required: [invite, expires_in], properties: { invite: { type: string }, expires_in: { type: integer, const: 1800 } } }
+        '401': { description: Authentication or recent verification required }
+        '403': { description: Role, origin or CSRF header rejected }
+        '409': { description: Existing enrolled account or conflicting account attributes }
+        '422': { description: Invalid account fields or missing audit reason }
+  /v1/ops/auth/sessions/revoke:
+    post:
+      operationId: revokeAllOwnAdminSessions
+      security: [{ adminSession: [] }, { operatorBearerAuth: [] }]
+      summary: Revoke all sessions for the authenticated operator
+      description: Requires recent verification for browser sessions. Also rotates the operator token and increments session version; enrolled passkeys remain usable. Clears the current browser cookie.
+      responses:
+        '204': { description: All sessions revoked }
+        '401': { description: Authentication or recent verification required }
+        '403': { description: Origin or CSRF header rejected }
+components:
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: __Host-ai_admin
+      description: Localhost HTTP uses ai_admin. Cookie is managed by the same-origin web proxy.
+    operatorBearerAuth:
+      type: http
+      scheme: bearer
+      description: CLI operator token with X-Operator-TOTP when MFA is required.

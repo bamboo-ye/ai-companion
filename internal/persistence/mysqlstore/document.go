@@ -175,6 +175,9 @@ func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, n
 	if _, err = tx.ExecContext(ctx, `INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,event_version,payload,occurred_at) VALUES (UUID_TO_BIN(?),'document',UUID_TO_BIN(?),'document.cleanup.v1',1,?,?)`, eventID, documentID, payload, now); err != nil {
 		return err
 	}
+	if err = document.EnqueueWikiSQL(ctx, tx, "mysql", userID, documentID, now); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -413,6 +416,13 @@ func (s *Store) CompleteIngestJob(ctx context.Context, jobID string, now time.Ti
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE documents SET ingest_status='ready',failure_code=NULL,updated_at=? WHERE id=UUID_TO_BIN(?) AND ingest_status='processing'`, now, documentID); err != nil {
+		return err
+	}
+	var ownerID string
+	if err = tx.QueryRowContext(ctx, `SELECT BIN_TO_UUID(user_id) FROM documents WHERE id=UUID_TO_BIN(?)`, documentID).Scan(&ownerID); err != nil {
+		return err
+	}
+	if err = document.EnqueueWikiSQL(ctx, tx, "mysql", ownerID, documentID, now); err != nil {
 		return err
 	}
 	return tx.Commit()

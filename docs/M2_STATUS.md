@@ -2,6 +2,11 @@
 
 Date: 2026-07-03
 
+2026-09-18 update: regular chat and Agent intake now share a versioned context
+snapshot with summary/memory provenance, bounded memory admission, and full text
+request-window guards. See [Context management P0](CONTEXT_MANAGEMENT.md) for
+the P0–P3 implementation, grounded Wiki, incremental compilation, semantic retrieval rollout, and replay coverage.
+
 ## Completed in slice 1
 
 - Explicit high-confidence extraction for “记住 / 请记住 / 记一下” messages.

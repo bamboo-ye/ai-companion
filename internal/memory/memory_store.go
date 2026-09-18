@@ -18,8 +18,24 @@ func (s *MemoryStore) UpsertMemory(_ context.Context, item Memory) (Memory, bool
 	defer s.mu.Unlock()
 	for _, existing := range s.items {
 		if existing.UserID == item.UserID && existing.NormalizedHash == item.NormalizedHash && existing.Status == "active" {
+			if item.SupersedesID == existing.ID {
+				continue
+			}
+			if item.SupersedesID != "" {
+				return item, false, ErrValidation
+			}
 			return existing, false, nil
 		}
+	}
+	if item.SupersedesID != "" {
+		old, ok := s.items[item.SupersedesID]
+		if !ok || old.UserID != item.UserID || old.Status != "active" {
+			return item, false, ErrNotFound
+		}
+		old.Status = "superseded"
+		old.ValidTo = &item.ValidFrom
+		old.UpdatedAt = item.ValidFrom
+		s.items[old.ID] = old
 	}
 	s.items[item.ID] = item
 	return item, true, nil

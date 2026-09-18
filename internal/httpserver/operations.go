@@ -437,7 +437,7 @@ func (s *Server) getReleaseReadiness(w http.ResponseWriter, r *http.Request) {
 		activeAdmin = err == nil && len(accounts) > 0
 		if err == nil {
 			for _, account := range accounts {
-				if account.MFAEnabled {
+				if account.MFAEnabled || (s.adminPasskeys != nil && s.adminPasskeys.HasCredential(r.Context(), account.ID)) {
 					activeMFAAdmin = true
 					break
 				}

@@ -2,6 +2,8 @@
 .github
 .cache
 .data
+.codex-artifacts
+.next
 .env
 node_modules
 web/.next

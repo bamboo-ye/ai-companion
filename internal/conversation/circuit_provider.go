@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/reliability"
 )
 
@@ -26,7 +27,7 @@ func (p CircuitBreakerProvider) Generate(ctx context.Context, persona character.
 	}
 	text, usage, err := p.Next.Generate(ctx, persona, history)
 	if err != nil {
-		if !errors.Is(err, context.Canceled) {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, contextengine.ErrBudgetExceeded) {
 			p.Breaker.RecordFailure()
 		}
 		return "", Usage{}, err
@@ -45,7 +46,7 @@ func (p CircuitBreakerProvider) GenerateWithTools(ctx context.Context, persona c
 	}
 	turn, usage, err := next.GenerateWithTools(ctx, persona, history, tools)
 	if err != nil {
-		if !errors.Is(err, context.Canceled) {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, contextengine.ErrBudgetExceeded) {
 			p.Breaker.RecordFailure()
 		}
 		return ModelToolTurn{}, Usage{}, err

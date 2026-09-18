@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/windcry1/ai-companion/internal/platform/id"
+	"github.com/windcry1/ai-companion/internal/semantic"
 )
 
 var (
@@ -61,18 +62,21 @@ type BlobStore interface {
 }
 
 type Service struct {
-	store    Store
-	blobs    BlobStore
-	maxBytes int64
-	now      func() time.Time
-	index    VectorIndex
+	store       Store
+	blobs       BlobStore
+	maxBytes    int64
+	now         func() time.Time
+	index       VectorIndex
+	semantic    *semantic.Client
+	wikiEnabled bool
+	wikiRuntime *wikiRuntime
 }
 
 func NewService(store Store, blobs BlobStore, maxBytes int64) *Service {
 	if maxBytes <= 0 {
 		maxBytes = defaultMaxUploadBytes
 	}
-	return &Service{store: store, blobs: blobs, maxBytes: maxBytes, now: time.Now, index: NoopVectorIndex{}}
+	return &Service{store: store, blobs: blobs, maxBytes: maxBytes, now: time.Now, index: NoopVectorIndex{}, wikiEnabled: true, wikiRuntime: &wikiRuntime{cache: map[string]wikiCacheEntry{}}}
 }
 
 func (s *Service) SetVectorIndex(index VectorIndex) {

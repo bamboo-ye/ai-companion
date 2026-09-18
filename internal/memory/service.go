@@ -6,13 +6,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/windcry1/ai-companion/internal/semantic"
 	"math"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 )
 
@@ -54,8 +57,11 @@ type Store interface {
 	ClearMemories(context.Context, string, time.Time) error
 }
 type Service struct {
-	store Store
-	now   func() time.Time
+	semantic   *semantic.Client
+	cacheMu    sync.Mutex
+	embeddings map[string]embeddingEntry
+	store      Store
+	now        func() time.Time
 }
 
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
@@ -136,18 +142,35 @@ func (s *Service) Clear(ctx context.Context, userID string) error {
 	return s.store.ClearMemories(ctx, userID, s.now().UTC())
 }
 func (s *Service) Recall(ctx context.Context, userID, query string, limit int) ([]string, error) {
+	items, err := s.RecallContext(ctx, userID, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.Content)
+	}
+	return result, nil
+}
+
+// RecallContext preserves provenance for both chat and Agent context builders.
+func (s *Service) RecallContext(ctx context.Context, userID, query string, limit int) ([]contextengine.Item, error) {
 	items, err := s.store.ListMemories(ctx, userID, 500)
 	if err != nil {
 		return nil, err
 	}
+	semanticScores := s.semanticScores(ctx, userID, query, items)
 	queryTokens := tokens(query)
 	type scored struct {
-		content string
-		score   float64
+		item  Memory
+		score float64
 	}
 	matches := []scored{}
 	now := s.now().UTC()
 	for _, item := range items {
+		if item.Status != "active" || item.ValidFrom.After(now) || (item.ValidTo != nil && !item.ValidTo.After(now)) {
+			continue
+		}
 		memoryTokens := tokens(item.Content)
 		overlap := 0
 		for token := range memoryTokens {
@@ -155,13 +178,14 @@ func (s *Service) Recall(ctx context.Context, userID, query string, limit int) (
 				overlap++
 			}
 		}
-		if overlap == 0 && !item.Pinned {
+		if overlap == 0 && semanticScores[item.ID] < .5 && !item.Pinned {
 			continue
 		}
 		semantic := 0.0
 		if len(queryTokens) > 0 {
 			semantic = math.Min(1, float64(overlap)/float64(len(queryTokens)))
 		}
+		semantic = math.Max(semantic, semanticScores[item.ID])
 		ageDays := now.Sub(item.UpdatedAt).Hours() / 24
 		if ageDays < 0 {
 			ageDays = 0
@@ -172,16 +196,20 @@ func (s *Service) Recall(ctx context.Context, userID, query string, limit int) (
 			score += .35
 		}
 		if semantic > 0 || item.Pinned {
-			matches = append(matches, scored{item.Content, score})
+			matches = append(matches, scored{item, score})
 		}
 	}
 	sort.SliceStable(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
 	if limit <= 0 || limit > 20 {
 		limit = 8
 	}
-	result := []string{}
+	result := []contextengine.Item{}
 	for _, match := range matches {
-		result = append(result, match.content)
+		item := match.item
+		result = append(result, contextengine.Item{Content: item.Content, EstimatedTokens: contextengine.EstimateTokens(item.Content), Source: contextengine.Source{
+			Kind: "memory", ID: item.ID, ConversationID: item.SourceConversationID,
+			MessageID: item.SourceMessageID, UpdatedAt: &item.UpdatedAt,
+		}})
 		if len(result) >= limit {
 			break
 		}

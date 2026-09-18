@@ -24,6 +24,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/platform/config"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 	"github.com/windcry1/ai-companion/internal/reliability"
+	"github.com/windcry1/ai-companion/internal/semantic"
 	"github.com/windcry1/ai-companion/internal/skill"
 	"github.com/windcry1/ai-companion/internal/worker"
 )
@@ -61,7 +62,7 @@ func main() {
 			logger.Error("initialize document storage", "error", blobErr)
 			os.Exit(1)
 		}
-		index := document.NewQdrantIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 15*time.Second)
+		index := document.NewKnowledgeIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 15*time.Second, cfg.Knowledge)
 		if ensureErr := index.Ensure(ctx); ensureErr != nil {
 			logger.Warn("qdrant unavailable; document jobs will retry independently while skill jobs continue", "error", ensureErr)
 		}
@@ -90,12 +91,15 @@ func main() {
 		skillRunner := skill.NewRunner(skillService, workerID, cfg.SkillWorkerLeaseDuration, cfg.SkillWorkerRenewInterval)
 		documentIngestor := document.NewIngestor(store, blobs, parser, index, workerID)
 		documentCleaner := document.NewCleaner(store, blobs, index, workerID)
+		knowledgeClient := semantic.New(cfg.Knowledge)
 		memoryService := memory.NewService(store)
+		memoryService.SetSemanticClient(knowledgeClient)
 		provider := conversation.Provider(conversation.DevelopmentProvider{})
 		if cfg.ModelProvider == "openrouter" {
 			models := append([]string{cfg.ModelName}, cfg.ModelFallbackNames...)
 			provider = conversation.NewOpenRouterProvider(conversation.OpenRouterOptions{
-				BaseURL: cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
+				ContextWindow: cfg.ModelContextWindow,
+				BaseURL:       cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
 				DataCollection: cfg.ModelDataCollection, ZDRRequired: cfg.ModelZDRRequired, ReasoningEffort: cfg.ModelReasoningEffort, ReasoningExclude: cfg.ModelReasoningExclude,
 				ProviderSort: cfg.ModelProviderSort, AllowProviderFallbacks: cfg.ModelAllowProviderFallbacks, RequireParameters: cfg.ModelRequireParameters,
 				MaxPromptPrice: cfg.ModelMaxPromptPrice, MaxCompletionPrice: cfg.ModelMaxCompletionPrice,
@@ -109,6 +113,7 @@ func main() {
 		conversationService.SetPolicySource(reliabilityController)
 		conversationService.SetMemoryContext(memoryService)
 		conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
+		conversationService.SetSemanticClient(knowledgeClient)
 		ledgerFiles, ledgerFileErr := ledger.NewLocalExportFileStore(cfg.LedgerStorageDir)
 		if ledgerFileErr != nil {
 			logger.Error("initialize ledger export storage", "error", ledgerFileErr)
@@ -119,6 +124,7 @@ func main() {
 		ledgerService.SetExportFileStore(ledgerFiles)
 		documentService := document.NewService(store, blobs, cfg.DocumentMaxUploadBytes)
 		documentService.SetVectorIndex(index)
+		documentService.SetKnowledge(knowledgeClient, cfg.Knowledge.WikiEnabled)
 		plannerService := planner.NewService(store)
 		conversationService.SetToolExecutor(chattool.New(ledgerService, plannerService, documentService, skillService, memoryService))
 		emailSender := email.Sender(email.NoopSender{})
@@ -170,7 +176,8 @@ func main() {
 				}
 			}
 		})
-		runnerCount := 6
+		runnerCount := 7
+		go runNamed("wiki compiler", func() error { return documentService.RunWikiCompiler(runCtx, reconcileInterval) })
 		if cfg.SkillWorkerEnabled {
 			runnerCount++
 			go runNamed("skill reconciler", func() error { return skillRunner.Run(runCtx, skillPollInterval) })

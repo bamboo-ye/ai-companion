@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/adminpasskey"
 	"github.com/windcry1/ai-companion/internal/agent"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/buildinfo"
@@ -36,6 +37,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/router"
 	"github.com/windcry1/ai-companion/internal/safety"
+	"github.com/windcry1/ai-companion/internal/semantic"
 	"github.com/windcry1/ai-companion/internal/skill"
 	"github.com/windcry1/ai-companion/internal/team"
 )
@@ -73,6 +75,7 @@ type Server struct {
 	operatorToken        string
 	operatorMFARequired  bool
 	operatorAuth         *opsauth.Service
+	adminPasskeys        *adminpasskey.Service
 	realtime             realtime.Gateway
 	presenceTTL          time.Duration
 	chatRateLimit        int
@@ -166,6 +169,10 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	conversationService.SetPolicySource(reliabilityController)
 	conversationService.SetMemoryContext(memoryService)
 	conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
+	knowledgeClient := semantic.New(cfg.Knowledge)
+	memoryService.SetSemanticClient(knowledgeClient)
+	conversationService.SetSemanticClient(knowledgeClient)
+	documentService.SetKnowledge(knowledgeClient, cfg.Knowledge.WikiEnabled)
 	chatTools := chattool.New(ledgerService, plannerService, documentService, skillService, memoryService)
 	conversationService.SetToolExecutor(chatTools)
 	if durable, ok := conversationStore.(interface{ DurableChatDispatch() bool }); ok && durable.DurableChatDispatch() {
@@ -239,7 +246,17 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	if operations, ok := skillStore.(eventbus.OperationsStore); ok {
 		server.operations = operations
 	}
+	if store, ok := identityStore.(opsauth.Store); ok {
+		server.SetOperatorAuthStore(store)
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/ops/auth/passkey/login/options", server.beginAdminLogin)
+	mux.HandleFunc("POST /v1/ops/auth/passkey/login/verify", server.finishAdminLogin)
+	mux.HandleFunc("POST /v1/ops/auth/passkey/register/options", server.beginAdminRegistration)
+	mux.HandleFunc("POST /v1/ops/auth/passkey/register/verify", server.finishAdminRegistration)
+	mux.HandleFunc("POST /v1/ops/auth/logout", server.logoutAdmin)
+	mux.Handle("POST /v1/ops/auth/invitations", server.requireOperator(http.HandlerFunc(server.inviteAdmin)))
+	mux.Handle("POST /v1/ops/auth/sessions/revoke", server.requireOperator(http.HandlerFunc(server.revokeAdminSessions)))
 	mux.HandleFunc("GET /healthz", server.health)
 	mux.HandleFunc("GET /readyz", server.readiness)
 	mux.HandleFunc("GET /v1/meta", server.meta(cfg))
@@ -286,6 +303,25 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("PATCH /v1/memories/{memory_id}", server.requireAuth(http.HandlerFunc(server.updateMemory)))
 	mux.Handle("DELETE /v1/memories/{memory_id}", server.requireAuth(http.HandlerFunc(server.deleteMemory)))
 	mux.Handle("DELETE /v1/memories", server.requireAuth(http.HandlerFunc(server.clearMemories)))
+	mux.Handle("GET /v1/knowledge/builtin/pages", server.requireAuth(http.HandlerFunc(server.listBuiltinKnowledge)))
+	mux.Handle("GET /v1/knowledge/builtin/pages/{page_id}", server.requireAuth(http.HandlerFunc(server.readBuiltinKnowledge)))
+	mux.Handle("POST /v1/knowledge/builtin/search", server.requireAuth(http.HandlerFunc(server.searchBuiltinKnowledge)))
+	mux.Handle("GET /v1/wiki/pages", server.requireAuth(http.HandlerFunc(server.listWiki)))
+	mux.Handle("POST /v1/wiki/pages/{page_id}/rebuild", server.requireAuth(http.HandlerFunc(server.resetWiki)))
+	mux.Handle("POST /v1/wiki/search", server.requireAuth(http.HandlerFunc(server.searchWiki)))
+	mux.Handle("GET /v1/wiki/pages/{page_id}", server.requireAuth(http.HandlerFunc(server.readWiki)))
+	mux.Handle("PATCH /v1/wiki/pages/{page_id}", server.requireAuth(http.HandlerFunc(server.updateWiki)))
+	mux.Handle("GET /v1/wiki/pages/{page_id}/links", server.requireAuth(http.HandlerFunc(server.followWiki)))
+	mux.Handle("GET /v1/wiki/pages/{page_id}/versions", server.requireAuth(http.HandlerFunc(server.wikiHistory)))
+	mux.Handle("GET /v1/wiki/pages/{page_id}/export", server.requireAuth(http.HandlerFunc(server.exportWiki)))
+	mux.Handle("POST /v1/wiki/pages/{page_id}/feedback", server.requireAuth(http.HandlerFunc(server.wikiFeedback)))
+	mux.Handle("POST /v1/documents/{document_id}/wiki/rebuild", server.requireAuth(http.HandlerFunc(server.rebuildWiki)))
+	mux.Handle("POST /v1/documents/{document_id}/reindex", server.requireAuth(http.HandlerFunc(server.reindexDocument)))
+	mux.Handle("POST /v1/memories/{memory_id}/corrections", server.requireAuth(http.HandlerFunc(server.correctMemory)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/wiki/pages", server.requireAuth(http.HandlerFunc(server.listWiki)))
+	mux.Handle("POST /v1/workspaces/{workspace_id}/wiki/search", server.requireAuth(http.HandlerFunc(server.searchWiki)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/wiki/pages/{page_id}", server.requireAuth(http.HandlerFunc(server.readWiki)))
+	mux.Handle("GET /v1/workspaces/{workspace_id}/wiki/pages/{page_id}/links", server.requireAuth(http.HandlerFunc(server.followWiki)))
 	mux.Handle("GET /v1/documents", server.requireAuth(http.HandlerFunc(server.listDocuments)))
 	mux.Handle("POST /v1/documents", server.requireAuth(http.HandlerFunc(server.uploadDocument)))
 	mux.Handle("POST /v1/documents/query", server.requireAuth(http.HandlerFunc(server.queryDocuments)))
@@ -340,6 +376,8 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("GET /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.listWorkspaceInvitations)))
 	mux.Handle("POST /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.createWorkspaceInvitation)))
 	mux.Handle("POST /v1/workspace-invitations/{invitation_id}/accept", server.requireAuth(http.HandlerFunc(server.acceptWorkspaceInvitation)))
+	mux.Handle("POST /v1/ops/context/backfill", server.requireOperator(http.HandlerFunc(server.backfillContext)))
+	mux.Handle("GET /v1/ops/context/metrics", server.requireOperator(http.HandlerFunc(server.contextMetrics)))
 	mux.Handle("GET /v1/ops/outbox/dead-letter", server.requireOperator(http.HandlerFunc(server.listDeadLetterOutboxEvents)))
 	mux.Handle("GET /v1/ops/outbox/{event_id}", server.requireOperator(http.HandlerFunc(server.getOutboxEvent)))
 	mux.Handle("POST /v1/ops/outbox/{event_id}/replay", server.requireOperator(http.HandlerFunc(server.replayOutboxEvent)))
@@ -485,6 +523,16 @@ func (s *Server) EvaluatePerformanceBudgets(ctx context.Context, now time.Time) 
 
 func (s *Server) SetOperatorAuthStore(store opsauth.Store) {
 	s.operatorAuth = opsauth.NewService(store)
+	state := adminpasskey.Store(adminpasskey.NewMemoryStore())
+	if provider, ok := store.(adminpasskey.StoreProvider); ok {
+		state = provider.AdminPasskeyStore()
+	}
+	origin := s.webOrigin
+	if origin == "" && s.environment != "production" {
+		origin = "http://localhost:3000"
+	}
+	// Invalid origins fail closed: all browser authentication endpoints return 503.
+	s.adminPasskeys, _ = adminpasskey.New(state, store, origin)
 }
 
 func (s *Server) SetTeamStore(store team.Store) { s.teams = team.NewService(store) }

@@ -52,6 +52,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ContextRecentTokenBudget != 6000 || cfg.ContextSummaryTokenBudget != 1200 {
 		t.Fatalf("context budgets = %d/%d", cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
 	}
+	if cfg.ModelContextWindow != 131072 {
+		t.Fatalf("context window = %d", cfg.ModelContextWindow)
+	}
 	if cfg.BillingQuotaDisabled {
 		t.Fatal("billing quota bypass must be disabled by default")
 	}

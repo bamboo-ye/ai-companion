@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/windcry1/ai-companion/internal/semantic"
 	"math"
 	"net/url"
 	"os"
@@ -19,6 +20,7 @@ const (
 )
 
 type Config struct {
+	Knowledge                          semantic.Config
 	Environment                        string
 	ServiceName                        string
 	LogLevel                           string
@@ -115,6 +117,7 @@ type Config struct {
 	ModelFallbackNames                 []string
 	ModelRoleNames                     map[string][]string
 	ModelMaxTokens                     int
+	ModelContextWindow                 int
 	ModelComposerMaxTokens             int
 	ModelDataCollection                string
 	ModelZDRRequired                   bool
@@ -345,6 +348,10 @@ func Load(serviceName string) (Config, error) {
 	modelMaxTokens := 1024
 	if _, err := fmt.Sscanf(value("MODEL_MAX_TOKENS", "1024"), "%d", &modelMaxTokens); err != nil || modelMaxTokens < 64 || modelMaxTokens > 32768 {
 		return Config{}, fmt.Errorf("MODEL_MAX_TOKENS must be between 64 and 32768")
+	}
+	modelContextWindow := 131072
+	if _, err := fmt.Sscanf(value("MODEL_CONTEXT_WINDOW", "131072"), "%d", &modelContextWindow); err != nil || modelContextWindow < 2048 || modelContextWindow > 10_000_000 {
+		return Config{}, fmt.Errorf("MODEL_CONTEXT_WINDOW must be between 2048 and 10000000")
 	}
 	modelComposerMaxTokens := 12288
 	if _, err := fmt.Sscanf(value("MODEL_COMPOSER_MAX_TOKENS", "12288"), "%d", &modelComposerMaxTokens); err != nil || modelComposerMaxTokens < 64 || modelComposerMaxTokens > 32768 {
@@ -625,7 +632,12 @@ func Load(serviceName string) (Config, error) {
 		return Config{}, fmt.Errorf("OUTBOX_RELAY_MAX_ATTEMPTS must be between 1 and 100")
 	}
 
+	knowledge, err := loadKnowledge(environment)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
+		Knowledge:                     knowledge,
 		Environment:                   environment,
 		ServiceName:                   serviceName,
 		LogLevel:                      value("LOG_LEVEL", "info"),
@@ -713,7 +725,7 @@ func Load(serviceName string) (Config, error) {
 		PresenceTTL:                   presenceTTL, ChatRateLimit: chatRateLimit, ChatRateWindow: chatRateWindow,
 		ContextRecentTokenBudget: contextRecentTokenBudget, ContextSummaryTokenBudget: contextSummaryTokenBudget,
 		ModelProvider: modelProvider, ModelBaseURL: modelBaseURL, ModelAPIKey: value("MODEL_API_KEY", ""), ModelName: modelName, ModelFallbackNames: modelFallbackNames, ModelRoleNames: modelRoleNames,
-		ModelMaxTokens: modelMaxTokens, ModelComposerMaxTokens: modelComposerMaxTokens, ModelDataCollection: modelDataCollection, ModelZDRRequired: modelZDRRequired, ModelReasoningEffort: modelReasoningEffort, ModelReasoningExclude: modelReasoningExclude,
+		ModelMaxTokens: modelMaxTokens, ModelContextWindow: modelContextWindow, ModelComposerMaxTokens: modelComposerMaxTokens, ModelDataCollection: modelDataCollection, ModelZDRRequired: modelZDRRequired, ModelReasoningEffort: modelReasoningEffort, ModelReasoningExclude: modelReasoningExclude,
 		ModelConfigVersion: modelConfigVersion, ModelRequirePinned: modelRequirePinned, ModelProviderSort: modelProviderSort,
 		ModelAllowProviderFallbacks: modelAllowProviderFallbacks, ModelRequireParameters: modelRequireParameters,
 		ModelMaxPromptPrice: modelMaxPromptPrice, ModelMaxCompletionPrice: modelMaxCompletionPrice,
@@ -775,4 +787,37 @@ func splitNonEmpty(value string) []string {
 		}
 	}
 	return result
+}
+
+func loadKnowledge(environment string) (semantic.Config, error) {
+	c := semantic.Config{BaseURL: value("CONTEXT_MODEL_BASE_URL", ""), APIKey: value("CONTEXT_MODEL_API_KEY", ""), EmbeddingModel: value("CONTEXT_EMBEDDING_MODEL", ""), RerankModel: value("CONTEXT_RERANK_MODEL", ""), SummaryModel: value("CONTEXT_SUMMARY_MODEL", ""), IndexMode: value("CONTEXT_INDEX_MODE", "legacy")}
+	var err error
+	c.Dimensions, err = strconv.Atoi(value("CONTEXT_EMBEDDING_DIMENSIONS", "1024"))
+	if err != nil || c.Dimensions < 2 || c.Dimensions > 8192 {
+		return c, fmt.Errorf("CONTEXT_EMBEDDING_DIMENSIONS must be 2..8192")
+	}
+	c.Timeout, err = time.ParseDuration(value("CONTEXT_MODEL_TIMEOUT", "30s"))
+	if err != nil || c.Timeout <= 0 || c.Timeout > time.Minute {
+		return c, fmt.Errorf("CONTEXT_MODEL_TIMEOUT must be positive and at most 1m")
+	}
+	c.WikiEnabled, err = strconv.ParseBool(value("CONTEXT_WIKI_ENABLED", "true"))
+	if err != nil {
+		return c, fmt.Errorf("CONTEXT_WIKI_ENABLED must be boolean")
+	}
+	if c.IndexMode != "legacy" && c.IndexMode != "shadow" && c.IndexMode != "semantic" {
+		return c, fmt.Errorf("CONTEXT_INDEX_MODE must be legacy, shadow or semantic")
+	}
+	if c.IndexMode != "legacy" && c.EmbeddingModel == "" {
+		return c, fmt.Errorf("semantic/shadow index requires CONTEXT_EMBEDDING_MODEL")
+	}
+	if c.EmbeddingModel != "" || c.RerankModel != "" || c.SummaryModel != "" {
+		u, e := url.Parse(c.BaseURL)
+		if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return c, fmt.Errorf("CONTEXT_MODEL_BASE_URL must be an absolute HTTP(S) URL")
+		}
+		if environment == "production" && u.Scheme != "https" {
+			return c, fmt.Errorf("CONTEXT_MODEL_BASE_URL requires HTTPS in production")
+		}
+	}
+	return c, nil
 }

@@ -160,31 +160,24 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 				writeConversationError(w, validateErr)
 				return
 			}
-			history, historyErr := s.conversations.RecentMessages(
+			snapshot, historyErr := s.conversations.BuildContext(
 				r.Context(),
 				auth.User.ID,
 				conversationItem.ID,
-				100,
+				messageContent,
 			)
 			if historyErr != nil {
 				writeConversationError(w, historyErr)
 				return
 			}
-			trustedHistory := make([]map[string]string, 0, len(history))
-			for _, prior := range history {
-				if prior.Role == "user" || prior.Role == "assistant" {
-					trustedHistory = append(trustedHistory, map[string]string{
-						"role": prior.Role, "content": prior.Content,
-					})
-				}
-			}
 			message, run, acceptErr := s.agentRuns.AcceptChat(r.Context(), agent.AcceptChatInput{
 				UserID: auth.User.ID, ConversationID: conversationItem.ID,
 				CharacterID: persona.ID, Module: persona.Module, Content: messageContent,
 				Context: map[string]any{
-					"timezone":      auth.User.Timezone,
-					"system_prompt": conversation.PersonaSystemPrompt(persona),
-					"history":       trustedHistory,
+					"timezone":             auth.User.Timezone,
+					"system_prompt":        conversation.PersonaSystemPrompt(persona),
+					"history":              snapshot.History,
+					"conversation_context": snapshot,
 					"email_profile": map[string]any{
 						"sender_name":      auth.User.DisplayName,
 						"default_language": defaultEmailLanguage(auth.User.Locale),

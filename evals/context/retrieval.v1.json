@@ -1,0 +1,10 @@
+{
+  "description": "Synthetic labelled fixtures; replace or extend with consented production replays before setting rollout quality gates.",
+  "cases": [
+    {"name": "chinese_preference", "facts": ["我不吃香菜", "周六上午去跑步"], "query": "香菜过敏", "expected": "我不吃香菜"},
+    {"name": "multilingual_preference", "facts": ["我不吃香菜", "周六上午去跑步"], "query": "coriander dietary restriction", "expected": "我不吃香菜"},
+    {"name": "paraphrased_goal", "facts": ["目标是每周阅读一本书", "工作地点在杭州"], "query": "怎样坚持我的读书习惯", "expected": "目标是每周阅读一本书"},
+    {"name": "english_to_chinese_goal", "facts": ["目标是每周阅读一本书", "我喜欢游泳"], "query": "weekly reading goal", "expected": "目标是每周阅读一本书"},
+    {"name": "deleted_preference", "facts": ["我不吃香菜"], "query": "香菜", "expected": "我不吃香菜", "delete_expected": true}
+  ]
+}

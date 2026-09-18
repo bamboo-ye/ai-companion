@@ -2,11 +2,12 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type Operator = { actor: string; role: string; mfa_verified: boolean; legacy: boolean };
 type User = { id: string; email: string; display_name: string; status: string };
 type UsageItem = { resource: string; actual: number; adjustment: number; used: number; limit: number; remaining: number; period_start?: string; period_end?: string };
@@ -156,9 +157,9 @@ function UsageCard({ item }: { item: UsageItem }) {
 }
 
 async function billingFetch<T>(path: string, credentials: Credentials, options?: { method?: string; body?: unknown }): Promise<T> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${credentials.key}` };
+  const headers: Record<string, string> = { ...adminHeaders(credentials) };
   if (options?.body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${apiBase}${path}`, { method: options?.method ?? "GET", headers, body: options?.body === undefined ? undefined : JSON.stringify(options.body), cache: "no-store" });
+  const response = await adminFetch(`${path}`, { method: options?.method ?? "GET", headers, body: options?.body === undefined ? undefined : JSON.stringify(options.body), cache: "no-store" });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`);
   return payload as T;

@@ -129,7 +129,8 @@ func main() {
 	if cfg.ModelProvider == "openrouter" {
 		models := append([]string{cfg.ModelName}, cfg.ModelFallbackNames...)
 		provider = conversation.NewOpenRouterProvider(conversation.OpenRouterOptions{
-			BaseURL: cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
+			ContextWindow: cfg.ModelContextWindow,
+			BaseURL:       cfg.ModelBaseURL, APIKey: cfg.ModelAPIKey, Models: models, Timeout: cfg.ModelTimeout, MaxTokens: cfg.ModelMaxTokens,
 			DataCollection: cfg.ModelDataCollection, ZDRRequired: cfg.ModelZDRRequired, ReasoningEffort: cfg.ModelReasoningEffort, ReasoningExclude: cfg.ModelReasoningExclude,
 			ProviderSort: cfg.ModelProviderSort, AllowProviderFallbacks: cfg.ModelAllowProviderFallbacks, RequireParameters: cfg.ModelRequireParameters,
 			MaxPromptPrice: cfg.ModelMaxPromptPrice, MaxCompletionPrice: cfg.ModelMaxCompletionPrice,
@@ -184,7 +185,7 @@ func main() {
 			server.SetAgentStore(agentStore)
 		}
 	}
-	server.SetDocumentIndex(document.NewQdrantIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 10*time.Second))
+	server.SetDocumentIndex(document.NewKnowledgeIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, 10*time.Second, cfg.Knowledge))
 	server.SetLedgerExporter(ledger.ArtifactToolExporter{Executable: cfg.SpreadsheetExecutable, ScriptPath: cfg.SpreadsheetWorkerPath, Timeout: 30 * time.Second})
 	ledgerFiles, ledgerFileErr := ledger.NewLocalExportFileStore(cfg.LedgerStorageDir)
 	if ledgerFileErr != nil {

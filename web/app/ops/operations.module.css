@@ -1038,3 +1038,20 @@
   .fullField { grid-column:auto; }
   .modelCatalog { grid-template-columns:1fr; }
 }
+
+.loginForm details { display:grid; gap:12px; margin-top:10px; padding-top:14px; border-top:1px solid var(--ops-line,#e7dddd); }
+.loginForm summary { cursor:pointer; margin-bottom:14px; font-size:.82rem; }
+.loginForm details button { width:100%; margin:12px 0; }
+.securityPanel { margin-bottom:24px; padding:24px; border:1px solid var(--ops-line); border-radius:18px; background:var(--ops-surface); }
+.securityPanel header,.securityActions { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
+.securityPanel h2 { margin:0; font-size:1.15rem; }
+.securityPanel p,.securityPanel small { color:var(--ops-muted); font-size:.8rem; line-height:1.6; }
+.securityPanel button { border:1px solid var(--ops-line); border-radius:8px; padding:9px 14px; background:#fff; color:var(--ops-ink); cursor:pointer; }
+.securityPanel button:disabled { opacity:.55; cursor:wait; }
+.securityActions { justify-content:flex-start; }
+.securityInvite { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:24px; }
+.securityInvite h3,.securityInvite > button { grid-column:1/-1; }
+.securityInvite label,.inviteResult { display:grid; gap:7px; font-size:.8rem; }
+.securityInvite input,.securityInvite select,.inviteResult input { width:100%; min-width:0; box-sizing:border-box; padding:10px; border:1px solid var(--ops-line); border-radius:8px; background:#fff; color:#453b42; }
+.inviteResult { margin-top:18px; }
+@media(max-width:640px) { .securityInvite { grid-template-columns:1fr; } }

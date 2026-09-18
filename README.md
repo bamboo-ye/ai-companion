@@ -202,6 +202,12 @@ PostgreSQL audit log if ingestion is unavailable or delayed. Configuration,
 retention, privacy rules, and smoke queries are in
 [`docs/runbooks/loki-structured-logging.md`](docs/runbooks/loki-structured-logging.md).
 
+The `/admin` console uses invited administrator accounts and WebAuthn passkeys
+with required device verification (including device PIN where supported).
+Browser sessions use first-party HttpOnly cookies. Database migrations,
+first-admin provisioning, backup credentials and recovery are documented in
+[`docs/ADMIN_PASSKEY_LOGIN.md`](docs/ADMIN_PASSKEY_LOGIN.md).
+
 Chat cutover is module-scoped and disabled by default in development. Staging
 can set `AGENT_CHAT_MODULES=life` for a narrow canary; production must set
 `AGENT_CHAT_MODULES=companion,life,work`, so every user-facing model workflow

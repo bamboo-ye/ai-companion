@@ -110,7 +110,7 @@ func (s *Store) SetOperatorStatus(ctx context.Context, id, status string, audit 
 	var role, current string
 	var mfaEnabled bool
 	err = tx.QueryRowContext(ctx, `
-		SELECT role,status,mfa_enabled
+		SELECT role,status,(mfa_enabled OR EXISTS (SELECT 1 FROM ops.operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=app.operator_accounts.id))
 		FROM app.operator_accounts
 		WHERE id=$1
 		FOR UPDATE`, id,
@@ -127,7 +127,7 @@ func (s *Store) SetOperatorStatus(ctx context.Context, id, status string, audit 
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `
-		UPDATE app.operator_accounts SET status=$1,updated_at=$2 WHERE id=$3`,
+		UPDATE app.operator_accounts SET session_version=session_version+1,status=$1,updated_at=$2 WHERE id=$3`,
 		status, audit.Now, id,
 	); err != nil {
 		return opsauth.Account{}, err
@@ -160,7 +160,7 @@ func (s *Store) ResetOperatorToken(ctx context.Context, id, tokenHash string, au
 		return opsauth.Account{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `
-		UPDATE app.operator_accounts SET token_hash=$1,updated_at=$2 WHERE id=$3`,
+		UPDATE app.operator_accounts SET session_version=session_version+1,token_hash=$1,updated_at=$2 WHERE id=$3`,
 		tokenHash, audit.Now, id,
 	); err != nil {
 		if isUniqueViolation(err) {
@@ -198,13 +198,17 @@ func (s *Store) ResetOperatorMFA(ctx context.Context, id, secret string, enabled
 		return opsauth.Account{}, err
 	}
 	if !enabled {
-		if err = preventPostgresOperatorAdminLockout(ctx, tx, role, current, previous, false, true); err != nil {
+		var hasPasskey bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM ops.operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=app.operator_accounts.id) FROM app.operator_accounts WHERE id=$1`, id).Scan(&hasPasskey); err != nil {
+			return opsauth.Account{}, err
+		}
+		if err = preventPostgresOperatorAdminLockout(ctx, tx, role, current, previous && !hasPasskey, false, true); err != nil {
 			return opsauth.Account{}, err
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE app.operator_accounts
-		SET totp_secret=$1,mfa_enabled=$2,updated_at=$3
+		SET session_version=session_version+1,totp_secret=$1,mfa_enabled=$2,updated_at=$3
 		WHERE id=$4`,
 		secret, enabled, audit.Now, id,
 	); err != nil {
@@ -227,7 +231,7 @@ func preventPostgresOperatorAdminLockout(ctx context.Context, tx *sql.Tx, role, 
 		return nil
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id,mfa_enabled
+		SELECT id,(mfa_enabled OR EXISTS (SELECT 1 FROM ops.operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=app.operator_accounts.id))
 		FROM app.operator_accounts
 		WHERE role='admin' AND status='active'
 		FOR UPDATE`)
@@ -288,7 +292,7 @@ func postgresBoolString(value bool) string {
 
 const operatorAccountSelect = `
 	SELECT id,display_name,role,status,token_hash,totp_secret,mfa_enabled,
-		created_at,updated_at,last_authenticated_at
+		created_at,updated_at,last_authenticated_at,session_version,EXISTS (SELECT 1 FROM ops.operator_passkey_records pk WHERE pk.kind='credential' AND pk.owner_id=app.operator_accounts.id)
 	FROM app.operator_accounts`
 
 func scanOperatorAccount(row rowScanner) (opsauth.Account, error) {
@@ -297,7 +301,7 @@ func scanOperatorAccount(row rowScanner) (opsauth.Account, error) {
 	err := row.Scan(
 		&account.ID, &account.DisplayName, &account.Role, &account.Status,
 		&account.TokenHash, &account.TOTPSecret, &account.MFAEnabled,
-		&account.CreatedAt, &account.UpdatedAt, &last,
+		&account.CreatedAt, &account.UpdatedAt, &last, &account.SessionVersion, &account.PasskeyEnabled,
 	)
 	if last.Valid {
 		value := last.Time

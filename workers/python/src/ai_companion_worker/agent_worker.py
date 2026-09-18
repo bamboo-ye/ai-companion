@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -393,7 +394,13 @@ def _model_environment_for_run(run: Mapping[str, Any]) -> Mapping[str, str] | No
 def _model_runtime_key(run: Mapping[str, Any]) -> str:
     snapshot = run.get("model_profile_snapshot")
     if isinstance(snapshot, Mapping):
-        return "snapshot:" + _required_string(snapshot, "fingerprint").lower()
+        # Catalog-derived limits can change without publishing a new profile.
+        # Cache by the actual captured variables as well as the profile identity.
+        variables = json.dumps(snapshot.get("variables", {}), sort_keys=True, separators=(",", ":"))
+        return (
+            "snapshot:" + _required_string(snapshot, "fingerprint").lower()
+            + ":" + hashlib.sha256(variables.encode("utf-8")).hexdigest()
+        )
     return "bootstrap:" + os.getenv("MODEL_PROVIDER", "development").strip().lower()
 
 
@@ -821,6 +828,8 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
                         "retry_after",
                         "contract_valid",
                         "contract_error",
+                        "prompt_token_upper_bound",
+                        "context_manifest",
                     )
                 }
             )

@@ -134,6 +134,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func (s *Server) requireOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Authorization")
+		if header == "" {
+			s.authenticateAdminSession(w, r, next)
+			return
+		}
 		parts := strings.SplitN(header, " ", 2)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 			writeJSON(w, http.StatusUnauthorized, apiError{Code: "unauthorized", Message: "运维认证无效"})

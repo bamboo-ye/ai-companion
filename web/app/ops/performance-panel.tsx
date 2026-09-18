@@ -2,11 +2,12 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type Operator = { actor: string; role: string };
 type VersionMetric = {
   dimension: string; group_id: string; key: string; label: string; version_id?: string; version?: number; revision?: number; config_version?: string;
@@ -564,7 +565,7 @@ function BudgetForecastHistoryReport({ credentials, canEdit, previewBusy, refres
     setExporting(format);
     setActionError("");
     try {
-      const response = await fetch(`${apiBase}/v1/ops/performance/budgets/report?range=${range}&format=${format}`, { headers: { Authorization: `Bearer ${credentials.key}` }, cache: "no-store" });
+      const response = await adminFetch(`/v1/ops/performance/budgets/report?range=${range}&format=${format}`, { headers: { ...adminHeaders(credentials) }, cache: "no-store" });
       if (!response.ok) { const payload = await response.json().catch(() => ({})) as { message?: string }; throw new Error(payload.message || `导出失败（${response.status}）`); }
       const blob = await response.blob();
       const href = URL.createObjectURL(blob); const anchor = document.createElement("a");
@@ -744,7 +745,7 @@ function formatHours(value: number) { return value >= 48 ? `${Math.round(value /
 function forecastTimeLabel(value: string | undefined, risk: BudgetForecast["risk"]) { if (risk === "disabled") return "未启用"; if (!value) return "本周期不会触达"; if (risk === "exceeded") return "已触达"; return new Date(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
 
 async function performanceFetch<T>(path: string, credentials: Credentials, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, { ...init, headers: { "Content-Type": "application/json", ...init.headers, Authorization: `Bearer ${credentials.key}` }, cache: "no-store" });
+  const response = await adminFetch(`${path}`, { ...init, headers: { "Content-Type": "application/json", ...init.headers, ...adminHeaders(credentials) }, cache: "no-store" });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败 (${response.status})`);
   return payload as T;

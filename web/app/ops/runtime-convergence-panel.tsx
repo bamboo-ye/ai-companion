@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type RuntimeState = {
   instance_id: string;
   service: string;
@@ -91,7 +92,7 @@ export function RuntimeConvergencePanel({ credentials }: { credentials: Credenti
 }
 
 async function fetchConvergence(credentials: Credentials): Promise<Convergence> {
-  const response = await fetch(`${apiBase}/v1/ops/configuration/convergence`, { headers: { Authorization: `Bearer ${credentials.key}` }, cache: "no-store" });
+  const response = await adminFetch(`/v1/ops/configuration/convergence`, { headers: { ...adminHeaders(credentials) }, cache: "no-store" });
   const payload = await response.json().catch(() => ({})) as Convergence & { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`);
   return payload;

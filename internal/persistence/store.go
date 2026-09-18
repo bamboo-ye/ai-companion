@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/adminpasskey"
 	"github.com/windcry1/ai-companion/internal/billing"
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/conversation"
@@ -46,6 +47,7 @@ type ApplicationStore interface {
 	billing.Store
 	safety.Store
 	opsauth.Store
+	adminpasskey.StoreProvider
 	eventbus.Store
 	eventbus.OperationsStore
 

@@ -109,6 +109,7 @@ func (s *MemoryStore) SetOperatorStatus(_ context.Context, id, status string, au
 	}
 	account.Status = status
 	account.UpdatedAt = audit.Now
+	account.SessionVersion++
 	s.accounts[account.ID] = account
 	s.audits = append(s.audits, audit)
 	return account, nil
@@ -127,6 +128,7 @@ func (s *MemoryStore) ResetOperatorToken(_ context.Context, id, tokenHash string
 	delete(s.byHash, account.TokenHash)
 	account.TokenHash = tokenHash
 	account.UpdatedAt = audit.Now
+	account.SessionVersion++
 	s.accounts[account.ID] = account
 	s.byHash[tokenHash] = account.ID
 	s.audits = append(s.audits, audit)
@@ -143,6 +145,7 @@ func (s *MemoryStore) ResetOperatorMFA(_ context.Context, id, secret string, ena
 	account.TOTPSecret = strings.TrimSpace(secret)
 	account.MFAEnabled = enabled
 	account.UpdatedAt = audit.Now
+	account.SessionVersion++
 	s.accounts[account.ID] = account
 	s.audits = append(s.audits, audit)
 	return account, nil

@@ -469,6 +469,8 @@ def _model_fanout_concurrency() -> int:
 
 def tool_allowed(module: ModuleKey, tool_name: str) -> bool:
     normalized = tool_name.strip().lower()
+    if module in _ALLOWED_TOOL_PREFIXES and normalized in ("product_knowledge_search", "product_knowledge_read"):
+        return True
     return bool(normalized) and normalized.startswith(_ALLOWED_TOOL_PREFIXES[module])
 
 
@@ -6848,6 +6850,13 @@ def build_graph(
 
     def after_assessment(state: AgentState) -> str:
         status = state.get("assessment", {}).get("status")
+        observations = state.get("observations", [])
+        if (
+            status == "completed" and observations
+            and observations[-1].get("tool_name") in ("product_knowledge_search", "product_knowledge_read")
+        ):
+            # Retrieving enough documentation is not the user-facing answer.
+            return "generate_response"
         if (
             status in ("completed", "continue")
             and not task_contract_artifact_satisfied(
@@ -7249,6 +7258,7 @@ def build_graph(
         after_assessment,
         {
             "continue_action": "continue_action",
+            "generate_response": "generate_response",
             "finalize": "finalize",
         },
     )

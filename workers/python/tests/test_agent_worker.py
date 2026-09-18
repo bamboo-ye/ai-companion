@@ -259,7 +259,7 @@ class AgentWorkerTest(unittest.TestCase):
         self.assertEqual(environment["MODEL_CONFIG_VERSION"], "frozen-v7")
         self.assertEqual(environment["MODEL_API_KEY"], "process-secret")
         self.assertNotIn("MODEL_API_KEY", run["model_profile_snapshot"]["variables"])
-        self.assertEqual(_model_runtime_key(run), "snapshot:" + "a" * 64)
+        self.assertTrue(_model_runtime_key(run).startswith("snapshot:" + "a" * 64 + ":"))
 
     def test_run_model_snapshot_rejects_mutated_version_metadata(self) -> None:
         run = run_payload("run-mutated-model")

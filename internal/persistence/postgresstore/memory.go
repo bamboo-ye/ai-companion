@@ -17,6 +17,15 @@ func (s *Store) UpsertMemory(ctx context.Context, item memory.Memory) (memory.Me
 		return item, false, err
 	}
 	defer tx.Rollback()
+	if item.SupersedesID != "" {
+		result, replaceErr := tx.ExecContext(ctx, `UPDATE app.long_term_memories SET status='superseded',valid_to=$1,updated_at=$1 WHERE id=$2 AND user_id=$3 AND status='active'`, item.ValidFrom, item.SupersedesID, item.UserID)
+		if replaceErr != nil {
+			return item, false, replaceErr
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return item, false, memory.ErrNotFound
+		}
+	}
 	existing, err := scanMemory(tx.QueryRowContext(ctx, memorySelect+`
 		WHERE user_id=$1 AND normalized_hash=$2 AND status='active'
 		LIMIT 1
@@ -24,6 +33,9 @@ func (s *Store) UpsertMemory(ctx context.Context, item memory.Memory) (memory.Me
 		item.UserID, item.NormalizedHash,
 	))
 	if err == nil {
+		if item.SupersedesID != "" {
+			return item, false, memory.ErrValidation
+		}
 		return existing, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {

@@ -275,6 +275,9 @@ func (s *Store) DeleteDocument(ctx context.Context, userID, documentID string, n
 	); err != nil {
 		return err
 	}
+	if err = document.EnqueueWikiSQL(ctx, tx, "postgres", userID, documentID, now); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -621,6 +624,13 @@ func (s *Store) CompleteIngestJob(ctx context.Context, jobID string, now time.Ti
 		WHERE id=$2 AND ingest_status='processing'`,
 		now, documentID,
 	); err != nil {
+		return err
+	}
+	var ownerID string
+	if err = tx.QueryRowContext(ctx, `SELECT user_id::text FROM app.documents WHERE id=$1`, documentID).Scan(&ownerID); err != nil {
+		return err
+	}
+	if err = document.EnqueueWikiSQL(ctx, tx, "postgres", ownerID, documentID, now); err != nil {
 		return err
 	}
 	return tx.Commit()

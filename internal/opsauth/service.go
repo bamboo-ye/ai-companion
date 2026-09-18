@@ -35,6 +35,8 @@ type Account struct {
 	TokenHash           string     `json:"-"`
 	TOTPSecret          string     `json:"-"`
 	MFAEnabled          bool       `json:"mfa_enabled"`
+	PasskeyEnabled      bool       `json:"passkey_enabled"`
+	SessionVersion      int64      `json:"-"`
 	CreatedAt           time.Time  `json:"created_at,omitempty"`
 	UpdatedAt           time.Time  `json:"updated_at,omitempty"`
 	LastAuthenticatedAt *time.Time `json:"last_authenticated_at,omitempty"`
@@ -366,10 +368,10 @@ func (s *Service) preventAdminLockout(ctx context.Context, targetID string, disa
 	if disablingAccount && len(activeAdmins) <= 1 {
 		return ErrAdminLockout
 	}
-	if account.MFAEnabled && (disablingAccount || disablingMFA) {
+	if ((account.MFAEnabled || account.PasskeyEnabled) && disablingAccount) || (account.MFAEnabled && disablingMFA && !account.PasskeyEnabled) {
 		activeMFAAdmins := 0
 		for _, admin := range activeAdmins {
-			if admin.MFAEnabled {
+			if admin.MFAEnabled || admin.PasskeyEnabled {
 				activeMFAAdmins++
 			}
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/tracectx"
 )
 
@@ -23,6 +24,7 @@ type OpenAICompatibleProvider struct {
 	DataCollection                                        string
 	ZDRRequired                                           bool
 	MaxTokens                                             int
+	ContextWindow                                         int
 	ReasoningEffort                                       string
 	ReasoningExclude                                      bool
 	ProviderSort                                          string
@@ -41,6 +43,7 @@ type OpenRouterOptions struct {
 	Models                          []string
 	Timeout                         time.Duration
 	MaxTokens                       int
+	ContextWindow                   int
 	DataCollection, ReasoningEffort string
 	ZDRRequired, ReasoningExclude   bool
 	HTTPReferer, AppTitle           string
@@ -70,6 +73,7 @@ func NewOpenRouterProvider(options OpenRouterOptions) *OpenAICompatibleProvider 
 	provider.Models = models
 	provider.ProviderName = "openrouter"
 	provider.MaxTokens = options.MaxTokens
+	provider.ContextWindow = options.ContextWindow
 	provider.DataCollection = options.DataCollection
 	provider.ZDRRequired = options.ZDRRequired
 	provider.ReasoningEffort = options.ReasoningEffort
@@ -111,6 +115,9 @@ func (p *OpenAICompatibleProvider) generate(ctx context.Context, persona charact
 		}
 	}
 	maxTokens := p.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
 	requestPayload := map[string]any{"messages": messages, "stream": false, "max_tokens": maxTokens}
 	if len(tools) > 0 {
 		functionTools := make([]map[string]any, 0, len(tools))
@@ -125,7 +132,8 @@ func (p *OpenAICompatibleProvider) generate(ctx context.Context, persona charact
 		requestPayload["tools"] = functionTools
 		requestPayload["tool_choice"] = "required"
 		if maxTokens > 256 {
-			requestPayload["max_tokens"] = 256
+			maxTokens = 256
+			requestPayload["max_tokens"] = maxTokens
 		}
 	}
 	if len(p.Models) > 1 {
@@ -148,7 +156,13 @@ func (p *OpenAICompatibleProvider) generate(ctx context.Context, persona charact
 			requestPayload["reasoning"] = map[string]any{"effort": p.ReasoningEffort, "exclude": p.ReasoningExclude}
 		}
 	}
-	body, _ := json.Marshal(requestPayload)
+	if _, err := contextengine.CheckRequest(requestPayload, p.ContextWindow, maxTokens); err != nil {
+		return ModelToolTurn{}, Usage{}, err
+	}
+	body, err := json.Marshal(requestPayload)
+	if err != nil {
+		return ModelToolTurn{}, Usage{}, err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return ModelToolTurn{}, Usage{}, err

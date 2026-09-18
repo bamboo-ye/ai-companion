@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/agent"
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/platform/config"
@@ -20,6 +21,83 @@ import (
 
 type agentHTTPStore struct {
 	run agent.Run
+}
+
+func TestAgentHTTPIntakeBuildsSharedContextAndRefreshesDeletedMemory(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "context-http-secret-with-enough-entropy", AgentChatModules: []string{"life"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := &agentHTTPStore{}
+	server.SetAgentStore(store)
+	registered := performJSON(t, server, http.MethodPost, "/v1/auth/register", "", map[string]any{
+		"email": "context-test@example.com", "password": "correct-horse-battery", "display_name": "Context Test", "timezone": "Asia/Shanghai",
+		"device": map[string]any{"device_key": "context-test", "name": "Context Test", "platform": "web"},
+	})
+	var account struct {
+		AccessToken string `json:"access_token"`
+		User        struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(registered.Body.Bytes(), &account); err != nil {
+		t.Fatal(err)
+	}
+	persona := createCharacter(t, server, account.AccessToken, map[string]any{"module": "life", "name": "小满", "personality": "细心", "speech_style": "简洁"})
+	ctx := context.Background()
+	chat, err := server.conversations.Create(ctx, account.User.ID, persona.Character.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.conversations.SetAsyncDispatch(true)
+	server.conversations.SetContextBudgets(128, 256)
+	for index := 0; index < 50; index++ {
+		_, _, err = server.conversations.Send(ctx, account.User.ID, chat.ID, fmt.Sprintf("历史%d：今天讨论午饭安排和项目汇报。", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	fact, err := server.memories.SaveFromModel(ctx, account.User.ID, chat.ID, "source-memory", "我午饭不吃香菜")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readInput := func() contextengine.Snapshot {
+		t.Helper()
+		var input struct {
+			Context struct {
+				Snapshot contextengine.Snapshot `json:"conversation_context"`
+			} `json:"context"`
+		}
+		if err := json.Unmarshal(store.run.Input, &input); err != nil {
+			t.Fatal(err)
+		}
+		return input.Context.Snapshot
+	}
+	send := func() {
+		t.Helper()
+		response := performJSON(t, server, http.MethodPost, "/v1/conversations/"+chat.ID+"/messages", account.AccessToken, map[string]string{"content": "午饭吃什么"})
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("send = %d %s", response.Code, response.Body.String())
+		}
+	}
+	send()
+	snapshot := readInput()
+	if snapshot.Version != contextengine.Version || snapshot.Summary == nil || len(snapshot.Memories) != 1 || snapshot.Memories[0].Source.ID != fact.ID {
+		t.Fatalf("missing intake context: %#v", snapshot)
+	}
+	if len(snapshot.History) == 0 || !strings.Contains(snapshot.History[len(snapshot.History)-1].Content, "历史49") {
+		t.Fatal("lost recent history")
+	}
+	for _, item := range snapshot.History {
+		if item.Content == "午饭吃什么" {
+			t.Fatal("current request duplicated in history")
+		}
+	}
+	if err = server.memories.Delete(ctx, account.User.ID, fact.ID); err != nil {
+		t.Fatal(err)
+	}
+	store.run.Status = "completed"
+	send()
+	if len(readInput().Memories) != 0 {
+		t.Fatal("deleted memory returned in new run")
+	}
 }
 
 func (s *agentHTTPStore) CreateAgentRun(_ context.Context, item agent.Run) (agent.Run, bool, error) {

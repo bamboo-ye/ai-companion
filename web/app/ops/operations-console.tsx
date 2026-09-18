@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -11,11 +11,13 @@ import { IncidentCenterPanel } from "./incident-center-panel";
 import { PerformancePanel } from "./performance-panel";
 import { OnboardingGuide } from "../onboarding-guide";
 import { adminGuideTopics, type AdminGuideTarget } from "../onboarding-content";
+import { adminFetch, adminHeaders, adminCredentials, loginWithPasskey, registerPasskey, logoutAdmin, passkeyError, type AdminCredentials } from "./admin-auth";
+import { AdminSecurityPanel } from "./admin-security-panel";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type OperatorBootstrap = {
   operator: { actor: string; role: string; mfa_verified: boolean; legacy: boolean };
   capabilities: Record<string, boolean>;
@@ -145,6 +147,10 @@ export function OperationsConsole() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [view, setView] = useState<AdminGuideTarget>("observability");
   const [logFocus, setLogFocus] = useState<LogFocus | undefined>();
+  const [restoring, setRestoring] = useState(true);
+  const [invite, setInvite] = useState("");
+  const [securityOpen, setSecurityOpen] = useState(false);
+  const invitationRef = useRef<string | null>(null);
 
   const loadDashboard = useCallback(async (auth: Credentials, requested: Filters) => {
     const query = new URLSearchParams({ limit: "100" });
@@ -161,6 +167,46 @@ export function OperationsConsole() {
     setReliability(health);
     setLastUpdated(new Date());
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function restore() {
+      invitationRef.current ??= new URLSearchParams(window.location.hash.slice(1)).get("invite") ?? "";
+      const invitation = invitationRef.current;
+      if (invitation) {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        setInvite(invitation);
+        setRestoring(false);
+        return;
+      }
+      try {
+        const response = await adminFetch("/v1/ops/console/bootstrap");
+        if (response.ok && active) {
+          await loadDashboard(adminCredentials, initialFilters);
+          if (active) setCredentials(adminCredentials);
+        } else if (response.status !== 401 && active) {
+          const payload = await response.json() as { message?: string };
+          setError(payload.message ?? "无法恢复后台会话");
+        }
+      } catch (cause) {
+        if (active) setError(passkeyError(cause));
+      } finally {
+        if (active) setRestoring(false);
+      }
+    }
+    void restore();
+    return () => { active = false; };
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const expired = () => {
+      if (!credentials) return;
+      setCredentials(null); setBootstrap(null); setRuns([]); setDetail(null); setSecurityOpen(false);
+      setError("后台会话已过期，请重新使用通行密钥登录。");
+    };
+    window.addEventListener("admin-session-expired", expired);
+    return () => window.removeEventListener("admin-session-expired", expired);
+  }, [credentials]);
 
   const refresh = useCallback(async () => {
     if (!credentials) return;
@@ -201,22 +247,29 @@ export function OperationsConsole() {
 
   async function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const auth = { key: String(data.get("adminKey") ?? "").trim() };
-    if (!auth.key) {
-      setError("请输入管理密钥");
-      return;
-    }
     setLoading(true);
     setError("");
     try {
-      await loadDashboard(auth, initialFilters);
-      setCredentials(auth);
+      await loginWithPasskey();
+      await loadDashboard(adminCredentials, initialFilters);
+      setCredentials(adminCredentials);
     } catch (cause) {
-      setError(errorMessage(cause));
+      setError(passkeyError(cause));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function bindInvite() {
+    if (!invite.trim()) { setError("请输入管理员提供的一次性邀请码"); return; }
+    setLoading(true); setError("");
+    try {
+      await registerPasskey(invite.trim());
+      setInvite("");
+      await loadDashboard(adminCredentials, initialFilters);
+      setCredentials(adminCredentials);
+    } catch (cause) { setError(passkeyError(cause)); }
+    finally { setLoading(false); }
   }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
@@ -233,7 +286,8 @@ export function OperationsConsole() {
     }
   }
 
-  function disconnect() {
+  async function disconnect() {
+    try { await logoutAdmin(); } catch (cause) { setError(passkeyError(cause)); return; }
     setCredentials(null);
     setBootstrap(null);
     setRuns([]);
@@ -241,6 +295,7 @@ export function OperationsConsole() {
     setDetail(null);
     setSelectedID("");
     setError("");
+    setSecurityOpen(false);
   }
 
   const pageStats = useMemo(() => ({
@@ -250,7 +305,7 @@ export function OperationsConsole() {
   }), [runs]);
 
   if (!credentials || !bootstrap) {
-    return <LoginPanel onConnect={connect} loading={loading} error={error} />;
+    return <LoginPanel onConnect={connect} onBind={() => void bindInvite()} invite={invite} onInvite={setInvite} loading={loading || restoring} error={error} />;
   }
 
   return (
@@ -271,11 +326,13 @@ export function OperationsConsole() {
         <div className={styles.sidebarFooter}>
           <span className={styles.liveDot} /> API 已连接
           <small>{bootstrap.operator.actor} · {bootstrap.operator.role}</small>
-          <button type="button" onClick={disconnect}>断开会话</button>
+          <button type="button" onClick={() => setSecurityOpen(!securityOpen)}>账号与通行密钥</button>
+          <button type="button" onClick={() => void disconnect()}>退出登录</button>
         </div>
       </aside>
 
       <section className={styles.workspace} id="overview">
+        {securityOpen && <AdminSecurityPanel role={bootstrap.operator.role} onClose={() => setSecurityOpen(false)} />}
         <div className={styles.guideToolbar}>
         <OnboardingGuide
           scope="admin"
@@ -374,7 +431,7 @@ export function OperationsConsole() {
   );
 }
 
-function LoginPanel({ onConnect, loading, error }: { onConnect: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; error: string }) {
+function LoginPanel({ onConnect, onBind, invite, onInvite, loading, error }: { onConnect: (event: FormEvent<HTMLFormElement>) => void; onBind: () => void; invite: string; onInvite: (value: string) => void; loading: boolean; error: string }) {
   return (
     <main className={styles.loginPage}>
       <section className={styles.loginCard} aria-labelledby="admin-login-title">
@@ -385,13 +442,18 @@ function LoginPanel({ onConnect, loading, error }: { onConnect: (event: FormEven
         <div className={styles.loginIntro}>
           <p>ADMIN ACCESS</p>
           <h1 id="admin-login-title">欢迎回来</h1>
-          <span>使用管理密钥进入后台，查看 Agent 运行并调整服务配置。</span>
+          <span>使用通行密钥登录，在系统弹窗中选择设备 PIN 完成验证。</span>
         </div>
         <form className={styles.loginForm} onSubmit={onConnect}>
-          <label>管理密钥<input name="adminKey" type="password" autoComplete="off" required spellCheck={false} placeholder="输入管理密钥" /></label>
-          {error && <p className={styles.loginError}>{error}</p>}
-          <button type="submit" disabled={loading}>{loading ? "正在验证…" : "登录管理后台"}</button>
-          <small>密钥只保存在当前页面内存中，刷新或关闭页面后需要重新输入。</small>
+          {error && <p className={styles.loginError} role="alert">{error}</p>}
+          <button type="submit" disabled={loading}>{loading ? "正在验证…" : "使用通行密钥登录"}</button>
+          <small>PIN 由设备本地验证。可用验证方式由系统决定；无需向本站提供设备 PIN。</small>
+          <details open={invite ? true : undefined}>
+            <summary>首次使用？绑定管理员邀请</summary>
+            <label>一次性邀请码<input type="password" autoComplete="off" value={invite} onChange={(event) => onInvite(event.target.value)} spellCheck={false} placeholder="粘贴管理员提供的邀请码" /></label>
+            <button type="button" onClick={onBind} disabled={loading || !invite.trim()}>绑定通行密钥并登录</button>
+            <small>邀请在 30 分钟后失效，每次绑定尝试消耗一次邀请。</small>
+          </details>
           <Link className={styles.userEntryLink} href="/">← 返回普通用户登录</Link>
         </form>
         <OnboardingGuide scope="admin" topics={adminGuideTopics} compact />
@@ -513,8 +575,8 @@ function StatusBadge({ status }: { status: string }) {
 function EmptyLine({ text }: { text: string }) { return <div className={styles.emptyLine}>{text}</div>; }
 
 async function opsFetch<T>(path: string, credentials: Credentials): Promise<T> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${credentials.key}` };
-  const response = await fetch(`${apiBase}${path}`, { headers, cache: "no-store" });
+  const headers: Record<string, string> = { ...adminHeaders(credentials) };
+  const response = await adminFetch(`${path}`, { headers, cache: "no-store" });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`);
   return payload as T;

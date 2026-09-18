@@ -3,11 +3,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import type { LogFocus } from "./log-center-panel";
+import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type Operator = { actor: string; role: string; mfa_verified: boolean; legacy: boolean };
 type AlertRule = { id: string; name: string; description?: string; service?: string; level: string; event_prefix?: string; window_minutes: number; threshold: number; severity: "warning" | "critical"; enabled: boolean; updated_at: string };
 type Incident = { id: string; rule_id?: string; rule_name: string; source_type: "log_rule" | "performance_budget"; source_id: string; status: "open" | "acknowledged" | "resolved"; severity: "warning" | "critical"; title: string; summary: string; service?: string; level: string; event_prefix?: string; observed_value: number; threshold: number; window_minutes: number; window_started_at: string; window_ended_at: string; evidence: Record<string, unknown>; opened_at: string; acknowledged_at?: string; acknowledged_by?: string; resolved_at?: string; resolved_by?: string; resolution?: string; updated_at: string };
@@ -161,7 +162,7 @@ export function IncidentCenterPanel({ credentials, operator, onOpenLogs }: { cre
     if (!selected) return;
     setWorking(`evidence-${format}`); setError("");
     try {
-      const response = await fetch(`${apiBase}/v1/ops/incidents/${selected.id}/evidence?format=${format}`, { headers: { Authorization: `Bearer ${credentials.key}` }, cache: "no-store" });
+      const response = await adminFetch(`/v1/ops/incidents/${selected.id}/evidence?format=${format}`, { headers: { ...adminHeaders(credentials) }, cache: "no-store" });
       if (!response.ok) { const payload = await response.json().catch(() => ({})) as { message?: string }; throw new Error(payload.message || `导出失败（${response.status}）`); }
       const blob = await response.blob();
       const href = URL.createObjectURL(blob); const anchor = document.createElement("a");
@@ -268,8 +269,8 @@ function IncidentList({ items, selectedID, onSelect }: { items: Incident[]; sele
   if (!items.length) return <div className={styles.incidentEmpty}><strong>没有匹配的事故</strong><span>调整筛选条件后重试</span></div>;
   return <ul className={styles.incidentList}>{items.map((item) => <li key={item.id}><button type="button" data-selected={item.id === selectedID} onClick={() => onSelect(item.id)}><span><i data-severity={item.severity} /><strong>{item.title}</strong><small>{item.event_prefix === "performance.budget.projected_exceeded" ? "预算预测" : item.source_type === "performance_budget" ? "成本预算" : (item.service || "全部服务")} · {formatDateTime(item.opened_at)}</small></span><em>{statusLabel(item.status)}</em></button></li>)}</ul>;
 }
-async function incidentFetch<T>(path: string, credentials: Credentials): Promise<T> { const response = await fetch(`${apiBase}${path}`, { headers: { Authorization: `Bearer ${credentials.key}` }, cache: "no-store" }); const payload = await response.json().catch(() => ({})) as { message?: string }; if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`); return payload as T; }
-async function incidentMutation<T = unknown>(path: string, method: string, credentials: Credentials, body?: unknown): Promise<T> { const response = await fetch(`${apiBase}${path}`, { method, headers: { Authorization: `Bearer ${credentials.key}`, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const payload = await response.json().catch(() => ({})) as { message?: string }; if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`); return payload as T; }
+async function incidentFetch<T>(path: string, credentials: Credentials): Promise<T> { const response = await adminFetch(`${path}`, { headers: { ...adminHeaders(credentials) }, cache: "no-store" }); const payload = await response.json().catch(() => ({})) as { message?: string }; if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`); return payload as T; }
+async function incidentMutation<T = unknown>(path: string, method: string, credentials: Credentials, body?: unknown): Promise<T> { const response = await adminFetch(`${path}`, { method, headers: { ...adminHeaders(credentials), "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }); const payload = await response.json().catch(() => ({})) as { message?: string }; if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`); return payload as T; }
 function errorMessage(cause: unknown) { return cause instanceof Error ? cause.message : "告警服务暂时不可用"; }
 function statusLabel(status: string) { return ({ open: "待处理", acknowledged: "处理中", resolved: "已解决" } as Record<string, string>)[status] ?? status; }
 function notificationStatus(status: string) { return ({ queued: "排队中", processing: "投递中", sent: "已发送", failed: "失败" } as Record<string, string>)[status] ?? status; }

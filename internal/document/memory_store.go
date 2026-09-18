@@ -8,6 +8,7 @@ import (
 )
 
 type MemoryStore struct {
+	*WikiMemoryStore
 	mu              sync.RWMutex
 	items           map[string]Document
 	jobs            map[string]memoryJob
@@ -24,7 +25,7 @@ type memoryJob struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}, sourceIR: map[string]map[string]any{}, workspaceShares: map[string]map[string]time.Time{}}
+	return &MemoryStore{WikiMemoryStore: NewWikiMemoryStore(), items: map[string]Document{}, jobs: map[string]memoryJob{}, pages: map[string][]Page{}, chunks: map[string][]Chunk{}, sourceIR: map[string]map[string]any{}, workspaceShares: map[string]map[string]time.Time{}}
 }
 
 func (s *MemoryStore) CreateDocument(_ context.Context, item Document) (Document, bool, error) {
@@ -121,7 +122,7 @@ func (s *MemoryStore) DeleteDocument(_ context.Context, userID, documentID strin
 			s.jobs[jobID] = state
 		}
 	}
-	return nil
+	return s.EnqueueWiki(context.Background(), userID, documentID, now)
 }
 
 func (s *MemoryStore) ShareDocumentWithWorkspace(_ context.Context, userID, workspaceID, documentID string, now time.Time) error {
@@ -241,7 +242,7 @@ func (s *MemoryStore) CompleteIngestJob(_ context.Context, jobID string, now tim
 	item.Status = "ready"
 	item.UpdatedAt = now
 	s.items[item.ID] = item
-	return nil
+	return s.EnqueueWiki(context.Background(), item.UserID, item.ID, now)
 }
 
 func (s *MemoryStore) FailIngestJob(_ context.Context, jobID, code string, now time.Time) error {

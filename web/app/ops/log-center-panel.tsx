@@ -2,11 +2,12 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
+import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
 import styles from "./operations.module.css";
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
-type Credentials = { key: string };
+
+type Credentials = AdminCredentials;
 type LogEntry = {
   id: number;
   occurred_at: string;
@@ -207,7 +208,7 @@ function logQuery(filters: LogFilters, beforeID?: number) {
 }
 
 async function logFetch<T>(path: string, credentials: Credentials): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, { headers: { Authorization: `Bearer ${credentials.key}` }, cache: "no-store" });
+  const response = await adminFetch(`${path}`, { headers: { ...adminHeaders(credentials) }, cache: "no-store" });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`);
   return payload as T;

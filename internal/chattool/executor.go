@@ -51,12 +51,12 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 		definitions := []conversation.ModelToolDefinition{
 			{Name: "companion_no_tool", Description: "情感陪伴、普通聊天、知识问答，或当前消息不需要调用任何项目工具时调用。", Parameters: emptyModelObject()},
 			{Name: "companion_redirect_life", Description: "用户要求查询或变更账本、提醒事项、今日计划等生活助手数据时调用；当前陪伴角色无权执行，只提示切换模块。", Parameters: emptyModelObject()},
-			{Name: "companion_redirect_work", Description: "用户要求调用文档库、翻译、邮件、PPT、工作台 Skill 等工作伙伴能力时调用；当前陪伴角色无权执行，只提示切换模块。", Parameters: emptyModelObject()},
+			{Name: "companion_redirect_work", Description: "用户要求实际读取私人文档库、翻译、生成邮件或 PPT、执行工作台 Skill 等工作能力时调用；当前陪伴角色无权执行，只提示切换模块。询问功能用法时使用 product_knowledge_search，可直接解释而无需切换。", Parameters: emptyModelObject()},
 		}
-		return e.withMemoryModelTool(definitions)
+		return e.withMemoryModelTool(append(definitions, productKnowledgeTools()...))
 	}
 	if request.Module == "work" {
-		return e.withMemoryModelTool(workModelTools(len(chatattachment.DocumentIDs(request.Text))))
+		return e.withMemoryModelTool(append(append(workModelTools(len(chatattachment.DocumentIDs(request.Text))), wikiModelTools()...), productKnowledgeTools()...))
 	}
 	if request.Module != "life" {
 		return nil
@@ -147,7 +147,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 			},
 		},
 	}
-	return e.withMemoryModelTool(definitions)
+	return e.withMemoryModelTool(append(definitions, productKnowledgeTools()...))
 }
 
 func emptyModelObject() map[string]any {
@@ -159,11 +159,12 @@ func (e *Executor) withMemoryModelTool(definitions []conversation.ModelToolDefin
 		return definitions
 	}
 	return append(definitions, conversation.ModelToolDefinition{
-		Name: "memory_save_explicit", Description: "仅当用户明确要求‘记住’一项长期偏好、个人事实、关系、目标或承诺时调用。提醒、今日计划、账单和临时任务不能保存为长期记忆。",
+		Name: "memory_save_explicit", Description: "仅当用户明确要求记住或纠正一项长期偏好、个人事实、关系、目标或承诺时调用。纠正已有记忆时使用参考资料中的 supersedes_id；不得猜测 ID。提醒、今日计划、账单和临时任务不能保存为长期记忆。",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"content": map[string]any{"type": "string", "description": "需要长期记住的事实本身，去掉‘请记住’等动作词", "minLength": 2, "maxLength": 2000},
+				"content":       map[string]any{"type": "string", "description": "需要长期记住的事实本身，去掉‘请记住’等动作词", "minLength": 2, "maxLength": 2000},
+				"supersedes_id": map[string]any{"type": "string", "description": "仅明确纠正时传入现有记忆 ID", "maxLength": 64},
 			},
 			"required":             []string{"content"},
 			"additionalProperties": false,
@@ -341,12 +342,21 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 }
 
 func (e *Executor) ExecuteModelTool(ctx context.Context, request conversation.ToolRequest, call conversation.ModelToolCall) (conversation.ToolResult, error) {
+	if call.Name == "product_knowledge_search" || call.Name == "product_knowledge_read" {
+		return e.executeProductKnowledge(ctx, request, call)
+	}
 	if call.Name == "memory_save_explicit" {
 		if e.memories == nil {
 			return conversation.ToolResult{}, errors.New("memory service is unavailable")
 		}
 		content, _ := call.Arguments["content"].(string)
-		item, err := e.memories.SaveFromModel(ctx, request.UserID, request.ConversationID, request.MessageID, content)
+		var item memory.Memory
+		var err error
+		if supersedesID, _ := call.Arguments["supersedes_id"].(string); supersedesID != "" {
+			item, err = e.memories.CorrectFromMessage(ctx, request.UserID, supersedesID, content, request.ConversationID, request.MessageID)
+		} else {
+			item, err = e.memories.SaveFromModel(ctx, request.UserID, request.ConversationID, request.MessageID, content)
+		}
 		if err != nil {
 			if errors.Is(err, memory.ErrValidation) {
 				return handled("memory.save", "请告诉我要长期记住的具体内容。", nil), nil
@@ -414,6 +424,8 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 		return conversation.ToolResult{}, errors.New("work tools are unavailable")
 	}
 	switch call.Name {
+	case "work_wiki_search", "work_wiki_read", "work_wiki_follow_links":
+		return e.executeWikiTool(ctx, request, call)
 	case "work_no_tool":
 		return conversation.ToolResult{}, nil
 	case "work_list_documents":

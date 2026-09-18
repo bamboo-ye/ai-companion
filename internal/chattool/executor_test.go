@@ -457,7 +457,7 @@ func TestTodayPlanFollowUpUsesRequestedMissingTitle(t *testing.T) {
 func TestLifeToolsAreExposedToModelWithoutTextPatterns(t *testing.T) {
 	executor := New(ledger.NewService(ledger.NewMemoryStore()), planner.NewService(planner.NewMemoryStore()), nil, nil)
 	tools := executor.ModelTools(conversation.ToolRequest{Module: "life", Text: "任意自然语言"})
-	if len(tools) != 11 {
+	if len(tools) != 13 {
 		t.Fatalf("life model tools = %#v", tools)
 	}
 	names := map[string]bool{}
@@ -489,7 +489,7 @@ func TestLifeToolsAreExposedToModelWithoutTextPatterns(t *testing.T) {
 		t.Fatalf("reminder tool must stay single-action and accept grounded reference hints: %#v", reminderTool)
 	}
 	companionTools := executor.ModelTools(conversation.ToolRequest{Module: "companion", Text: "我今天的计划是什么"})
-	if len(companionTools) != 3 {
+	if len(companionTools) != 5 {
 		t.Fatalf("companion model tools: %#v", companionTools)
 	}
 	for _, tool := range companionTools {
@@ -1065,7 +1065,7 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 		skill.NewService(skill.NewMemoryStore(), skill.NewMemoryFileStore(), registry),
 	)
 	tools := executor.ModelTools(conversation.ToolRequest{Module: "work", Text: "任意自然语言"})
-	if len(tools) != 13 {
+	if len(tools) != 18 {
 		t.Fatalf("work model tools=%#v", tools)
 	}
 	names := map[string]bool{}
@@ -1093,7 +1093,7 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 	if len(composed) != 6 {
 		t.Fatalf("unexpected composed tool set: %#v", composed)
 	}
-	for _, expected := range []string{"work_no_tool", "work_list_documents", "work_list_skills", "work_query_documents", "work_extract_attached_document", "work_translate_attached_pdf", "work_translate_text", "work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx", "work_generate_table_pptx", "work_generate_visual_pptx"} {
+	for _, expected := range []string{"work_wiki_search", "work_wiki_read", "work_wiki_follow_links", "work_no_tool", "work_list_documents", "work_list_skills", "work_query_documents", "work_extract_attached_document", "work_translate_attached_pdf", "work_translate_text", "work_draft_email", "work_create_markdown_document", "work_create_pptx_outline", "work_generate_pptx", "work_generate_table_pptx", "work_generate_visual_pptx"} {
 		if !names[expected] {
 			t.Fatalf("missing work model tool %q", expected)
 		}

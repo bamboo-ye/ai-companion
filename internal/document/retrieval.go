@@ -19,6 +19,7 @@ type SearchHit struct {
 	SectionPath  string
 	Content      string
 	Score        float64
+	Semantic     bool
 }
 
 type QueryInput struct {
@@ -73,7 +74,7 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 		return QueryResult{}, err
 	}
 	allowed := documentsByID(items, readyIDs)
-	return s.answerFromHits(query, limit, allowed, hits), nil
+	return s.rerankedAnswer(ctx, query, limit, allowed, hits), nil
 }
 
 func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input QueryInput) (QueryResult, error) {
@@ -103,7 +104,7 @@ func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input 
 		return QueryResult{}, err
 	}
 	allowed := documentsByID(items, readyIDs)
-	return s.answerFromHits(query, limit, allowed, hits), nil
+	return s.rerankedAnswer(ctx, query, limit, allowed, hits), nil
 }
 
 func normalizeQuery(input QueryInput) (string, int, error) {
@@ -136,7 +137,7 @@ func (s *Service) answerFromHits(query string, limit int, allowed map[string]Doc
 	citations := make([]Citation, 0, limit)
 	for _, hit := range hits {
 		item, ok := allowed[hit.DocumentID]
-		if !ok || item.Status != "ready" || tokenOverlap(query, hit.Content) == 0 {
+		if !ok || item.Status != "ready" || (!hit.Semantic && tokenOverlap(query, hit.Content) == 0) {
 			continue
 		}
 		citations = append(citations, Citation{
@@ -264,4 +265,46 @@ func truncateRunes(value string, limit int) string {
 		return string(runes)
 	}
 	return string(runes[:limit]) + "…"
+}
+
+func (s *Service) rerankedAnswer(ctx context.Context, query string, limit int, allowed map[string]Document, hits []SearchHit) QueryResult {
+	valid := []SearchHit{}
+	for _, h := range hits {
+		if _, ok := allowed[h.DocumentID]; ok {
+			valid = append(valid, h)
+		}
+	}
+	hits = valid
+	if len(hits) > 24 {
+		hits = hits[:24]
+	}
+	degraded := false
+	if s.semantic.RerankEnabled() && len(hits) > 0 {
+		docs := []string{}
+		for _, h := range hits {
+			docs = append(docs, h.Content)
+		}
+		scores, err := s.semantic.Rerank(ctx, query, docs)
+		if err != nil {
+			degraded = true
+		} else {
+			for i := range hits {
+				hits[i].Score = scores[i]
+			}
+			sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+			filtered := []SearchHit{}
+			for _, h := range hits {
+				if h.Score >= .2 {
+					filtered = append(filtered, h)
+				}
+			}
+			hits = filtered
+		}
+	}
+	result := s.answerFromHits(query, limit, allowed, hits)
+	if degraded {
+		result.Degraded = true
+		result.DegradationReason = "rerank_unavailable"
+	}
+	return result
 }

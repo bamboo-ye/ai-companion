@@ -54,8 +54,8 @@ export function MemoryPanel({ token, onClose }: { token: string; onClose: () => 
 
   async function patch(id: string, body: Record<string, unknown>) {
     try {
-      const response = await fetch(`${apiBase}/v1/memories/${id}`, {
-        method: "PATCH",
+      const response = await fetch(`${apiBase}/v1/memories/${id}${body.content ? "/corrections" : ""}`, {
+        method: body.content ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });

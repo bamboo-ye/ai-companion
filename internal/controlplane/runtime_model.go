@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/windcry1/ai-companion/internal/contextengine"
 )
 
 const DefaultModelProfileKey = "production-default"
@@ -86,8 +88,29 @@ func (s *Service) ActiveModelRuntime(ctx context.Context, key string) (ModelRunt
 		"MODEL_MAX_COMPLETION_PRICE":     strconv.FormatFloat(payload.ProviderPolicy.MaxCompletionPrice, 'f', -1, 64),
 		"MODEL_REQUIRE_PINNED":           "true",
 	}
+	models, err := s.Models(ctx)
+	if err != nil {
+		return ModelRuntimeSnapshot{}, err
+	}
+	modelWindows := map[string]int{}
+	for _, model := range models {
+		modelWindows[model.ModelID] = model.ContextWindow
+	}
 	for role, config := range payload.Roles {
 		prefix := "MODEL_" + strings.ToUpper(role)
+		// Every configured fallback must fit the same request. Snapshot the
+		// smallest window so a later catalog update cannot change a resumed run.
+		window := 0
+		for _, model := range config.Models {
+			candidate := modelWindows[model]
+			if candidate <= 0 {
+				candidate = contextengine.DefaultContextWindow
+			}
+			if window == 0 || candidate < window {
+				window = candidate
+			}
+		}
+		variables[prefix+"_CONTEXT_WINDOW"] = strconv.Itoa(window)
 		variables[prefix+"_NAME"] = config.Models[0]
 		variables[prefix+"_FALLBACK_NAMES"] = strings.Join(config.Models[1:], ",")
 		variables[prefix+"_MAX_TOKENS"] = strconv.Itoa(config.MaxTokens)

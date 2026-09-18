@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,9 +11,30 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/character"
+	"github.com/windcry1/ai-companion/internal/contextengine"
+	"github.com/windcry1/ai-companion/internal/reliability"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func TestOversizedContextNeverCallsProviderOrTripsCircuit(t *testing.T) {
+	provider := NewOpenAICompatibleProvider("https://model.invalid/v1", "secret", "test", time.Second, 0, 0)
+	provider.ContextWindow = 2048
+	provider.MaxTokens = 256
+	provider.Client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("oversized request reached network")
+		return nil, nil
+	})}
+	breaker := reliability.NewCircuitBreaker(1, time.Minute)
+	wrapped := NewCircuitBreakerProvider(provider, breaker)
+	_, _, err := wrapped.Generate(context.Background(), character.Character{}, []Message{{Role: "user", Content: strings.Repeat("长消息", 1000)}})
+	if !errors.Is(err, contextengine.ErrBudgetExceeded) {
+		t.Fatalf("budget error = %v", err)
+	}
+	if !breaker.Allow() {
+		t.Fatal("local budget error opened model circuit")
+	}
+}
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 

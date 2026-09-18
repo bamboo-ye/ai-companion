@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -87,9 +88,14 @@ func TestEstimateTokensHandlesChineseAndLatin(t *testing.T) {
 	}
 }
 
-func TestSummarySingleLongLineRespectsBudget(t *testing.T) {
-	lines := fitSummaryLines([]string{"- 用户：" + strings.Repeat("很长的项目背景", 100)}, 64)
-	if len(lines) != 1 || EstimateTokens(lines[0]) > 64 {
-		t.Fatalf("bounded summary = %#v (%d tokens)", lines, EstimateTokens(strings.Join(lines, "\n")))
+func TestSummaryOversizedFactIsReportedInsteadOfCutMidSentence(t *testing.T) {
+	builder := NewContextBuilder(NewMemoryStore(), 128, 64)
+	text, _ := builder.summarize(context.Background(), nil, []Message{{ID: "long", Role: "user", Content: strings.Repeat("很长的项目背景", 100)}})
+	var summary StructuredSummary
+	if err := json.Unmarshal([]byte(text), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.Facts) != 0 || summary.Omitted != 1 || EstimateTokens(text) > 64 {
+		t.Fatalf("invalid bounded summary: %s", text)
 	}
 }

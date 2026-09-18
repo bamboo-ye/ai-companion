@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { ChatPanel } from "./chat-panel";
 import { DocumentPanel } from "./document-panel";
+import { BuiltinKnowledgePanel } from "./builtin-knowledge-panel";
 import { LifePanel } from "./life-panel";
 import { MemoryPanel } from "./memory-panel";
 import { TaskHistoryPanel } from "./task-history-panel";
@@ -15,7 +16,7 @@ import { ProfilePanel, type UserProfile } from "./profile-panel";
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 type ModuleKey = "companion" | "life" | "work";
-type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories" | "profile";
+type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories" | "profile" | "knowledge";
 type AuthMode = "login" | "register";
 
 type Character = {
@@ -74,6 +75,14 @@ export function CompanionStart() {
   const [showCharacterForm, setShowCharacterForm] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [knowledgePageID, setKnowledgePageID] = useState("");
+
+  useEffect(() => {
+    const pageID = new URLSearchParams(window.location.hash.slice(1)).get("knowledge");
+    if (pageID && /^builtin-[a-z0-9-]{1,72}$/.test(pageID)) queueMicrotask(() => {
+      setKnowledgePageID(pageID); setScreen("knowledge");
+    });
+  }, []);
 
   const loadDashboard = useCallback(async (accessToken: string) => {
     const headers = { Authorization: `Bearer ${accessToken}` };
@@ -227,7 +236,7 @@ export function CompanionStart() {
       storeSession(payload);
       setToken(payload.access_token);
       await loadDashboard(payload.access_token);
-      setScreen("dashboard");
+      setScreen(knowledgePageID ? "knowledge" : "dashboard");
       setMessage("");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "登录失败");
@@ -447,6 +456,7 @@ export function CompanionStart() {
           ))}
         </nav>
         <div className="sidebarFooter">
+          <button className="sidebarLogout" type="button" onClick={() => { setKnowledgePageID(""); setScreen("knowledge"); }}>产品知识</button>
           <button className={`sidebarProfile ${screen === "profile" ? "active" : ""}`} type="button" onClick={() => { setScreen("profile"); setActiveCharacter(null); setShowCharacterForm(false); setMessage(""); }}>
             <span aria-hidden="true">{currentUser ? (Array.from(currentUser.display_name.trim())[0] ?? currentUser.email.slice(0, 1).toUpperCase()) : "我"}</span>
             <div><strong>{currentUser?.display_name ?? "个人主页"}</strong><small>个人主页</small></div>
@@ -527,6 +537,7 @@ export function CompanionStart() {
         {screen === "memories" && <MemoryPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "work-tools" && <WorkPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "task-history" && <TaskHistoryPanel token={token} onClose={() => setScreen("dashboard")} />}
+        {screen === "knowledge" && <section className="documentPanel"><button type="button" className="textButton" onClick={() => setScreen("dashboard")}>返回角色</button><BuiltinKnowledgePanel token={token} initialPageID={knowledgePageID} /></section>}
         {screen === "documents" && <DocumentPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "profile" && currentUser && <ProfilePanel token={token} user={currentUser} onClose={() => setScreen("dashboard")} />}
       </section>

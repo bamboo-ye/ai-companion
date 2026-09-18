@@ -1,0 +1,95 @@
+openapi: 3.1.0
+info:
+  title: Builtin Product Knowledge
+  version: 1.0.0
+paths:
+  /v1/knowledge/builtin/pages:
+    get:
+      operationId: listBuiltinProductKnowledge
+      security: [{ bearerAuth: [] }]
+      summary: List versioned, read-only project and usage documentation
+      responses:
+        '200':
+          description: Full catalog metadata; body fields are empty. No upload or vector service is needed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, items]
+                properties:
+                  revision: { type: string }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/BuiltinKnowledgePage' }
+        '401': { description: User authentication required }
+  /v1/knowledge/builtin/pages/{page_id}:
+    parameters:
+      - in: path
+        name: page_id
+        required: true
+        schema: { type: string, maxLength: 80 }
+    get:
+      operationId: readBuiltinProductKnowledge
+      security: [{ bearerAuth: [] }]
+      summary: Read a complete builtin chapter with source version and continuation links
+      responses:
+        '200':
+          description: Full current chapter; ETag identifies the source content hash. Reading admin documentation grants no administrative authority.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuiltinKnowledgePage' }
+        '401': { description: User authentication required }
+        '404': { description: Unknown builtin page; private Wiki IDs are not resolved here }
+  /v1/knowledge/builtin/search:
+    post:
+      operationId: searchBuiltinProductKnowledge
+      security: [{ bearerAuth: [] }]
+      summary: Search the embedded documentation without accessing tenant data
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 2, maxLength: 1000 }
+                limit: { type: integer, minimum: 1, maximum: 12, default: 8 }
+      responses:
+        '200':
+          description: Ranked previews, each at most 240 characters plus an ellipsis; use the page read endpoint for complete contents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, hits]
+                properties:
+                  revision: { type: string }
+                  hits:
+                    type: array
+                    items:
+                      type: object
+                      required: [page, score]
+                      properties:
+                        page: { $ref: '#/components/schemas/BuiltinKnowledgePage' }
+                        score: { type: number }
+        '401': { description: User authentication required }
+        '422': { description: Invalid query or result limit }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  schemas:
+    BuiltinKnowledgePage:
+      type: object
+      required: [id, citation_url, title, group, audience, body, source, section, version, links]
+      properties:
+        id: { type: string, pattern: '^builtin-' }
+        citation_url: { type: string, description: Authenticated Web reader link }
+        title: { type: string }
+        group: { type: string }
+        audience: { type: string, enum: [user, admin, project, technical] }
+        body: { type: string }
+        source: { type: string, description: Reviewed repository source path }
+        section: { type: string }
+        version: { type: string, description: SHA-256 of the complete source }
+        links: { type: array, items: { type: string }, description: Remaining parts of the same source section }

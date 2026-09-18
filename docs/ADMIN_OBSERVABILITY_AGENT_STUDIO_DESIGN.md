@@ -903,16 +903,16 @@ Run 列表响应示例：
 
 ### 16.1 后台认证
 
-建议增加：
+Web 管理端使用独立管理员账号与 Passkey（WebAuthn），注册和登录均强制用户验证。设备 PIN 在设备本地验证；具体 PIN/密码/生物识别选项由操作系统和验证器决定，网页不收集 PIN，也不能强制所有平台只显示 PIN。
 
-- `POST /v1/ops/auth/login`：operator token/password + TOTP 换取 15 分钟访问会话和受控刷新会话。
-- 会话存于 `HttpOnly; Secure; SameSite=Strict` Cookie；CSRF 使用双提交 Token 或同源 Token。
-- 高风险接口要求最近 5 分钟内的 step-up MFA assertion。
-- 禁止在浏览器 localStorage 保存长期 Operator Token 或 TOTP。
+- 一次性管理员邀请完成首次绑定；生产首个管理员通过离线 `admin-invite` 命令创建，支持备用凭证和受控恢复。
+- `/v1/ops/auth/passkey/{login,register}/{options,verify}` 完成挑战与验证。完整 WebAuthn SessionData 持久化，挑战原子消费并在 5 分钟后失效。
+- 浏览器通过同源 `/api/admin/*` 代理携带 `HttpOnly; Secure; SameSite=Strict` 会话 Cookie，使用精确 Origin 和自定义请求头防护 CSRF。仅 localhost 开发允许非 Secure Cookie。
+- 会话最长 8 小时、请求空闲 30 分钟；后台写入要求最近 5 分钟内通过验证，前端会发起同账号重新验证。
+- 每次请求核验账号当前角色、状态、会话版本和凭证；禁用、密钥重置、MFA 重置会使旧会话失效。退出调用服务端撤销接口。
+- 凭证公钥、邀请、挑战、会话和认证审计使用 PostgreSQL/MySQL 持久化。浏览器不保存长期 Operator Token，CLI/自动化的 Bearer + TOTP 接口继续受原有权限控制。
 
-当前阶段 Web 管理端在独立 `/admin` 入口直接使用 Bearer 管理密钥，不读取或复用普通用户登录状态，也不把密钥写入 localStorage；刷新或关闭页面后需要重新输入。生产环境仍可通过 `OPERATOR_MFA_REQUIRED` 强制运维账号 MFA，后续按上述短时 Cookie 会话方案进一步降低长期密钥暴露面。
-
-现有 Bearer + TOTP 保留给 CLI/自动化，并限制来源网络、速率和审计。
+配置、初始化与恢复步骤见 [管理员通行密钥登录](ADMIN_PASSKEY_LOGIN.md)。
 
 ### 16.2 数据脱敏
 

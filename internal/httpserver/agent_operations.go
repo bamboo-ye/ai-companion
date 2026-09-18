@@ -248,6 +248,7 @@ func operatorSafeModelCalls(items []any) []map[string]any {
 		"cost_micros": true, "latency_ms": true, "timeout_ms": true,
 		"reasoning_effort": true, "error_status": true, "retryable": true,
 		"retry_after": true, "contract_valid": true, "contract_error": true,
+		"prompt_token_upper_bound": true,
 	}
 	result := make([]map[string]any, 0, len(items))
 	for _, item := range items {

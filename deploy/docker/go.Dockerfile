@@ -16,7 +16,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     -ldflags="-s -w -X github.com/windcry1/ai-companion/internal/buildinfo.Version=${VERSION} -X github.com/windcry1/ai-companion/internal/buildinfo.Commit=${COMMIT} -X github.com/windcry1/ai-companion/internal/buildinfo.Date=${BUILD_DATE}" \
     -o /out/service ./cmd/${SERVICE} \
     && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck
+    go build -trimpath -ldflags="-s -w" -o /out/healthcheck ./cmd/healthcheck \
+    && CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/admin-invite ./cmd/admin-invite
 
 FROM ${BASE_REGISTRY}/python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -37,5 +39,6 @@ RUN apt-get update \
     && chown -R app:app /app/.data
 COPY --from=build /out/service /service
 COPY --from=build /out/healthcheck /healthcheck
+COPY --from=build /out/admin-invite /admin-invite
 USER app
 ENTRYPOINT ["/service"]

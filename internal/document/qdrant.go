@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/windcry1/ai-companion/internal/platform/tracectx"
+	"github.com/windcry1/ai-companion/internal/semantic"
 )
 
 type QdrantIndex struct {
@@ -19,6 +20,7 @@ type QdrantIndex struct {
 	collection string
 	apiKey     string
 	client     *http.Client
+	semantic   *semantic.Client
 }
 
 func NewQdrantIndex(baseURL, collection, apiKey string, timeout time.Duration) *QdrantIndex {
@@ -43,10 +45,15 @@ func (q *QdrantIndex) Ensure(ctx context.Context) error {
 	if status != http.StatusNotFound {
 		return fmt.Errorf("qdrant collection check status %d", status)
 	}
+	dimensions, version := 256, EmbeddingVersion
+	if q.semantic.EmbeddingsEnabled() {
+		dimensions = q.semantic.Dimensions()
+		version = q.semantic.Version()
+	}
 	body := map[string]any{
-		"vectors":        map[string]any{"dense": map[string]any{"size": 256, "distance": "Cosine"}},
+		"vectors":        map[string]any{"dense": map[string]any{"size": dimensions, "distance": "Cosine"}},
 		"sparse_vectors": map[string]any{"sparse": map[string]any{}},
-		"metadata":       map[string]any{"embedding_version": EmbeddingVersion},
+		"metadata":       map[string]any{"embedding_version": version},
 	}
 	status, response, err := q.do(ctx, http.MethodPut, path, body)
 	if err != nil {
@@ -60,8 +67,24 @@ func (q *QdrantIndex) Ensure(ctx context.Context) error {
 
 func (q *QdrantIndex) Upsert(ctx context.Context, item Document, chunks []Chunk) error {
 	points := make([]map[string]any, 0, len(chunks))
-	for _, chunk := range chunks {
+	var embeddings [][]float32
+	if q.semantic.EmbeddingsEnabled() {
+		texts := []string{}
+		for _, chunk := range chunks {
+			texts = append(texts, chunk.Content)
+		}
+		var err error
+		embeddings, err = q.semantic.Embed(ctx, texts)
+		if err != nil {
+			return err
+		}
+	}
+	for i, chunk := range chunks {
 		dense, indices, values := vectorize(chunk.Content)
+		if embeddings != nil {
+			dense = embeddings[i]
+			chunk.EmbeddingVersion = q.semantic.Version()
+		}
 		points = append(points, map[string]any{
 			"id": chunk.PointID,
 			"vector": map[string]any{
@@ -106,6 +129,13 @@ func (q *QdrantIndex) SearchDocuments(ctx context.Context, query string, documen
 
 func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter map[string]any, limit int) ([]SearchHit, error) {
 	dense, indices, values := vectorize(query)
+	if q.semantic.EmbeddingsEnabled() {
+		vectors, err := q.semantic.Embed(ctx, []string{query})
+		if err != nil {
+			return nil, err
+		}
+		dense = vectors[0]
+	}
 	if len(indices) == 0 {
 		return nil, nil
 	}
@@ -154,7 +184,7 @@ func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter
 			ChunkID: point.Payload.ChunkID, DocumentID: point.Payload.DocumentID,
 			DocumentName: point.Payload.DocumentName, PageStart: point.Payload.PageStart,
 			PageEnd: point.Payload.PageEnd, SectionPath: point.Payload.SectionPath,
-			Content: point.Payload.Content, Score: point.Score,
+			Content: point.Payload.Content, Score: point.Score, Semantic: q.semantic.EmbeddingsEnabled(),
 		})
 	}
 	return hits, nil

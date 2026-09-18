@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/id"
+	"github.com/windcry1/ai-companion/internal/semantic"
 )
 
 const (
@@ -17,7 +16,6 @@ const (
 	DefaultSummaryTokenBudget = 1200
 	contextPageSize           = 400
 	maxSummaryRollsPerBuild   = 25
-	summarizerVersion         = "extractive-rolling-v1"
 )
 
 type ConversationSummary struct {
@@ -53,6 +51,7 @@ type ContextBuilder struct {
 	recentBudget  int
 	summaryBudget int
 	now           func() time.Time
+	semantic      *semantic.Client
 }
 
 func NewContextBuilder(store Store, recentBudget, summaryBudget int) *ContextBuilder {
@@ -110,7 +109,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID, conversationID strin
 			return result, nil
 		}
 
-		next, summaryErr := b.rollSummary(latest, userID, conversationID, dropped)
+		next, summaryErr := b.rollSummary(ctx, latest, userID, conversationID, dropped)
 		if summaryErr != nil {
 			return ContextResult{}, summaryErr
 		}
@@ -127,7 +126,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID, conversationID strin
 	return ContextResult{}, fmt.Errorf("context summary roll limit exceeded")
 }
 
-func (b *ContextBuilder) rollSummary(previous *ConversationSummary, userID, conversationID string, messages []Message) (ConversationSummary, error) {
+func (b *ContextBuilder) rollSummary(ctx context.Context, previous *ConversationSummary, userID, conversationID string, messages []Message) (ConversationSummary, error) {
 	if len(messages) == 0 {
 		return ConversationSummary{}, fmt.Errorf("cannot summarize an empty message range")
 	}
@@ -138,22 +137,20 @@ func (b *ContextBuilder) rollSummary(previous *ConversationSummary, userID, conv
 	version := 1
 	startSequence := messages[0].Sequence
 	startedAt := messages[0].CreatedAt
-	lines := make([]string, 0)
+
 	if previous != nil {
 		version = previous.Version + 1
 		startSequence = previous.StartSequence
 		startedAt = previous.RangeStartedAt
-		lines = append(lines, summaryLines(previous.Content)...)
+
 	}
-	lines = append(lines, compactMessageGroups(messages)...)
-	lines = fitSummaryLines(lines, b.summaryBudget)
-	content := strings.Join(lines, "\n")
+	content, summaryVersion := b.summarize(ctx, previous, messages)
 	now := b.now().UTC()
 	return ConversationSummary{
 		ID: summaryID, ConversationID: conversationID, UserID: userID, Version: version,
 		StartSequence: startSequence, EndSequence: messages[len(messages)-1].Sequence,
 		RangeStartedAt: startedAt, RangeEndedAt: messages[len(messages)-1].CreatedAt,
-		Content: content, TokenCount: EstimateTokens(content), SummarizerVersion: summarizerVersion, CreatedAt: now,
+		Content: content, TokenCount: EstimateTokens(content), SummarizerVersion: summaryVersion, CreatedAt: now,
 	}, nil
 }
 
@@ -212,86 +209,6 @@ func messageGroupTokens(group []Message) int {
 	return total
 }
 
-func compactMessageGroups(messages []Message) []string {
-	groups := groupMessages(messages)
-	lines := make([]string, 0, len(groups))
-	for _, group := range groups {
-		parts := make([]string, 0, len(group))
-		for _, message := range group {
-			if value := strings.TrimSpace(message.Content); value != "" {
-				parts = append(parts, value)
-			}
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		role := "系统"
-		switch group[0].Role {
-		case "user":
-			role = "用户"
-		case "assistant":
-			role = "伙伴"
-		case "tool":
-			role = "工具"
-		}
-		value := strings.Join(parts, " ")
-		if utf8.RuneCountInString(value) > 240 {
-			runes := []rune(value)
-			value = string(runes[:240]) + "…"
-		}
-		lines = append(lines, fmt.Sprintf("- %s：%s", role, value))
-	}
-	return lines
-}
-
-func summaryLines(content string) []string {
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-	result := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if line = strings.TrimSpace(line); line != "" {
-			result = append(result, line)
-		}
-	}
-	return result
-}
-
-func fitSummaryLines(lines []string, budget int) []string {
-	if len(lines) == 0 {
-		return []string{"- 暂无可用摘要。"}
-	}
-	tokens := 0
-	start := len(lines)
-	for index := len(lines) - 1; index >= 0; index-- {
-		lineTokens := EstimateTokens(lines[index]) + 2
-		if start == len(lines) && lineTokens > budget {
-			return []string{truncateToTokenBudget(lines[index], budget)}
-		}
-		if start < len(lines) && tokens+lineTokens > budget {
-			break
-		}
-		tokens += lineTokens
-		start = index
-	}
-	return lines[start:]
-}
-
-func truncateToTokenBudget(value string, budget int) string {
-	if budget <= 0 || EstimateTokens(value) <= budget {
-		return value
-	}
-	runes := []rune(value)
-	low, high := 1, len(runes)
-	for low < high {
-		mid := (low + high + 1) / 2
-		if EstimateTokens(string(runes[:mid])+"…") <= budget {
-			low = mid
-		} else {
-			high = mid - 1
-		}
-	}
-	return string(runes[:low]) + "…"
-}
-
 func formatSummaryContext(summary ConversationSummary) string {
 	return fmt.Sprintf("此前对话滚动摘要（%s 至 %s，覆盖序号 %d–%d）：\n%s",
 		summary.RangeStartedAt.Format(time.RFC3339), summary.RangeEndedAt.Format(time.RFC3339),
@@ -299,23 +216,7 @@ func formatSummaryContext(summary ConversationSummary) string {
 }
 
 func EstimateTokens(value string) int {
-	if value == "" {
-		return 0
-	}
-	count := 0
-	latinRunes := 0
-	for _, r := range value {
-		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r) {
-			count++
-			continue
-		}
-		latinRunes++
-	}
-	count += (latinRunes + 3) / 4
-	if count == 0 {
-		return 1
-	}
-	return count
+	return contextengine.EstimateTokens(value)
 }
 
 func errorsIsNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
