@@ -358,8 +358,7 @@ def check_manual_resolution(
         requester_key_id=str(request["requester_key_id"]),
         approver_key_id=str(approval["approver_key_id"]),
     )
-    existing = ledger.resolution(resolution.deployment_id)
-    operation = ledger.get(resolution.deployment_id)
+    existing, operation = ledger.resolution_state(resolution.deployment_id)
     if existing is not None:
         if existing["resolution_id"] != resolution.resolution_id:
             raise DeploymentResolutionError(

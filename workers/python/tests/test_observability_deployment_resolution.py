@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+from unittest.mock import patch
 
 from ai_companion_worker.evaluation.deployment_controller import (
     DeploymentBusyError,
@@ -249,6 +250,41 @@ class ObservabilityDeploymentResolutionTest(unittest.TestCase):
             connection.close()
             self.assertEqual(resolution_count, 1)
             self.assertEqual(len(ledger.events("deploy-manual-resolution")), 2)
+
+    def test_check_reads_one_snapshot_when_resolution_commits_between_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger, now = make_indeterminate_ledger(root)
+            artifacts = sign_resolution(ledger, root / "resolutions", now)
+            checked_at = now + timedelta(seconds=3)
+            resolution, _status = check_manual_resolution(
+                ledger, *artifacts, REQUEST_KEY, REQUEST_KEY_ID,
+                APPROVAL_KEY, APPROVAL_KEY_ID, now=checked_at,
+            )
+            # WAL lets a real writer commit while the reader holds its snapshot.
+            connection = sqlite3.connect(ledger.path)
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.close()
+            writer = DeploymentLedger(ledger.path, create=False)
+            original_select = ledger._select_required
+
+            def commit_before_operation_read(connection, deployment_id):
+                writer.apply_manual_resolution(resolution, checked_at)
+                return original_select(connection, deployment_id)
+
+            with patch.object(ledger, "_select_required", commit_before_operation_read):
+                _resolution, status = check_manual_resolution(
+                    ledger, *artifacts, REQUEST_KEY, REQUEST_KEY_ID,
+                    APPROVAL_KEY, APPROVAL_KEY_ID, now=checked_at,
+                )
+            self.assertEqual(status, "ready")
+            operation, created = apply_manual_resolution(
+                ledger, *artifacts, REQUEST_KEY, REQUEST_KEY_ID,
+                APPROVAL_KEY, APPROVAL_KEY_ID, now=checked_at,
+            )
+            self.assertFalse(created)
+            self.assertEqual(operation["status"], "completed")
+            self.assertEqual(len(ledger.events(resolution.deployment_id)), 2)
 
     def test_failed_resolution_supports_operation_without_external_id(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -791,6 +791,21 @@ class DeploymentLedger:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def resolution_state(
+        self, deployment_id: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """Read the resolution and operation from the same database snapshot."""
+        deployment_id = _validate_identifier(deployment_id, "deployment_id")
+        with closing(self._connect_read_only()) as connection, connection:
+            connection.execute("BEGIN")
+            row = connection.execute(
+                "SELECT * FROM deployment_resolutions WHERE deployment_id = ?",
+                (deployment_id,),
+            ).fetchone()
+            operation = self._select_required(connection, deployment_id)
+            connection.commit()
+        return (dict(row) if row is not None else None), operation
+
     def apply_manual_resolution(
         self,
         resolution: ManualResolution,
