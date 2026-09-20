@@ -1,5 +1,5 @@
 ARG BASE_REGISTRY=docker.io/library
-FROM ${BASE_REGISTRY}/golang:1.26.4-alpine AS build
+FROM ${BASE_REGISTRY}/golang:1.26.8-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG SERVICE=api

@@ -19,7 +19,7 @@ from pypdf import PdfReader
 from ai_companion_worker.pdf_utils import normalize_pdf_bytes
 from ai_companion_worker.result_cache import load_json_result, store_json_result
 
-PARSER_VERSION = "pypdf-6.14.2-markdown-v4"
+PARSER_VERSION = "pypdf-6.19.0-markdown-v4"
 TEXT_PARSER_VERSION = "text-markdown-v3"
 SOURCE_IR_VERSION = "document-source-ir-v1"
 DOCUMENT_PARSE_CACHE_VERSION = "document-parse-cache-v1"

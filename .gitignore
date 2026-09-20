@@ -4,6 +4,16 @@
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+.netrc
+.pypirc
+.npmrc
+credentials*.json
+*service-account*.json
+.security-local/
 
 # Editors and operating systems
 .DS_Store

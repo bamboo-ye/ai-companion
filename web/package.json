@@ -16,7 +16,7 @@
     "check": "eslint . --max-warnings=0 && tsc --noEmit"
   },
   "dependencies": {
-    "next": "16.2.9",
+    "next": "16.3.5",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },
@@ -25,7 +25,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.0.0",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.3.5",
     "typescript": "^5.9.0"
   }
 }

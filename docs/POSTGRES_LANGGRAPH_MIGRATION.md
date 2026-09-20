@@ -66,7 +66,7 @@
 
 已完成运行时基础切片：
 
-- 固定 `langgraph 1.2.9`、`langgraph-checkpoint-postgres 3.1.0` 和
+- 固定 `langgraph 1.2.9`、`langgraph-checkpoint-postgres 3.1.2` 和
   `psycopg 3.3.4`。
 - LangGraph 检查点表由官方 `PostgresSaver.setup()` 创建在独立
   `langgraph` schema，不手工复制第三方表结构。

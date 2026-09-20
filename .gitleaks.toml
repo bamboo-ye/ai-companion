@@ -1,0 +1,14 @@
+title = "AI Companion secret scanning"
+
+[extend]
+useDefault = true
+
+# Narrow, reviewed false positives only: these are Python variable names and
+# the next variable following an empty REDIS_PASSWORD in the example env file.
+# Never allowlist a complete source directory or an actual credential value.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Variable references and empty example Redis password"
+regexTarget = "secret"
+regexes = ['''^expansion_(25|50|100)_gate_key$''', '''^PRESENCE_TTL=(90s|24h)$''']

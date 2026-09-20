@@ -1,0 +1,58 @@
+name: Public repository safety
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject tracked private configuration
+        run: |
+          node --test scripts/check-public-files.test.mjs
+          node scripts/check-public-files.mjs
+      - name: Install checksum-verified scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner_dir=$(mktemp -d)
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz \
+            --output "$scanner_dir/gitleaks.tar.gz"
+          echo "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  $scanner_dir/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf "$scanner_dir/gitleaks.tar.gz" -C "$scanner_dir" gitleaks
+          echo "$scanner_dir" >> "$GITHUB_PATH"
+      - name: Verify detection before scanning
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 -c 'import secrets; print("GITHUB_TOKEN=ghp_" + secrets.token_hex(18))' | gitleaks stdin --redact=100 --no-banner
+          status=$?
+          set -e
+          test "$status" -eq 1
+      - name: Scan complete available history
+        run: gitleaks git . --log-opts="--all --full-history" --redact=100 --max-decode-depth=3 --ignore-gitleaks-allow --no-banner
+
+  go-vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

@@ -1,4 +1,4 @@
-FROM python:3.13.5-slim
+FROM python:3.13.15-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY workers/python/pyproject.toml ./
@@ -7,4 +7,3 @@ RUN pip install --no-cache-dir .
 RUN useradd --create-home --uid 10001 app
 USER app
 ENTRYPOINT ["ai-companion-python-worker"]
-

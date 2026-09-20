@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.26.8-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     -ldflags="-s -w -X github.com/windcry1/ai-companion/internal/buildinfo.Version=${VERSION} -X github.com/windcry1/ai-companion/internal/buildinfo.Commit=${COMMIT} -X github.com/windcry1/ai-companion/internal/buildinfo.Date=${BUILD_DATE}" \
     -o /out/document-worker ./cmd/worker
 
-FROM python:3.13.5-slim
+FROM python:3.13.15-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHON_EXECUTABLE=/usr/local/bin/python \
