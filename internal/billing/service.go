@@ -57,6 +57,7 @@ type Subscription struct {
 
 type UsageItem struct {
 	Resource    string     `json:"resource"`
+	LimitSource string     `json:"limit_source"`
 	Actual      int        `json:"actual"`
 	Adjustment  int        `json:"adjustment"`
 	Used        int        `json:"used"`
@@ -88,9 +89,10 @@ type CreateUsageAdjustmentInput struct {
 }
 
 type Summary struct {
-	Plan         Plan         `json:"plan"`
-	Subscription Subscription `json:"subscription"`
-	Usage        []UsageItem  `json:"usage"`
+	Plan            Plan         `json:"plan"`
+	EffectiveLimits Limits       `json:"effective_limits"`
+	Subscription    Subscription `json:"subscription"`
+	Usage           []UsageItem  `json:"usage"`
 }
 
 type QuotaError struct {
@@ -174,8 +176,30 @@ func (s *Service) Summary(ctx context.Context, userID string) (Summary, error) {
 	}
 	now := s.now().UTC()
 	subscription, plan := s.subscriptionAndPlan(ctx, userID, now)
+	limits := plan.Limits
+	sources := [5]string{"plan", "plan", "plan", "plan", "plan"}
+	if store, ok := s.store.(QuotaStore); ok {
+		policies, err := store.GetQuotaPolicies(ctx, userID)
+		if err != nil {
+			return Summary{}, err
+		}
+		limits = policies.User.Limits.apply(policies.Global.Limits.apply(limits))
+		for i, value := range policies.Global.Limits.values() {
+			if value != nil {
+				sources[i] = "global"
+			}
+		}
+		for i, value := range policies.User.Limits.values() {
+			if value != nil {
+				sources[i] = "user"
+			}
+		}
+	}
 	if s.quotaDisabled {
-		plan.Limits = Limits{Documents: -1, SkillRunsPerMonth: -1, Workspaces: -1, AgentRunsPerMonth: -1, ModelCostMicrosMonthly: -1}
+		limits = Limits{Documents: -1, SkillRunsPerMonth: -1, Workspaces: -1, AgentRunsPerMonth: -1, ModelCostMicrosMonthly: -1}
+		for i := range sources {
+			sources[i] = "development"
+		}
 	}
 	periodStart, periodEnd := monthBounds(now)
 	if !subscription.CurrentPeriodStart.IsZero() && !subscription.CurrentPeriodEnd.IsZero() {
@@ -206,11 +230,11 @@ func (s *Service) Summary(ctx context.Context, userID string) (Summary, error) {
 		}
 	}
 	items := []UsageItem{
-		usage(ResourceDocuments, documents, 0, plan.Limits.Documents, nil, nil),
-		usage(ResourceSkillRuns, skillRuns, 0, plan.Limits.SkillRunsPerMonth, &periodStart, &periodEnd),
-		usage(ResourceWorkspaces, workspaces, 0, plan.Limits.Workspaces, nil, nil),
-		usage(ResourceAgentRuns, agentRuns, 0, plan.Limits.AgentRunsPerMonth, &periodStart, &periodEnd),
-		usage(ResourceModelCost, modelCost, 0, plan.Limits.ModelCostMicrosMonthly, &periodStart, &periodEnd),
+		usage(ResourceDocuments, documents, 0, limits.Documents, nil, nil),
+		usage(ResourceSkillRuns, skillRuns, 0, limits.SkillRunsPerMonth, &periodStart, &periodEnd),
+		usage(ResourceWorkspaces, workspaces, 0, limits.Workspaces, nil, nil),
+		usage(ResourceAgentRuns, agentRuns, 0, limits.AgentRunsPerMonth, &periodStart, &periodEnd),
+		usage(ResourceModelCost, modelCost, 0, limits.ModelCostMicrosMonthly, &periodStart, &periodEnd),
 	}
 	if durableUsage {
 		for index := range items {
@@ -221,7 +245,10 @@ func (s *Service) Summary(ctx context.Context, userID string) (Summary, error) {
 			items[index] = usage(items[index].Resource, items[index].Actual, adjustment, items[index].Limit, items[index].PeriodStart, items[index].PeriodEnd)
 		}
 	}
-	return Summary{Plan: plan, Subscription: subscription, Usage: items}, nil
+	for i := range items {
+		items[i].LimitSource = sources[i]
+	}
+	return Summary{Plan: plan, EffectiveLimits: limits, Subscription: subscription, Usage: items}, nil
 }
 
 func (s *Service) AdjustUsage(ctx context.Context, input CreateUsageAdjustmentInput) (UsageAdjustment, error) {

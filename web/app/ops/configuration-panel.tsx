@@ -165,8 +165,8 @@ export function ConfigurationPanel({ credentials, operator }: { credentials: Cre
     </header>
 
     <section className={styles.configNotice}>
-      <div><i />版本化控制面已启用</div>
-      <p>每次变更都生成不可变版本。发布需要另一名管理员和 MFA；API 与 Agent Worker 会周期加载并上报实际版本。</p>
+      <div><i />{tab === "usage" ? "用户额度管理" : "版本化控制面已启用"}</div>
+      <p>{tab === "usage" ? "额度上限保存后即时生效，修改须填写原因并验证管理员身份。单独用户设置优先于全体设置，再沿用套餐。" : "每次变更都生成不可变版本。发布需要另一名管理员和 MFA；API 与 Agent Worker 会周期加载并上报实际版本。"}</p>
     </section>
     {error && <div className={styles.errorBanner} role="alert"><strong>配置操作未完成</strong><span>{error}</span></div>}
     {message && <div className={styles.successBanner} role="status">{message}</div>}
@@ -175,7 +175,7 @@ export function ConfigurationPanel({ credentials, operator }: { credentials: Cre
       <button type="button" className={tab === "plans" ? styles.activeTab : undefined} onClick={() => setTab("plans")}>套餐与额度</button>
       <button type="button" className={tab === "models" ? styles.activeTab : undefined} onClick={() => setTab("models")}>模型服务与路由</button>
       <button type="button" className={tab === "runtime" ? styles.activeTab : undefined} onClick={() => setTab("runtime")}>多实例收敛</button>
-      {operator.role !== "viewer" && <button type="button" className={tab === "usage" ? styles.activeTab : undefined} onClick={() => setTab("usage")}>用户用量账本</button>}
+      {operator.role !== "viewer" && <button type="button" className={tab === "usage" ? styles.activeTab : undefined} onClick={() => setTab("usage")}>用户额度与用量</button>}
     </div>
 
     {tab === "usage" ? <BillingUsagePanel credentials={credentials} operator={operator} /> : tab === "runtime" ? <RuntimeConvergencePanel credentials={credentials} /> : tab === "plans" ? <section className={styles.configLayout}>

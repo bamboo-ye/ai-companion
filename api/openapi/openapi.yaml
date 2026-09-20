@@ -3037,6 +3037,10 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
+  /v1/ops/billing/quotas:
+    $ref: "./billing-quota.yaml#/paths/~1v1~1ops~1billing~1quotas"
+  /v1/ops/billing/users/{user_id}/quotas:
+    $ref: "./billing-quota.yaml#/paths/~1v1~1ops~1billing~1users~1{user_id}~1quotas"
   /v1/ops/billing/users/{user_id}/usage:
     get:
       operationId: getOperatorUserBillingUsage
@@ -4035,9 +4039,10 @@ components:
     BillingUsageItem:
       type: object
       additionalProperties: false
-      required: [resource, actual, adjustment, used, limit, remaining]
+      required: [resource, actual, adjustment, used, limit, remaining, limit_source]
       properties:
         resource: { type: string, enum: [documents, skill_runs, workspaces, agent_runs, model_cost_micros] }
+        limit_source: { type: string, enum: [plan, global, user, development] }
         actual: { type: integer, minimum: 0, description: Count or model-cost micros derived from immutable source facts. }
         adjustment: { type: integer, description: Sum of append-only manual corrections for the applicable period. }
         used: { type: integer, minimum: 0 }
@@ -4048,9 +4053,10 @@ components:
     BillingSummary:
       type: object
       additionalProperties: false
-      required: [plan, subscription, usage]
+      required: [plan, subscription, usage, effective_limits]
       properties:
         plan: { $ref: "#/components/schemas/BillingPlan" }
+        effective_limits: { $ref: "#/components/schemas/BillingLimits" }
         subscription: { $ref: "#/components/schemas/BillingSubscription" }
         usage: { type: array, items: { $ref: "#/components/schemas/BillingUsageItem" } }
     BillingUsageAdjustment:

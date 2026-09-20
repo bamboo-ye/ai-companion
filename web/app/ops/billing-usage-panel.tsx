@@ -1,8 +1,9 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 import { adminFetch, adminHeaders, type AdminCredentials } from "./admin-auth";
+import { QuotaPolicyEditor } from "./quota-policy-editor";
 import styles from "./operations.module.css";
 
 
@@ -10,7 +11,7 @@ import styles from "./operations.module.css";
 type Credentials = AdminCredentials;
 type Operator = { actor: string; role: string; mfa_verified: boolean; legacy: boolean };
 type User = { id: string; email: string; display_name: string; status: string };
-type UsageItem = { resource: string; actual: number; adjustment: number; used: number; limit: number; remaining: number; period_start?: string; period_end?: string };
+type UsageItem = { resource: string; limit_source?: string; actual: number; adjustment: number; used: number; limit: number; remaining: number; period_start?: string; period_end?: string };
 type BillingSummary = { plan: { code: string; display_name: string }; subscription: { status: string; current_period_start: string; current_period_end: string }; usage: UsageItem[] };
 type Adjustment = { id: string; resource: string; delta: number; reason: string; actor: string; period_start?: string; period_end?: string; created_at: string };
 
@@ -35,25 +36,7 @@ export function BillingUsagePanel({ credentials, operator }: { credentials: Cred
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-
-  const loadLedger = useCallback(async (user: User) => {
-    setLoading(true);
-    setError("");
-    try {
-      const [nextSummary, page] = await Promise.all([
-        billingFetch<BillingSummary>(`/v1/ops/billing/users/${user.id}/usage`, credentials),
-        billingFetch<{ adjustments: Adjustment[] }>(`/v1/ops/billing/users/${user.id}/adjustments?limit=100`, credentials),
-      ]);
-      setSummary(nextSummary);
-      setAdjustments(page.adjustments);
-    } catch (cause) {
-      setError(billingError(cause));
-      setSummary(null);
-      setAdjustments([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [credentials]);
+  const [quotaRefresh, setQuotaRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,15 +45,31 @@ export function BillingUsagePanel({ credentials, operator }: { credentials: Cred
       setUsers(page.users);
       const initial = page.users[0] ?? null;
       setSelected(initial);
-      if (initial) void loadLedger(initial);
-      else setLoading(false);
+      if (!initial) setLoading(false);
     }).catch((cause: unknown) => {
       if (cancelled) return;
       setError(billingError(cause));
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [credentials, loadLedger]);
+  }, [credentials]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    void Promise.all([
+      billingFetch<BillingSummary>(`/v1/ops/billing/users/${selected.id}/usage`, credentials, { signal }),
+      billingFetch<{ adjustments: Adjustment[] }>(`/v1/ops/billing/users/${selected.id}/adjustments?limit=100`, credentials, { signal }),
+    ]).then(([nextSummary, page]) => {
+      if (signal.aborted) return;
+      setSummary(nextSummary); setAdjustments(page.adjustments); setError("");
+    }).catch((cause: unknown) => {
+      if (signal.aborted) return;
+      setError(billingError(cause)); setSummary(null); setAdjustments([]);
+    }).finally(() => { if (!signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [selected, credentials, quotaRefresh]);
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -81,8 +80,7 @@ export function BillingUsagePanel({ credentials, operator }: { credentials: Cred
 	  setUsers(page.users);
 	  const next = selected && page.users.some((item) => item.id === selected.id) ? selected : page.users[0] ?? null;
 	  setSelected(next);
-	  if (next) await loadLedger(next);
-	  else { setSummary(null); setAdjustments([]); }
+	  if (next?.id !== selected?.id) { setSummary(null); setAdjustments([]); }
 	} catch (cause) {
 	  setError(billingError(cause));
 	} finally {
@@ -116,22 +114,24 @@ export function BillingUsagePanel({ credentials, operator }: { credentials: Cred
   return <section className={styles.usageWorkspace}>
     {error && <div className={styles.errorBanner} role="alert"><strong>用量账本操作未完成</strong><span>{error}</span></div>}
     {message && <div className={styles.successBanner} role="status">{message}</div>}
+    <QuotaPolicyEditor canEdit={operator.role === "admin" && (operator.mfa_verified || operator.legacy)} onSaved={() => setQuotaRefresh((v) => v + 1)} />
     <div className={styles.usageLayout}>
       <article className={styles.configListCard}>
         <div className={styles.panelHeading}><div><p>ACCOUNT LOOKUP</p><h2>选择用户</h2></div><span>{users.length} 条</span></div>
-        <form className={styles.usageSearch} onSubmit={search}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="邮箱、昵称或用户 ID" /><button disabled={loading}>搜索</button></form>
-        <div className={styles.usageUsers}>{users.map((user) => <button type="button" key={user.id} data-selected={selected?.id === user.id} onClick={() => { setSelected(user); void loadLedger(user); }}><span><strong>{user.display_name || user.email}</strong><small>{user.email}</small></span><b>{user.status}</b></button>)}</div>
+        <form className={styles.usageSearch} onSubmit={search}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="邮箱、昵称或用户 ID" /><button disabled={loading || working}>搜索</button></form>
+        <div className={styles.usageUsers}>{users.map((user) => <button type="button" key={user.id} disabled={working} data-selected={selected?.id === user.id} onClick={() => { if (selected?.id !== user.id) { setLoading(true); setSummary(null); setAdjustments([]); } setSelected(user); setMessage(""); setError(""); }}><span><strong>{user.display_name || user.email}</strong><small>{user.email}</small></span><b>{user.status}</b></button>)}</div>
         {!loading && users.length === 0 && <div className={styles.emptyLine}>没有匹配的用户</div>}
       </article>
 
       <div className={styles.usageDetail}>
+        {selected && <QuotaPolicyEditor key={selected.id} userID={selected.id} userLabel={selected.display_name ? `${selected.display_name} · ${selected.email}` : selected.email} canEdit={operator.role === "admin" && (operator.mfa_verified || operator.legacy)} onSaved={() => setQuotaRefresh((v) => v + 1)} />}
         <article className={styles.editorCard}>
           <div className={styles.panelHeading}><div><p>UNIFIED USAGE</p><h2>{selected ? selected.display_name || selected.email : "用量明细"}</h2></div><span>{summary ? `${summary.plan.display_name} · ${summary.plan.code}` : "—"}</span></div>
           {summary ? <div className={styles.usageCards}>{summary.usage.map((item) => <UsageCard key={item.resource} item={item} />)}</div> : <div className={styles.emptyLine}>{loading ? "正在读取统一账本…" : "请选择用户"}</div>}
         </article>
 
         <article className={styles.editorCard}>
-          <div className={styles.panelHeading}><div><p>APPEND-ONLY ADJUSTMENT</p><h2>人工调整</h2></div><span>{operator.mfa_verified || operator.legacy ? "受控操作" : "需要 MFA"}</span></div>
+          <div className={styles.panelHeading}><div><p>APPEND-ONLY ADJUSTMENT</p><h2>已用量纠正</h2></div><span>{operator.mfa_verified || operator.legacy ? "受控操作" : "需要 MFA"}</span></div>
           <form className={styles.configForm} onSubmit={adjust}>
             <label>资源<select value={resource} onChange={(event) => setResource(event.target.value)}>{Object.entries(resourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>调整量<input type="number" value={delta} onChange={(event) => setDelta(event.target.value)} required placeholder="正数增加用量，负数抵扣" /></label>
@@ -153,13 +153,14 @@ export function BillingUsagePanel({ credentials, operator }: { credentials: Cred
 function UsageCard({ item }: { item: UsageItem }) {
   const unlimited = item.limit < 0;
   const ratio = unlimited || item.limit === 0 ? 0 : Math.min(100, Math.round(item.used / item.limit * 100));
-  return <div className={styles.usageCard}><span><small>{resourceLabels[item.resource] ?? item.resource}</small><strong>{formatUsage(item.resource, item.used)} <em>/ {unlimited ? "不限" : formatUsage(item.resource, item.limit)}</em></strong></span><div><i style={{ width: `${ratio}%` }} /></div><p>实际 {formatUsage(item.resource, item.actual)} · 调整 {item.adjustment > 0 ? "+" : ""}{formatUsage(item.resource, item.adjustment)}</p></div>;
+  const source = ({ plan: "套餐", global: "全体设置", user: "用户单独设置", development: "开发环境不限额" } as Record<string, string>)[item.limit_source ?? "plan"];
+  return <div className={styles.usageCard}><span><small>{resourceLabels[item.resource] ?? item.resource}</small><strong>{formatUsage(item.resource, item.used)} <em>/ {unlimited ? "不限" : formatUsage(item.resource, item.limit)}</em></strong></span><div><i style={{ width: `${ratio}%` }} /></div><p>额度来源：{source}</p><p>实际 {formatUsage(item.resource, item.actual)} · 调整 {item.adjustment > 0 ? "+" : ""}{formatUsage(item.resource, item.adjustment)}</p></div>;
 }
 
-async function billingFetch<T>(path: string, credentials: Credentials, options?: { method?: string; body?: unknown }): Promise<T> {
+async function billingFetch<T>(path: string, credentials: Credentials, options?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
   const headers: Record<string, string> = { ...adminHeaders(credentials) };
   if (options?.body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await adminFetch(`${path}`, { method: options?.method ?? "GET", headers, body: options?.body === undefined ? undefined : JSON.stringify(options.body), cache: "no-store" });
+  const response = await adminFetch(`${path}`, { method: options?.method ?? "GET", headers, body: options?.body === undefined ? undefined : JSON.stringify(options.body), cache: "no-store", signal: options?.signal });
   const payload = await response.json().catch(() => ({})) as { message?: string };
   if (!response.ok) throw new Error(payload.message || `请求失败（${response.status}）`);
   return payload as T;

@@ -419,6 +419,18 @@
 .profileForm { display:grid; gap:13px; padding:0 21px 14px; }
 .profileForm textarea { min-height:420px; resize:vertical; font-family:"SFMono-Regular",Consolas,monospace; font-size:.63rem; line-height:1.55; }
 .usageWorkspace { display:grid; gap:14px; margin-top:14px; }
+.quotaHelp { margin:0; padding:0 21px 16px; color:#68758a; font-size:.75rem; line-height:1.7; overflow-wrap:anywhere; }
+.quotaForm { display:grid; gap:16px; padding:0 21px 21px; }
+.quotaForm > .quotaHelp { padding:0; }
+.quotaFields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr)); gap:14px; }
+.quotaField,.quotaReason { display:grid; align-content:start; gap:8px; color:#637085; font-size:.75rem; font-weight:600; min-width:0; }
+.quotaField select,.quotaField input,.quotaReason textarea { width:100%; min-width:0; border:1px solid #dfe4ec; border-radius:8px; padding:10px; color:#354257; background:#fbfcfe; font:inherit; }
+.quotaReason textarea { min-height:72px; resize:vertical; }
+.quotaConfirm { display:flex; align-items:flex-start; gap:8px; color:#637085; font-size:.75rem; line-height:1.6; }
+.quotaConfirm input { margin-top:3px; flex-shrink:0; }
+.quotaReload,.quotaReset { border:1px solid #dfe4ec; border-radius:8px; background:#fff; padding:8px 12px; color:#637085; font-size:.72rem; cursor:pointer; }
+.quotaReset { justify-self:start; }
+.quotaForm :disabled,.quotaReload:disabled { cursor:default; opacity:.6; }
 .usageLayout { display:grid; grid-template-columns:minmax(260px,.6fr) minmax(520px,1.4fr); gap:16px; align-items:start; }
 .usageDetail { display:grid; gap:16px; min-width:0; }
 .usageSearch { display:flex; gap:7px; padding:0 16px 12px; }

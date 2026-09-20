@@ -15,6 +15,7 @@ type MemoryStore struct {
 	agentRuns     map[string][]time.Time
 	modelCosts    map[string][]modelCostUsage
 	adjustments   map[string][]UsageAdjustment
+	quotaPolicies map[string]QuotaPolicy
 }
 
 type modelCostUsage struct {
@@ -31,6 +32,7 @@ func NewMemoryStore() *MemoryStore {
 		agentRuns:     map[string][]time.Time{},
 		modelCosts:    map[string][]modelCostUsage{},
 		adjustments:   map[string][]UsageAdjustment{},
+		quotaPolicies: map[string]QuotaPolicy{},
 	}
 }
 

@@ -119,6 +119,8 @@ func writeBillingError(w http.ResponseWriter, err error) {
 		})
 	case errors.Is(err, billing.ErrValidation):
 		writeJSON(w, http.StatusUnprocessableEntity, apiError{Code: "validation_error", Message: err.Error()})
+	case errors.Is(err, billing.ErrConflict):
+		writeJSON(w, http.StatusConflict, apiError{Code: "billing_quota_conflict", Message: "额度已被其他管理员修改，请重新加载后再保存"})
 	case errors.Is(err, billing.ErrNotFound):
 		writeJSON(w, http.StatusServiceUnavailable, apiError{Code: "billing_usage_ledger_unavailable", Message: "统一用量账本暂未启用"})
 	default:

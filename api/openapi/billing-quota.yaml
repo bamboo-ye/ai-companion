@@ -1,0 +1,99 @@
+openapi: 3.1.0
+info:
+  title: Administrator User Quotas
+  version: 1.0.0
+  description: Per-resource precedence is user override, global override, then subscription plan. Changes affect subsequent quota checks without resetting usage. Reads require support or admin; writes require admin and verified MFA. Cookie writes also require exact Origin, X-Admin-CSRF and fresh Passkey verification.
+paths:
+  /v1/ops/billing/quotas:
+    get:
+      operationId: getOperatorGlobalQuotaPolicy
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Global policy and empty user policy, content: { application/json: { schema: { $ref: '#/components/schemas/Policies' } } } }
+        '401': { description: Authentication required }
+        '403': { description: Support role required }
+    put:
+      operationId: setOperatorGlobalQuotaPolicy
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
+      description: Replaces global overrides for all existing and future users, including paid plans. Individual overrides remain effective. Unset resource fields inherit the plan.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdatePolicy' } } } }
+      responses:
+        '200': { description: Updated global policy and audit committed atomically, content: { application/json: { schema: { $ref: '#/components/schemas/Policy' } } } }
+        '400': { description: Invalid JSON or non-integer limit }
+        '401': { description: Authentication or recent Passkey verification required }
+        '403': { description: Admin, verified MFA or CSRF validation missing }
+        '409': { description: Stale revision; reload before saving }
+        '422': { description: Invalid limits, revision or reason }
+  /v1/ops/billing/users/{user_id}/quotas:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getOperatorUserQuotaPolicies
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
+      responses:
+        '200': { description: Global and selected user policy, content: { application/json: { schema: { $ref: '#/components/schemas/Policies' } } } }
+        '401': { description: Authentication required }
+        '403': { description: Support role required }
+        '404': { description: User not found }
+    put:
+      operationId: setOperatorUserQuotaPolicy
+      tags: [Operations]
+      security: [{ operatorBearerAuth: [] }, { adminSession: [] }]
+      description: Replaces overrides for the selected user only. Null or omitted resource fields inherit global settings, then plan limits. Empty limits restore inheritance; revision is retained and incremented.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdatePolicy' } } } }
+      responses:
+        '200': { description: Updated user policy and audit committed atomically, content: { application/json: { schema: { $ref: '#/components/schemas/Policy' } } } }
+        '400': { description: Invalid JSON or non-integer limit }
+        '401': { description: Authentication or recent Passkey verification required }
+        '403': { description: Admin, verified MFA or CSRF validation missing }
+        '404': { description: User not found }
+        '409': { description: Stale revision; reload before saving }
+        '422': { description: Invalid limits, revision or reason }
+components:
+  securitySchemes:
+    operatorBearerAuth: { type: http, scheme: bearer }
+    adminSession: { type: apiKey, in: cookie, name: __Host-ai_admin }
+  schemas:
+    Limit:
+      type: [integer, 'null']
+      minimum: -1
+      maximum: 9007199254740991
+      description: Null inherits, -1 is unlimited, 0 blocks new usage, positive integers set the upper limit.
+    Limits:
+      type: object
+      additionalProperties: false
+      properties:
+        documents: { $ref: '#/components/schemas/Limit' }
+        skill_runs_per_month: { $ref: '#/components/schemas/Limit' }
+        workspaces: { $ref: '#/components/schemas/Limit' }
+        agent_runs_per_month: { $ref: '#/components/schemas/Limit' }
+        model_cost_micros_monthly: { $ref: '#/components/schemas/Limit' }
+    UpdatePolicy:
+      type: object
+      additionalProperties: false
+      required: [limits, revision, reason]
+      properties:
+        limits: { $ref: '#/components/schemas/Limits' }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740990, description: Current revision from GET; 0 for a previously unset scope. }
+        reason: { type: string, minLength: 1, maxLength: 512 }
+    Policy:
+      type: object
+      additionalProperties: false
+      required: [limits, revision]
+      properties:
+        user_id: { type: string, format: uuid }
+        limits: { $ref: '#/components/schemas/Limits' }
+        revision: { type: integer, minimum: 0 }
+        actor: { type: string }
+        reason: { type: string }
+        updated_at: { type: string, format: date-time }
+    Policies:
+      type: object
+      additionalProperties: false
+      required: [global, user]
+      properties:
+        global: { $ref: '#/components/schemas/Policy' }
+        user: { $ref: '#/components/schemas/Policy' }
