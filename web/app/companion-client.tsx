@@ -350,6 +350,14 @@ export function CompanionStart() {
       chooseModule(target);
       return;
     }
+    if (target === "knowledge") {
+      setKnowledgePageID("");
+      setScreen("knowledge");
+      setActiveCharacter(null);
+      setShowCharacterForm(false);
+      setMessage("");
+      return;
+    }
     if (target === "profile") {
       setScreen("profile");
       setActiveCharacter(null);
