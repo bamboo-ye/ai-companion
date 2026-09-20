@@ -27,7 +27,7 @@ agent = [
   "langgraph-checkpoint-postgres==3.1.2",
   "psycopg[binary,pool]==3.3.4",
 ]
-dev = ["mypy==2.1.0", "pytest==9.1.1", "ruff==0.15.20"]
+dev = ["mypy==2.3.1", "pytest==9.1.1", "ruff==0.15.20"]
 
 [project.scripts]
 ai-companion-python-worker = "ai_companion_worker.main:main"
