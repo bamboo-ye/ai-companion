@@ -1,6 +1,6 @@
 {
   "schema": "product-knowledge-v1",
-  "revision": "767aef2e486f11ff6be76468153b25897cfdd0ee294668511a8e5c5166f76729",
+  "revision": "f190acc6f5ce374ddcb423abf448935ed30a01f4cb62cd4ec0017cd880abb132",
   "sources": [
     {
       "path": "web/app/onboarding-content.ts",
@@ -8,19 +8,31 @@
     },
     {
       "path": "README.zh-CN.md",
-      "sha256": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93"
+      "sha256": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc"
+    },
+    {
+      "path": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "sha256": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745"
+    },
+    {
+      "path": "docs/GETTING_STARTED.md",
+      "sha256": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b"
     },
     {
       "path": "docs/CONTEXT_MANAGEMENT.md",
       "sha256": "9158472f54e952ae9f0c730335c0acd98650f6eb3560beb4cac801b6b8b538d8"
     },
     {
+      "path": "docs/ADMIN_QUOTAS.md",
+      "sha256": "75edd778ecec4592e6932b4b6ead26a80c7d785dc56c02e220a3c699d5ff23dc"
+    },
+    {
       "path": "docs/ADMIN_PASSKEY_LOGIN.md",
-      "sha256": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97"
+      "sha256": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9"
     },
     {
       "path": "docs/PRODUCT_KNOWLEDGE.md",
-      "sha256": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890"
+      "sha256": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a"
     }
   ],
   "pages": [
@@ -465,399 +477,652 @@
       "links": []
     },
     {
-      "id": "builtin-af811f40d88ec5b5a3f9",
-      "title": "伴AI（AI Companion）",
+      "id": "builtin-ee02a70ecd1f62ccce3b",
+      "title": "项目介绍与部署",
       "group": "项目介绍与部署",
       "audience": "project",
-      "body": "# 伴AI（AI Companion）\n\n[简体中文](README.zh-CN.md) | [English](README.md)\n\n> 一个面向情感陪伴、生活管理与工作提效的个人 AI 工作台。项目以“可恢复、可治理、可观测”为核心，在同一套工程体系中实现大文件无损分片处理、Agent 多层并行执行、长期记忆、知识检索、工具调用、团队协作和内部发布控制。\n\n当前仓库已完成约定的 Web/后端平台范围。详细完成状态与边界见 [项目完成情况](docs/PROJECT_COMPLETION.md)。",
+      "body": "<p align=\"center\">\n  <img src=\"web/public/icons/logo.png\" width=\"128\" alt=\"伴AI 品牌形象\">\n</p>",
       "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion）",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "section": "项目介绍与部署",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
       "links": []
     },
     {
-      "id": "builtin-f1e667f218149e52c07d",
-      "title": "项目简介",
+      "id": "builtin-a63a6f64a1d5187b5a2c",
+      "title": "伴AI · AI Companion",
       "group": "项目介绍与部署",
       "audience": "project",
-      "body": "## 项目简介\n\n伴AI 不只是一个聊天界面，而是一套可持续演进的 AI 应用平台。用户可以通过统一对话入口获得陪伴式交流、生活事务辅助和办公技能支持；系统则在后台完成上下文组织、长期记忆、文档检索、任务规划、工具审批、异步执行和结果追踪。\n\n项目同时提供面向运营人员的管理能力，包括 Agent 配置与评测、模型和成本治理、日志与告警、事件处置、计费配额、安全策略以及内部发布证据管理。",
+      "body": "# 伴AI · AI Companion\n\n<p align=\"center\"><strong>陪你聊，帮你记，和你一起把事情做好。</strong></p>\n<p align=\"center\">情感陪伴 · 生活管理 · 工作提效</p>\n\n<p align=\"center\">\n  <a href=\"README.zh-CN.md\">简体中文</a> · <a href=\"README.md\">English</a><br>\n  <a href=\"#快速开始\">快速开始</a> · <a href=\"#系统实现效果\">查看效果</a> · <a href=\"#技术亮点\">技术亮点</a> · <a href=\"#文档导航\">文档</a> · <a href=\"https://github.com/bamboo-ye/ai-companion/issues\">反馈建议</a>\n</p>\n\n<p align=\"center\">\n  <a href=\"go.mod\"><img src=\"https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white\" alt=\"Go 1.26\"></a>\n  <a href=\"web/package.json\"><img src=\"https://img.shields.io/badge/Next.js-16-111111?logo=nextdotjs\" alt=\"Next.js 16\"></a>\n  <a href=\"workers/python/pyproject.toml\"><img src=\"https://img.shields.io/badge/Agent-LangGraph-64748B\" alt=\"LangGraph Agent\"></a>\n  <a href=\"#快速开始\"><img src=\"https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white\" alt=\"Docker 自部署\"></a>\n</p>\n\n伴AI 是一个可自部署的个人 AI 工作台：用持续对话承接情绪，用自然语言整理生活事务，用自己的资料生成办公成果。角色、记忆、知识与工具在同一处协作，从“说出需求”走到“查看结果”。\n\n![伴AI 情感陪伴主页：角色会话与长期记忆入口](docs/images/readme/companion-dashboard.jpg)",
       "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 项目简介",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "section": "伴AI · AI Companion",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
       "links": []
     },
     {
-      "id": "builtin-0ac9cdfecbfa537d7d32",
-      "title": "系统实现效果",
+      "id": "builtin-2ccb80dd7725c82fa1ff",
+      "title": "一个工作台，三种陪伴",
       "group": "项目介绍与部署",
       "audience": "project",
-      "body": "## 系统实现效果\n\n> 以下界面均来自本地运行环境，使用脱敏的演示账号与模拟数据，可直观看到当前系统已实现的产品形态。",
+      "body": "## 一个工作台，三种陪伴\n\n| 你想做什么 | 打开哪个模块 | 你会得到什么 |\n| --- | --- | --- |\n| 找人聊聊，延续上次的话题 | **情感陪伴** | 自定义角色、多轮会话、可查看和纠正的长期记忆 |\n| 整理今天的安排和日常开销 | **生活助手** | 今日计划、提醒事项、账目记录与汇总、Excel 导出 |\n| 把想法和资料变成可交付成果 | **工作伙伴** | 知识 Wiki、PPTX 生成、PDF 翻译、DOCX 副本编辑、CSV/XLSX 分析 |\n\n三类体验共用上下文、知识与受控工具执行。管理员可在独立控制台管理模型、Agent、权限、额度和运行记录。",
       "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "section": "伴AI · AI Companion / 一个工作台，三种陪伴",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
       "links": []
     },
     {
-      "id": "builtin-51ab1ef3257d4d0b41df",
-      "title": "情感陪伴：角色会话与长期记忆",
+      "id": "builtin-563f51335e2aee2f573b",
+      "title": "为什么是伴AI",
       "group": "项目介绍与部署",
       "audience": "project",
-      "body": "### 情感陪伴：角色会话与长期记忆\n\n用户可以按场景创建不同人设的陪伴角色，随时继续历史会话，并通过记忆管理查看与维护长期记忆。角色、会话与记忆彼此关联，让陪伴体验能够跨会话延续，而不是停留在一次性的问答中。\n\n![情感陪伴主页：角色会话与记忆管理](docs/images/readme/companion-dashboard.jpg)",
+      "body": "## 为什么是伴AI\n\n- **对话有延续**：近期消息、带来源的摘要和可纠正记忆共同组织上下文，让关键偏好与约束能够跨会话保留。\n- **资料有出处**：上传资料后，可检索、阅读和编辑 Wiki；回答与知识页可以回到原文证据，来源权限变化会同步影响访问。\n- **任务有结果**：账目写入账本、提醒进入事项列表、办公任务返回文件，完成状态可以在对应页面核对。\n- **长任务有章法**：超过单次模型窗口的资料通过全量分片、有界并行与确定性合并处理，失败分片可单独恢复。\n- **运行有控制**：自部署应用与数据服务，配置模型、工具白名单和额度；需要确认的动作由服务端执行审批与鉴权。",
       "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 情感陪伴：角色会话与长期记忆",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "section": "伴AI · AI Companion / 为什么是伴AI",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
       "links": []
     },
     {
-      "id": "builtin-049f98692bb4f0053b4e",
-      "title": "对话实测：情绪承接与行动建议",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "#### 对话实测：情绪承接与行动建议\n\n演示用户先表达项目汇报前的紧张情绪，再补充“内容太多、担心超时”的具体原因。角色会沿用前一轮语境继续追问，并给出删减内容、分段计时、预留安全出口和压缩彩排时长等可执行建议，体现角色人设、上下文承接与多轮对话能力。\n\n![情感陪伴对话：承接情绪并给出汇报时间管理建议](docs/images/readme/companion-conversation.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 情感陪伴：角色会话与长期记忆 / 对话实测：情绪承接与行动建议",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-fcf0e9bb46ba0f685c8b",
-      "title": "生活助手：计划、提醒与账本联动",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 生活助手：计划、提醒与账本联动\n\n生活模块将今日计划、提醒事项和日常账本集中到同一工作区。计划会自动汇总当天到期及已逾期但未完成的事项；记账等写入操作先生成候选内容，经用户确认后再落库，兼顾操作效率与数据安全。\n\n![生活助手主页：今日计划、提醒事项与账本](docs/images/readme/life-dashboard.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 生活助手：计划、提醒与账本联动",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-8a2f5dcfd2221dccfeb6",
-      "title": "对话实测：自然语言驱动生活工具",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "#### 对话实测：自然语言驱动生活工具\n\n用户直接在对话中描述消费金额、用途和分类，Agent 将自然语言转换为受控的记账工具调用。系统在用户确认后写入生活账本，并在会话中返回明确的执行结果，展示了意图识别、参数提取、人工确认和业务写入的完整闭环。\n\n![生活助手对话：自然语言记账与成功写入](docs/images/readme/life-conversation.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 生活助手：计划、提醒与账本联动 / 对话实测：自然语言驱动生活工具",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-2ccdf5e7a8b07becbf4f",
-      "title": "结果验证：账本与提醒记录",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "#### 结果验证：账本与提醒记录\n\n对话执行完成后，业务结果会同步进入对应功能页，而不只停留在聊天消息中。账本页汇总当月笔数、收入、支出与结余，并展示本次写入的 ¥18.00 消费记录。提醒演示则先通过对话创建“准备 AI Companion 项目演示材料”，再进入提醒事项页验证同名记录、触发时间和通知渠道。\n\n**账本记录**\n\n![生活助手账本：对话写入后的消费记录与月度汇总](docs/images/readme/life-ledger-result.jpg)\n\n**提醒事项对话**\n\n![生活助手对话：通过自然语言成功创建提醒](docs/images/readme/life-reminder-conversation.jpg)\n\n**提醒事项落库验证**\n\n![生活助手提醒：对话创建的演示材料提醒及触发时间](docs/images/readme/life-reminder-result.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 生活助手：计划、提醒与账本联动 / 结果验证：账本与提醒记录",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-80bbb99d51e33584965d",
-      "title": "工作伙伴：Skill 工作台与可治理执行",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 工作伙伴：Skill 工作台与可治理执行\n\n工作台集中展示附件正文提取、DOCX 副本编辑、PDF 多模态翻译、PPTX 多模态生成、CSV/XLSX 分析等版本化 Skill，并提供意图路由和 MCP 双白名单控制。大文件任务会在后台完成全量分片、并行 Agent fan-out/fan-in、确定性合并与局部重试；涉及文件生成或业务写入的动作保留预览和人工确认，执行进度、错误与产物均可追踪。\n\n![工作伙伴工作台：Skill、任务路由与 MCP 安全控制](docs/images/readme/workbench.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 工作伙伴：Skill 工作台与可治理执行",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-e7a0b3d74abcb2179cca",
-      "title": "对话实测：平台实际接收的 PPT 生成 Prompt",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "#### 对话实测：平台实际接收的 PPT 生成 Prompt\n\n为确保演示截图与真实任务完全一致，下面展示平台实际收到的提示词。Prompt 要求工作伙伴先检索项目 Wiki 知识文档，将技术亮点、功能实现和使用方法加入上下文，再使用三张真实系统截图生成 11 页中文 PPTX；视觉上明确要求图文并茂，并使用“三个模块的功能与用法对照”和“Agent 三层并行化对照”两张可编辑表格。“下一步计划”和“要点回顾”均作为正式页面保留。\n\n[查看实际发送到平台的完整 Prompt](docs/demo/ai-companion-platform-prompt.txt)\n\n**目标、资料与页面结构**\n\n![工作伙伴对话：实际发送的 PPT 生成目标、资料和 11 页结构](docs/images/readme/work-prompt-overview.jpg)\n\n**图文并茂的视觉要求**\n\n![工作伙伴对话：要求每个核心页面使用真实截图、流程图、架构图、图标或表格](docs/images/readme/work-prompt-visual.jpg)\n\n**可编辑表格与页面安排**\n\n![工作伙伴对话：要求使用模块对照表、Agent 三层并行对照表并保留后续计划与要点回顾](docs/images/readme/work-prompt-table.jpg)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 工作伙伴：Skill 工作台与可治理执行 / 对话实测：平台实际接收的 PPT 生成 Prompt",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-cacd462620a01794818d",
-      "title": "实际生成成果：Wiki 增强的 8 页 PPTX 演示文稿",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "#### 实际生成成果：Wiki 增强的 8 页 PPTX 演示文稿\n\n工作伙伴先将项目定位、技术亮点、功能实现、使用方式和常见问答写入文档知识库，再围绕核心功能、大文件处理、Agent 并行化与治理机制执行检索。检索结果作为文字上下文交给 `PPTX 多模态生成` Skill，同时附带情感陪伴、生活助手和工作伙伴三张真实主页截图。下方展示的是仓库中已经通过校验的 8 页成品；本次重新发送的平台 Prompt 已升级为 11 页，恢复“下一步计划”和“要点回顾”，并新增图文并茂与可编辑表格要求。三张产品截图均直接来自系统实拍，未使用 AI 生成图片替换。\n\n[查看用于 Wiki 检索的项目知识文档](docs/demo/ai-companion-wiki-knowledge.txt)\n\n[下载完整 PPTX：ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)\n\n**第 1 页：封面**\n\n![生成的 PPT 第 1 页：AI Companion 项目技术亮点与实现效果](docs/images/readme/generated-ppt/slide-1.png)\n\n**第 2 页：项目定位与整体架构**\n\n![生成的 PPT 第 2 页：统一工作台、服务边界与数据架构](docs/images/readme/generated-ppt/slide-2.png)\n\n**第 3 页：情感陪伴实现效果**\n\n![生成的 PPT 第 3 页：情感陪伴主页与长期记忆能力](docs/images/readme/generated-ppt/slide-3.png)\n\n**第 4 页：生活助手实现效果**\n\n![生成的 PPT 第 4 页：生活助手主页、计划、提醒与账本闭环](docs/images/readme/generated-ppt/slide-4.png)\n\n**第 5 页：工作伙伴与使用流程**\n\n![生成的 PPT 第 5 页：工作伙伴工作台、Wiki 与版本化 Skill](docs/images/readme/generated-ppt/slide-5.png)\n\n**第 6 页：大文件无损分片**\n\n![生成的 PPT 第 6 页：Source IR、双重有界分片、确定性合并与局部重试](docs/images/readme/generated-ppt/slide-6.png)\n\n**第 7 页：Agent 三层并行化**\n\n![生成的 PPT 第 7 页：运行级、进程级和图节点级并行](docs/images/readme/generated-ppt/slide-7.png)\n\n**第 8 页：Wiki、记忆与治理**\n\n![生成的 PPT 第 8 页：文档检索、长期记忆、工具网关与可观测性](docs/images/readme/generated-ppt/slide-8.png)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统实现效果 / 工作伙伴：Skill 工作台与可治理执行 / 实际生成成果：Wiki 增强的 8 页 PPTX 演示文稿",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-6b3b4b558deea10854f1",
-      "title": "核心能力",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 核心能力\n\n- **可靠对话**：支持持久化会话、流式生成、重试、取消、故障恢复以及陪伴、生活、工作三类对话模块。\n- **长期记忆与 Wiki**：支持记忆提取、受限上下文组装、PDF/文本解析、结构化分块、Qdrant 检索、引用溯源、证据不足提示和数据删除。\n- **生活助手**：覆盖记账候选确认、账目管理、Excel 导出、计划、提醒和应用内通知。\n- **工作技能平台**：提供版本化 Skill 运行时、意图路由、大文件分片处理、文档/表格/演示文稿生成、长任务执行和生成文件访问控制。\n- **可治理 Agent**：通过持久化图执行实现规划、工具调用、人工确认、中断恢复、超时与取消；业务写入始终由 Go 服务鉴权并落库。\n- **团队协作**：支持工作空间、邀请以及文档、生成文件、账目导出的按需共享，同时隔离未共享的个人数据。\n- **运营与控制台**：提供用户治理、操作员 MFA/RBAC、Agent Studio、模型与 Prompt 版本、评测、灰度、回滚、成本分析、告警和事件管理。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 核心能力",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-ff2aff3461a35823c4d7",
-      "title": "技术亮点",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 技术亮点",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-5516cc17dcbf980a9857",
-      "title": "1. 面向大文件的无损分片与确定性合并",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 1. 面向大文件的无损分片与确定性合并\n\n项目没有通过截断或代表性采样来规避上下文窗口，而是为大文档建立了可恢复的全量处理链路：\n\n- **有序全量提取**：附件按原始 Chunk 顺序读取，单次最多返回 4 个、每个上限 4,000 Token 的轮次；每轮都携带 Chunk 范围、页码、清洗统计、`has_more` 和 `next_round` 游标。\n- **覆盖率可证明**：继续提取由确定性节点驱动，覆盖率通过 Chunk 区间并集计算；重复执行同一轮不会虚增进度，直到完整覆盖源文件。\n- **Token/字符双重有界分片**：提取结果继续拆成独立 Composer Source Batch，默认同时受 2,000 Token 和 12,000 源字符上限约束。切分优先选择页边界和行边界，并保留少量只读重叠上下文，避免跨边界记录丢失。\n- **结构而非纯文本优先**：固定版式数据先转换为 `document-source-ir-v1`，保留表、列、行组、行、单元格、继承值和稳定来源 ID；只在逻辑组之间或可检查点化的子切片之间拆分。\n- **确定性归并**：各分片结果按来源顺序或 Source Entity ID 合并，重叠记录去重，并通过双向精确率/召回率门禁检查缺失、额外、孤立和未引用实体。\n- **局部失败局部重试**：每个分片拥有独立检查点。失败或完整性检查不通过时，只重跑失败分支或包含缺失 Source Key 的批次，已成功结果不会被丢弃。\n- **内容寻址缓存**：解析结果、来源图片、生成图片和 Composer 分支结果写入有界私有原子缓存；精确重试可复用已完成分片，减少重复模型调用。\n\n直接回退提取支持产品上传上限内的 20MB 文件。最终文件只有在来源覆盖、结构完整性、画布容量和可读性等硬门禁全部通过后才会交付。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 1. 面向大文件的无损分片与确定性合并",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-3834f0327411a0b6140e",
-      "title": "2. Agent 的三层并行化设计",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 2. Agent 的三层并行化设计\n\n并行化不是简单地把模型请求一起发出，而是在运行级、进程级和图节点级分别控制吞吐、隔离与预算：\n\n- **多 Run 并行调度**：Go `RunDispatcher` 默认提供 4 个执行槽和有界队列。相同 Run 的重复提示会被合并；若运行中出现新状态，只保留一次尾随 Replay，防止重复事件制造无界任务。\n- **持久 Python 进程池**：进程池大小与 Agent 执行并发对齐，复用已编译 LangGraph、模型决策端口和 PostgreSQL Checkpointer 连接。默认预热 1 个进程；单进程超时、崩溃、EOF 或协议异常只回收对应槽位，不拖垮整个 Worker。\n- **单 Run 内 fan-out/fan-in**：结构化和叙事型大文档通过 LangGraph `Send` 将独立 Source Batch 分发到并行 Composer 分支，默认并发为 3、硬上限为 4；`join_composition` 再按原始 Batch 顺序确定性归并。\n- **先分预算，再开并行**：分发前将剩余模型调用次数、Prompt Token、Completion Token 和成本预算拆成互不重叠的份额。任何分支都无法借并发绕过单 Run 的总预算。\n- **并行可观测、失败可结算**：每个分支独立记录模型、延迟、Token、成本、Batch ID 和错误；即使部分分支失败，已发生的用量也会完整结算，成功结果可保留用于一次有界重试。\n- **先路由、按需规划**：Agent 先判断直接回答、单一可信工具或复杂任务；直接回答和单工具路径可跳过 Planner，只有多步、可重复或显式要求规划的任务才进入完整规划环，减少不必要的模型调用。\n- **处理域级模型熔断**：若某模型返回的工具调用或参数违反 Composer 契约，同一文档范围内尚未开始的分片会立即跳过该模型；已进入并发窗口的请求允许正常结算，传输故障与契约故障则采用不同恢复策略。\n- **专用任务并行**：PDF 翻译批次默认并发 2，并按源顺序合并；演示文稿图片请求同样有界并行，同时优先复用与引用页匹配的 PDF 原图，来源素材充足时直接跳过图片模型调用。\n\n这套设计兼顾了吞吐与确定性：测试会同时断言峰值并发、输出顺序、预算结算以及并行墙钟时间低于模型调用耗时总和。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 2. Agent 的三层并行化设计",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-f95de6815e272817249c",
-      "title": "3. 数据库优先的可靠异步架构",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 3. 数据库优先的可靠异步架构\n\nPostgreSQL 是任务状态、Agent Run、租约、重试计划、幂等键和审计记录的事实来源。Worker 使用有界并发、行级租约和 `SKIP LOCKED` 认领任务，可在进程中断后继续恢复。\n\nKafka 不是启动项目的强依赖，而是按需启用的横向扩展加速器。启用后，系统仍通过事务性 Outbox、Inbox 去重、DLQ、补偿和数据库对账处理“至少一次”投递，避免把消息中间件误当作业务一致性的唯一保障。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 3. 数据库优先的可靠异步架构",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-1111fa9b1d9c74440e00",
-      "title": "4. 可中断、可恢复、可审批的 Agent 执行链",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 4. 可中断、可恢复、可审批的 Agent 执行链\n\nAgent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态。模型负责意图选择和参数生成，Go Tool Gateway 则掌握工具定义、鉴权、确认和业务写入权限。\n\n写操作可在人工确认点暂停，并在审批后恢复同一条运行记录；取消和超时通过持久化控制状态、轮询以及 revision fencing 阻止迟到结果落库，从执行层面减少重复回复和越权副作用。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 4. 可中断、可恢复、可审批的 Agent 执行链",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-bdd62a83698e02642395",
-      "title": "5. 模块化单体，兼顾交付效率与领域边界",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 5. 模块化单体，兼顾交付效率与领域边界\n\n后端采用 Go 模块化单体，按身份、会话、记忆、文档、技能、账目、计费、安全、Agent、控制面等领域拆分包，并将 API 与异步 Worker 分为独立进程。它保留了单体事务和本地开发的简洁性，也通过清晰的接口、事件契约和数据边界为后续服务拆分留出空间。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 5. 模块化单体，兼顾交付效率与领域边界",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-f36e9f79d1132f7a8e55",
-      "title": "6. 有证据边界的记忆与知识检索",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 6. 有证据边界的记忆与知识检索\n\n文档处理链路包含页面级解析、结构化分块、向量索引、检索和引用返回。系统不仅提供 Wiki 检索结果，还显式处理“证据不足”，并支持原文与索引清理，降低无来源回答和数据残留风险。仓库内置 100 条检索质量用例作为 M2 阻断门禁。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 6. 有证据边界的记忆与知识检索",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-4d1ca29b0623efa33eb6",
-      "title": "7. 受控的 Skill 与 MCP 扩展机制",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 7. 受控的 Skill 与 MCP 扩展机制\n\nSkill 运行时具有版本、状态、租约、重试和生成文件权限控制。Python 算法任务运行在隔离 Worker 中，外部 MCP stdio 服务必须由运营方配置绝对路径并显式声明工具白名单；任何外部副作用都不能绕过 Go 服务的授权边界。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 7. 受控的 Skill 与 MCP 扩展机制",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-e4af7d059cba0360f5aa",
-      "title": "8. 从模型调用到发布决策的全链路可观测性",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 8. 从模型调用到发布决策的全链路可观测性\n\n系统使用 OpenTelemetry Trace 贯穿 HTTP、事务性 Outbox、异步消费和 Agent 调度；Prometheus 暴露低基数可靠性指标；Grafana Alloy 与 Loki 承载脱敏结构化日志，并在 Loki 不可用时回退到 PostgreSQL 审计日志。\n\nLangfuse 作为可选、故障开放的 LLM/Agent 可观测后端，记录运行、模型生成、节点耗时、Token/成本、版本关联和质量评分。内容采集默认关闭，不影响本地权威运行记录和发布门禁。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 8. 从模型调用到发布决策的全链路可观测性",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-3a8247fbc313c985a8e3",
-      "title": "9. 面向真实故障场景的发布工程",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 9. 面向真实故障场景的发布工程\n\n项目将重试预算、熔断、幂等、租约接管、毒消息、重复投递、超时和对账纳入自动化测试。发布门禁可生成 JSON/JUnit 证据，对 Canary 前后指标、质量、重复回复、单次模型调用约束和延迟进行判断，并采用签名、短期授权和追加式哈希链保护关键证据。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术亮点 / 9. 面向真实故障场景的发布工程",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-9fe1ec55829109bef3c0",
-      "title": "系统架构",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 系统架构\n\n```mermaid\nflowchart LR\n    subgraph Clients[客户端]\n        Web[Next.js Web]\n        Android[Android / Compose]\n        iOS[iOS / SwiftUI]\n    end\n\n    subgraph Core[Go 应用层]\n        API[API 服务]\n        Worker[异步 Worker]\n        Gateway[Tool Gateway]\n    end\n\n    subgraph AgentRuntime[Agent 运行时]\n        Agent[LangGraph Agent Worker]\n        Python[隔离 Python Worker]\n        Model[OpenRouter / 模型服务]\n    end\n\n    subgraph Data[数据与基础设施]\n        PG[(PostgreSQL)]\n        Redis[(Redis)]\n        Qdrant[(Qdrant)]\n        MinIO[(MinIO)]\n        Kafka[(Kafka，可选)]\n    end\n\n    subgraph Observability[可观测性]\n        Metrics[Prometheus]\n        Logs[Loki / Alloy]\n        Traces[Langfuse / OTel]\n    end\n\n    Web --> API\n    Android --> API\n    iOS --> API\n    API --> PG\n    API --> Redis\n    API --> Qdrant\n    API --> MinIO\n    PG --> Worker\n    PG --> Agent\n    API -. Outbox .-> Kafka\n    Kafka -. 扩展调度 .-> Worker\n    Kafka -. 扩展调度 .-> Agent\n    Agent --> Model\n    Agent --> Gateway\n    Gateway --> API\n    Agent --> Python\n    API -. 指标 / 日志 / Trace .-> Observability\n    Worker -. 指标 / 日志 / Trace .-> Observability\n    Agent -. 指标 / 日志 / Trace .-> Observability\n```\n\n默认模式下，任务由 PostgreSQL 驱动；达到多 Worker 扩展或事件扇出需求后，可启用 Kafka profile 加速分发。两种模式共享相同的业务状态、租约、幂等和恢复语义。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统架构",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-2b2e69c5422102b7d59d",
-      "title": "大文件并行处理流水线",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 大文件并行处理流水线\n\n```mermaid\nflowchart LR\n    File[最大 20MB 附件] --> Extract[有序 Token 窗口提取]\n    Extract --> Manifest[Round Manifest<br/>页码 / Chunk 范围 / 续读游标]\n    Manifest --> Coverage{源文件覆盖 100%?}\n    Coverage -- 否 --> Extract\n    Coverage -- 是 --> IR[结构化 Source IR]\n    IR --> Split[Token + 字符双重有界分片]\n    Split --> Budget[预分配调用 / Token / 成本预算]\n    Budget --> B1[Composer Batch 1]\n    Budget --> B2[Composer Batch 2]\n    Budget --> BN[Composer Batch N]\n    B1 --> Join[按来源顺序确定性合并]\n    B2 --> Join\n    BN --> Join\n    Join --> Gate{覆盖率与结构质量门禁}\n    Gate -- 缺失 --> Retry[只重试失败或缺失分片]\n    Retry --> Join\n    Gate -- 通过 --> Render[确定性渲染与文件交付]\n```\n\n每个 Composer 分支都可独立检查点化、计费、观测和缓存。并行执行只改变处理时延，不改变最终合并顺序、来源覆盖要求或总预算上限。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 系统架构 / 大文件并行处理流水线",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-09b5c6e2218518e2c29a",
-      "title": "技术栈",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 技术栈\n\n| 层级 | 主要技术 |\n| --- | --- |\n| Web | Next.js 16、React 19、TypeScript 5.9 |\n| 后端 | Go 1.26、模块化领域包、HTTP API、OpenAPI |\n| Agent | LangGraph、`Send` fan-out/fan-in、PostgreSQL Checkpointer、OpenRouter 兼容模型调用 |\n| 算法 Worker | Python 3.12+、隔离文档/数据/媒体处理 |\n| 数据 | PostgreSQL 18、Redis 8、Qdrant、MinIO；MySQL 作为迁移/回退路径 |\n| 异步与事件 | 数据库租约、Transactional Outbox、可选 Kafka 4、Inbox/DLQ/补偿 |\n| 可观测性 | OpenTelemetry、Prometheus、Grafana Alloy、Loki、可选 Langfuse |\n| 客户端 | Next.js Web、Kotlin/Jetpack Compose、Swift/SwiftUI |\n| 交付 | Docker Compose、Caddy、Makefile、JSON/JUnit 发布证据 |",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术栈",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-5dfa7bc08f2022efa44f",
-      "title": "关键并行与分片参数",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 关键并行与分片参数\n\n| 环境变量 | 默认值 | 作用 |\n| --- | ---: | --- |\n| `AGENT_WORKER_CONCURRENCY` | `4` | Go 层同时执行的 Agent Run 数量，也是持久 Python 池的容量基准 |\n| `AGENT_DISPATCH_QUEUE_SIZE` | `32` | Agent 调度器有界队列容量，用于显式背压 |\n| `AGENT_PYTHON_POOL_WARM_SIZE` | `1` | Worker 就绪前预热的 Python Agent 进程数 |\n| `AGENT_MODEL_FANOUT_CONCURRENCY` | `3` | 单个 LangGraph Run 内 Composer 分支并发数，有效范围为 1–4 |\n| `AGENT_COMPOSER_SOURCE_BATCH_MAX_TOKENS` | `2000` | 单个大文档 Composer 来源分片的 Token 上限 |\n| `AGENT_COMPOSER_SOURCE_BATCH_MAX_CHARS` | `12000` | 单个大文档 Composer 来源分片的字符上限 |\n| `MODEL_COMPOSER_BATCH_MAX_TOKENS` | `6144` | 单个 Composer 分支的结构化输出上限 |\n| `MODEL_TRANSLATION_CONCURRENCY` | `2` | PDF 翻译批次并发数，有效范围为 1–4 |\n| `MODEL_PRESENTATION_IMAGE_CONCURRENCY` | `2` | 演示文稿图片生成并发数，有效范围为 1–4 |\n\n所有并发参数都有硬上限或有界队列保护。模型分支在启动前先预留独立预算，因此增大并发不会放大单次运行允许的调用次数、Token 或成本。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 技术栈 / 关键并行与分片参数",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-073df470eaeebd6ec8a1",
+      "id": "builtin-bfb22e1c39905e95b409",
       "title": "快速开始",
       "group": "项目介绍与部署",
       "audience": "project",
+      "body": "## 快速开始\n\n准备好 **Git、Docker Desktop / Docker Compose v2 和 Make**。完整 Docker 路径不需要在宿主机单独安装 Go、Python 或 Node.js。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 快速开始",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-ba39d5e8d94450a969d4",
+      "title": "1. 获取项目与配置",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 1. 获取项目与配置\n\n```bash\ngit clone https://github.com/bamboo-ye/ai-companion.git\ncd ai-companion\ntest -f .env || cp .env.example .env\n```\n\n> **先选择体验方式：** 默认 `MODEL_PROVIDER=development` 无需模型密钥，适合检查注册、页面和任务链路，但只返回固定模拟回复。要体验下方的自然语言问答、工具选择和内容生成，请先按[模型配置指南](docs/OPENROUTER_MODELS.md)设置服务端模型提供方、密钥和具体模型名称。模型请求会按配置发送给相应提供方；自部署不等于模型推理离线。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 快速开始 / 1. 获取项目与配置",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-4392b54c0e18f7470dd9",
+      "title": "2. 启动应用",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 2. 启动应用\n\n```bash\nmake docker-up\nmake docker-ps\n```\n\n打开 **<http://localhost:3000>**，注册并登录，添加角色后开始会话。Compose 会自动应用业务迁移并初始化 Agent 检查点。首次构建需要下载镜像与依赖。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 快速开始 / 2. 启动应用",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-e6bef2455daa910b13bd",
+      "title": "3. 完成第一次体验",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 3. 完成第一次体验\n\n下列是接入真实模型后可尝试的输入示例，不是已经执行的操作：\n\n| 模块 | 试着这样说 | 去哪里核对 |\n| --- | --- | --- |\n| 情感陪伴 | “明天要做项目汇报，我有点紧张。先陪我理清最担心的事。” | 继续补充原因，观察回复是否承接前一轮语境 |\n| 生活助手 | “今天午餐花了 18 元，帮我记一笔餐饮支出。” | 核对候选并确认，在「账本」查看记录 |\n| 生活助手 | “明天下午三点提醒我准备项目演示材料。” | 核对具体日期、时间与时区，在「提醒事项」查看 |\n| 工作伙伴 | “帮我生成一个图文并茂的ppt介绍伴A I，使用表格介绍主要功能” | 在对话中查看执行结果与文件入口 |\n\n<details>\n<summary>启动排查、管理员入口与本机开发</summary>\n\n- `make docker-logs` 查看应用日志；`make docker-down` 停止服务并保留数据卷。\n- API 存活检查：<http://localhost:8080/healthz>；就绪检查：<http://localhost:8080/readyz>。\n- 三个聊天模块默认都使用 Agent，需确保 Agent Worker 就绪。\n- 管理后台：<http://localhost:3000/admin>，使用[独立管理员邀请与 Passkey](docs/ADMIN_PASSKEY_LOGIN.md)，普通注册账号不能直接登录。\n- 对外开放前替换所有 `change-*` 开发密钥，并按部署文档配置域名与秘密；不要把真实密钥提交到 Git。\n- 本机开发、端口冲突与常见问题见[新手上手指南](docs/GETTING_STARTED.md)；更多启动与发布命令见[技术指南](docs/TECHNICAL_GUIDE.zh-CN.md#快速开始)。\n\n</details>",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 快速开始 / 3. 完成第一次体验",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-be734f65acf45c5a5992",
+      "title": "系统实现效果",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "## 系统实现效果\n\n以下保留本地运行环境的真实界面与对话截图，使用脱敏演示账号和演示数据。示例展示“输入 → 执行 → 结果验证”，不代表当前账户已经执行这些操作。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 系统实现效果",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-402144bb298c8fb067d9",
+      "title": "情感陪伴：从倾听到具体建议",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 情感陪伴：从倾听到具体建议\n\n用户先表达汇报前的紧张，再补充“内容太多、担心超时”。角色承接前一轮语境，给出内容删减、分段计时与彩排建议；长期偏好可在记忆管理中查看和维护。主页保留在本文开头，下面展示实际对话。\n\n<details>\n<summary>查看多轮对话：情绪承接与汇报准备</summary>\n\n![情感陪伴对话：承接情绪并给出时间管理建议](docs/images/readme/companion-conversation.jpg)\n\n</details>",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 系统实现效果 / 情感陪伴：从倾听到具体建议",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-d4ca0fd84d8908ff132f",
+      "title": "生活助手：说完之后，账本和提醒里都找得到",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 生活助手：说完之后，账本和提醒里都找得到\n\n一句话记录消费，核对并确认后写入账本；一句话创建提醒，再去事项列表验证。演示账本中可看到 **¥18.00** 的消费记录，提醒列表中可看到 **“准备 AI Companion 项目演示材料”**、触发时间与通知渠道。\n\n<details>\n<summary>查看生活工作区与记账闭环：对话 → 账本记录</summary>\n\n今日计划、提醒与账本集中在同一工作区：\n\n![生活助手主页：今日计划、提醒事项与账本](docs/images/readme/life-dashboard.jpg)\n\n在对话中描述金额与用途，确认后返回写入结果：\n\n![生活助手对话：自然语言记账与成功写入](docs/images/readme/life-conversation.jpg)\n\n进入账本，核对记录与月度汇总：\n\n![生活助手账本：18 元消费记录与月度汇总](docs/images/readme/life-ledger-result.jpg)\n\n</details>\n\n<details>\n<summary>查看提醒闭环：创建提醒的对话 → 提醒事项记录</summary>\n\n先通过对话提出提醒需求，系统返回创建结果：\n\n![生活助手对话：成功创建演示材料提醒](docs/images/readme/life-reminder-conversation.jpg)\n\n再进入提醒事项页核对标题、时间与渠道：\n\n![生活助手提醒：演示材料提醒与触发时间](docs/images/readme/life-reminder-result.jpg)\n\n</details>",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 系统实现效果 / 生活助手：说完之后，账本和提醒里都找得到",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-66ce0391e5611d13ee8a",
+      "title": "工作伙伴：把一句需求变成办公成果",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 工作伙伴：把一句需求变成办公成果\n\n实际发送的提示词：\n\n> 帮我生成一个图文并茂的ppt介绍伴A I，使用表格介绍主要功能\n\n工作伙伴识别 PPT 生成意图，调用 `PPTX 多模态生成` Skill，完成后在原对话返回 `banyai-intro.pptx` 文件入口。相关产品知识可进入上下文，为介绍内容提供功能和技术依据。\n\n<p align=\"center\">\n  <img src=\"docs/images/readme/work-ppt-conversation.jpg\" width=\"600\" alt=\"工作伙伴实际对话：图文与表格生成请求、成功状态及 PPT 文件入口\">\n</p>\n\n<details>\n<summary>查看工作台：版本化 Skill、任务路由与 MCP 控制</summary>\n\n工作台提供附件提取、DOCX 副本编辑、PDF 翻译、PPTX 生成、CSV/XLSX 分析等能力。后台执行关联任务状态、确认步骤和生成文件权限。\n\n![工作伙伴工作台：Skill、任务路由与 MCP 安全控制](docs/images/readme/workbench.jpg)\n\n</details>",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 系统实现效果 / 工作伙伴：把一句需求变成办公成果",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-bc637e8c23b131b4c257",
+      "title": "技术亮点",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "## 技术亮点\n\n围绕上下文工程、Agentic RAG 和并行 Agent，伴AI 将技术主题落实为可以在源码与测试中核对的工程机制。\n\n| 技术方向 | 具体实现 | 为什么重要 |\n| --- | --- | --- |\n| **大文件全量分片** | 有序读取轮次、Source IR 稳定实体 ID、Token/字符双上限、覆盖率门禁、确定性合并、局部重试 | 让超出模型单次窗口的资料仍有完整的来源处理链 |\n| **Agent 三层并行** | Go 多 Run 调度、持久 Python 进程池、LangGraph `Send` 分支；先分预算、后并行、按序归并 | 同时处理多个任务，也缩短单个长任务中的串行等待 |\n| **统一上下文与长期记忆** | Go/Python 共享版本化快照、来源摘要、记忆替代链、节点预算和完整请求窗口校验 | 让聊天与工具执行使用一致、可纠正的上下文 |\n| **可追溯知识 Wiki** | 来源/主题/实体/决策页，按需搜索与分页阅读，证据引用、编辑版本和权限失效 | 将检索片段组织为可阅读、可维护、可回到原文的知识 |\n| **可恢复的工具执行** | PostgreSQL Run 与检查点、人工确认、幂等、租约和 revision fencing；Go Tool Gateway 掌握写权限 | 面对重试、取消和进程中断，仍能追踪状态与副作用 |\n| **文档即产品知识** | 白名单文档、SHA-256、`go:embed`、本地 BM25 与指南引用 | 产品问题和介绍任务可直接取用说明，无需用户另行上传 |\n| **身份与成本治理** | 管理员 Passkey、近期验证、逐资源额度继承、版本校验与事务审计 | 将管理权限、模型成本和配置变更纳入可追踪的控制链 |",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 技术亮点",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-bb29761010ab80a529f8",
+      "title": "大文件与并行，如何同时兼顾完整性",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 大文件与并行，如何同时兼顾完整性\n\n默认附件上限为 **20 MiB**。系统先完整读取来源，再按 **2,000 估算 Token / 12,000 源字符**组织 Composer 分片；Go 默认同时调度 **4 个 Run**，单 Run 的 Composer 默认并发 **3**、硬上限 **4**。输出按来源顺序合并，通过来源/实体覆盖检查后再渲染文件；失败时只重试相关分片。\n\n这里的完整性指全量读取及可核验的来源/实体覆盖，不承诺任意格式都能无误解析。并行效果已有固定延迟模拟供应商的受控测试，真实耗时取决于文件与模型服务，不以模拟测试宣称生产加速倍数。\n\n[阅读大文件处理设计](docs/blog/ppt-generation-vibe-coding/03-large-files-and-intermediate-representation.md) · [查看并行设计与实验](docs/blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md) · [完整技术指南](docs/TECHNICAL_GUIDE.zh-CN.md)",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 技术亮点 / 大文件与并行，如何同时兼顾完整性",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-43357f5bf0a88810de25",
+      "title": "工程难点与解决方案",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "### 工程难点与解决方案\n\n| 难点 | 解决方式 | 验证入口 |\n| --- | --- | --- |\n| 跨片记录遗漏、重复，或合并顺序不稳定 | Source IR、覆盖门禁、固定顺序归并和缺失分片重试 | [分片与覆盖测试](workers/python/tests/test_agent_runtime.py) |\n| 并发提高后，预算超支或失败分支漏计费 | 预分配互不重叠预算，结算已启动分支，缓存成功结果 | [并行设计与验证](docs/blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md) |\n| 长对话压缩后丢失关键约束或事实归属 | 完整消息组、带来源摘要、记忆纠正链与最终窗口检查 | [共享上下文测试](internal/conversation/context_snapshot_test.go) |\n| 原文取消共享后，知识与缓存仍返回旧内容 | 重新检查全部来源权限/版本，按依赖失效缓存 | [Wiki 权限与失效测试](internal/document/wiki_test.go) |\n| Worker 崩溃、重复调度或取消后仍返回结果 | 持久化状态、幂等、租约接管和修订版本隔离 | [Agent Worker 测试](internal/agent/worker_test.go) |\n\n更多关于 Wiki 人工编辑冲突、管理员并发修改与知识包一致性的设计，见[完整工程难点](docs/TECHNICAL_GUIDE.zh-CN.md#工程难点与解决方案)。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 技术亮点 / 工程难点与解决方案",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-119d50a16e412acbf196",
+      "title": "架构与技术栈",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "## 架构与技术栈\n\n采用 **Go 模块化单体 + 独立异步 Worker + Python Agent 运行时**。模型负责提议与内容生成，Go 服务负责身份、业务写入和授权；PostgreSQL 保存权威状态，Kafka 是可选的扩展分发组件。\n\n| 层级 | 技术 |\n| --- | --- |\n| Web | Next.js 16 · React 19 · TypeScript |\n| API 与业务 | Go 1.26 · OpenAPI · PostgreSQL 18 |\n| Agent 与算法 | Python · LangGraph · PostgreSQL Checkpointer · 版本化 Skill |\n| 检索与文件 | Qdrant · Redis · MinIO · Source IR · Wiki · 本地 BM25 |\n| 部署与观测 | Docker Compose · Caddy · OpenTelemetry · Prometheus · Loki / Alloy · 可选 Langfuse |\n\n[系统架构与处理流水线](docs/TECHNICAL_GUIDE.zh-CN.md#系统架构) · [目录结构](docs/TECHNICAL_GUIDE.zh-CN.md#目录结构) · [并行与分片配置](docs/TECHNICAL_GUIDE.zh-CN.md#关键并行与分片参数)",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 架构与技术栈",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-4e8cd90a7cb6d84af9d9",
+      "title": "文档导航",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "## 文档导航\n\n| 想了解什么 | 从这里开始 |\n| --- | --- |\n| 首次安装、注册、操作与排查 | [新手上手指南](docs/GETTING_STARTED.md) |\n| 模型选择、服务端密钥、角色与预算 | [模型配置](docs/OPENROUTER_MODELS.md) |\n| 大文件、并行、架构与设计取舍 | [中文技术指南](docs/TECHNICAL_GUIDE.zh-CN.md) · [English engineering guide](docs/ENGINEERING.md) |\n| 记忆、Wiki、检索与上下文组织 | [上下文管理](docs/CONTEXT_MANAGEMENT.md) |\n| 更新产品介绍与内置检索资料 | [产品知识维护](docs/PRODUCT_KNOWLEDGE.md) |\n| 管理员登录与用户额度 | [Passkey 管理](docs/ADMIN_PASSKEY_LOGIN.md) · [额度管理](docs/ADMIN_QUOTAS.md) |\n| 部署运维、质量门禁与验收记录 | [运行手册](docs/runbooks/) · [质量验证](docs/TECHNICAL_GUIDE.zh-CN.md#质量与发布门禁) · [项目完成情况](docs/PROJECT_COMPLETION.md) |\n| API、领域设计与架构决策 | [OpenAPI](api/openapi/openapi.yaml) · [详细设计](docs/DETAILED_DESIGN.md) · [ADR](docs/adr/) |",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 文档导航",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-cd7418e2d8c5e384098d",
+      "title": "参与改进",
+      "group": "项目介绍与部署",
+      "audience": "project",
+      "body": "## 参与改进\n\n欢迎通过 [Issues](https://github.com/bamboo-ye/ai-companion/issues) 分享使用反馈与场景需求，通过 [Pull Requests](https://github.com/bamboo-ye/ai-companion/pulls) 改进代码、测试、文档与演示。问题报告请附脱敏的复现步骤、版本和日志，勿上传模型密钥、账号凭据或私人资料。\n\n开发与提交前检查见[质量与发布门禁](docs/TECHNICAL_GUIDE.zh-CN.md#质量与发布门禁)。修改中文 README、技术指南或产品说明后，请同步内置知识：\n\n```bash\nnode scripts/build-product-knowledge.mjs\nnode scripts/build-product-knowledge.mjs --check\ngo test ./internal/productknowledge\n```\n\n如果伴AI对你有帮助，欢迎点亮 Star，让更多人发现这个项目。",
+      "source": "README.zh-CN.md",
+      "section": "伴AI · AI Companion / 参与改进",
+      "version": "6bacc1d20e883c6a803d960d97b4123b4362b4ee9c2df6a17769ba54b73fb9bc",
+      "links": []
+    },
+    {
+      "id": "builtin-4058fd5b20e719cef530",
+      "title": "伴AI：技术实现与开发指南",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "# 伴AI：技术实现与开发指南\n\n[返回产品首页](../README.zh-CN.md) · [English engineering guide](ENGINEERING.md) · [新手上手](GETTING_STARTED.md)\n\n本文保留首页背后的实现细节、工程难点、架构、默认参数、开发与验证命令。首次体验建议先按新手指南启动；以下命令均从仓库根目录执行。默认值与代码核对日期：2026-09-20。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-2de630f0a8763fdcf9c2",
+      "title": "技术亮点",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 技术亮点",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-cdf1a7a44d489d5f891b",
+      "title": "1. 面向大文件的无损分片与确定性合并",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 1. 面向大文件的无损分片与确定性合并\n\n项目没有通过截断或代表性采样来规避上下文窗口，而是为大文档建立了可恢复的全量处理链路：\n\n- **有序全量提取**：附件按原始 Chunk 顺序组织成读取轮次，默认每轮以 4,000 估算 Token 分组，单次最多返回 4 轮；每轮都携带 Chunk 范围、页码、清洗统计、`has_more` 和 `next_round` 游标。\n- **覆盖率可证明**：继续提取由确定性节点驱动，覆盖率通过 Chunk 区间并集计算；重复执行同一轮不会虚增进度，直到完整覆盖源文件。\n- **Token/字符双重有界分片**：提取结果继续拆成独立 Composer Source Batch，默认同时受 2,000 Token 和 12,000 源字符上限约束。切分优先选择页边界和行边界，并保留少量只读重叠上下文，避免跨边界记录丢失。\n- **结构而非纯文本优先**：固定版式数据先转换为 `document-source-ir-v1`，保留表、列、行组、行、单元格、继承值和稳定来源 ID；只在逻辑组之间或可检查点化的子切片之间拆分。\n- **确定性归并**：各分片结果按来源顺序或 Source Entity ID 合并，重叠记录去重，并通过双向精确率/召回率门禁检查缺失、额外、孤立和未引用实体。\n- **局部失败局部重试**：每个分片拥有独立检查点。失败或完整性检查不通过时，只重跑失败分支或包含缺失 Source Key 的批次，已成功结果不会被丢弃。\n- **内容寻址缓存**：解析结果、来源图片、生成图片和 Composer 分支结果写入有界私有原子缓存；精确重试可复用已完成分片，减少重复模型调用。\n\n上传默认上限为 20 MiB。这里的“无损”指全量读取与可核验的来源/实体覆盖；摘要任务按目标压缩内容，完整性任务则继续检查缺项与多项。演示文稿交付还需通过对应的画布容量与可读性门禁。\n\n实现入口：[文档读取轮次](../internal/document/context.go)、[Agent 分片与合并](../workers/python/src/ai_companion_worker/agent_runtime.py)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 1. 面向大文件的无损分片与确定性合并",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-949c21c782f35ba5ba63",
+      "title": "2. Agent 的三层并行化设计",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 2. Agent 的三层并行化设计\n\n并行化不是简单地把模型请求一起发出，而是在运行级、进程级和图节点级分别控制吞吐、隔离与预算：\n\n- **多 Run 并行调度**：Go `RunDispatcher` 默认提供 4 个执行槽和有界队列。相同 Run 的重复提示会被合并；若运行中出现新状态，只保留一次尾随 Replay，防止重复事件制造无界任务。\n- **持久 Python 进程池**：进程池大小与 Agent 执行并发对齐，复用已编译 LangGraph、模型决策端口和 PostgreSQL Checkpointer 连接。默认预热 1 个进程；单进程超时、崩溃、EOF 或协议异常只回收对应槽位，不拖垮整个 Worker。\n- **单 Run 内 fan-out/fan-in**：结构化和叙事型大文档通过 LangGraph `Send` 将独立 Source Batch 分发到并行 Composer 分支，默认并发为 3、硬上限为 4；`join_composition` 再按原始 Batch 顺序确定性归并。\n- **先分预算，再开并行**：分发前将剩余模型调用次数、Prompt Token、Completion Token 和成本预算拆成互不重叠的份额。任何分支都无法借并发绕过单 Run 的总预算。\n- **并行可观测、失败可结算**：每个分支独立记录模型、延迟、Token、成本、Batch ID 和错误；即使部分分支失败，已发生的用量也会完整结算，成功结果可保留用于一次有界重试。\n- **先路由、按需规划**：Agent 先判断直接回答、单一可信工具或复杂任务；直接回答和单工具路径可跳过 Planner，只有多步、可重复或显式要求规划的任务才进入完整规划环，减少不必要的模型调用。\n- **处理域级模型熔断**：若某模型返回的工具调用或参数违反 Composer 契约，同一文档范围内尚未开始的分片会立即跳过该模型；已进入并发窗口的请求允许正常结算，传输故障与契约故障则采用不同恢复策略。\n- **专用任务并行**：PDF 翻译批次默认并发 2，并按源顺序合并；演示文稿图片请求同样有界并行，同时优先复用与引用页匹配的 PDF 原图，来源素材充足时直接跳过图片模型调用。\n\n这套设计兼顾了吞吐与确定性：测试会同时断言峰值并发、输出顺序、预算结算以及并行墙钟时间低于模型调用耗时总和。\n\n实现入口：[Go 调度器](../internal/agent/dispatcher.go)、[进程池测试](../internal/agent/python_executor_test.go)、[并行设计与受控实验](blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md)。实验使用固定延迟的模拟供应商验证并行效果，实际耗时取决于文档规模和模型服务。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 2. Agent 的三层并行化设计",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-971b74d2c71ddac640f6",
+      "title": "3. 数据库优先的可靠异步架构",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 3. 数据库优先的可靠异步架构\n\nPostgreSQL 是任务状态、Agent Run、租约、重试计划、幂等键和审计记录的事实来源。Worker 使用有界并发、行级租约和 `SKIP LOCKED` 认领任务，可在进程中断后继续恢复。\n\nKafka 不是启动项目的强依赖，而是按需启用的横向扩展加速器。启用后，系统仍通过事务性 Outbox、Inbox 去重、DLQ、补偿和数据库对账处理“至少一次”投递，避免把消息中间件误当作业务一致性的唯一保障。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 3. 数据库优先的可靠异步架构",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-9e0cb185f52441652196",
+      "title": "4. 可中断、可恢复、可审批的 Agent 执行链",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 4. 可中断、可恢复、可审批的 Agent 执行链\n\nAgent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态。模型负责意图选择和参数生成，Go Tool Gateway 则掌握工具定义、鉴权、确认和业务写入权限。\n\n写操作可在人工确认点暂停，并在审批后恢复同一条运行记录；取消和超时通过持久化控制状态、轮询以及 revision fencing 阻止迟到结果落库，从执行层面减少重复回复和越权副作用。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 4. 可中断、可恢复、可审批的 Agent 执行链",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-69ab950172a22e65f6af",
+      "title": "5. 模块化单体，兼顾交付效率与领域边界",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 5. 模块化单体，兼顾交付效率与领域边界\n\n后端采用 Go 模块化单体，按身份、会话、记忆、文档、技能、账目、计费、安全、Agent、控制面等领域拆分包，并将 API 与异步 Worker 分为独立进程。它保留了单体事务和本地开发的简洁性，也通过清晰的接口、事件契约和数据边界为后续服务拆分留出空间。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 5. 模块化单体，兼顾交付效率与领域边界",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-4d3e95e15ccd9398a6de",
+      "title": "6. 统一上下文协议与可纠正的长期记忆",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 6. 统一上下文协议与可纠正的长期记忆\n\n普通聊天和 Agent intake 共用 Go `BuildContext`，输出 `conversation-context-v1`；Python 按角色消费同一份快照。近期历史、滚动摘要、长期记忆和内置产品知识分别管理，诊断 manifest 只记录来源、版本、预算和降级原因。\n\n- **保留语义组**：按同一 `sequence` 的完整消息组裁剪，保留最新组，避免从限定词或否定条件中间截断。Router/Assessor、Repairer、Planner、Composer/Responder 的历史选择预算分别为 2,000、3,000、4,000、6,000 估算 Token。\n- **摘要可核对**：摘要中的目标、约束、事实、已完成、待办和背景均附原消息 ID 与角色；未知来源被拒绝，语义摘要失败时回退到结构化抽取。\n- **记忆可纠正**：用户纠正创建新事实，通过 `supersedes_id` 关联旧事实并关闭旧有效期；召回过滤过期、未来生效和已替代事实。\n- **完整请求二次检查**：调用前按 UTF-8 字节计算保守上界，包含消息、工具 Schema、响应 Schema、输出预留和 1,024 Token 安全余量；历史选择预算不替代最终窗口保护。\n- **资料不授予权限**：摘要、记忆和知识以参考资料注入，当前用户纠正优先；正文中的命令不能改变工具授权，也不能证明业务动作已完成。\n\n实现入口：[上下文契约](../internal/contextengine/context.go)、[共享构建入口](../internal/conversation/context_snapshot.go)、[节点投影](../workers/python/src/ai_companion_worker/conversation_context.py)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 6. 统一上下文协议与可纠正的长期记忆",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-9a65775b01573e34a5f7",
+      "title": "7. 从片段检索到可追溯、可编辑的 Wiki",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 7. 从片段检索到可追溯、可编辑的 Wiki\n\n文档解析后，持久化 Wiki Job 将 Source IR/Chunks 编译为页面与证据关系。每个 Chunk 都有抽取页，来源页链接全部片段；可选模型再组织主题、实体和决策页，并逐段校验 `[chunk:ID]` 引用。\n\n- **冲突保留双方证据**：聚合页对显式字段值差异保留来源并标记待核对，不自动选择某个值作为事实。\n- **依赖权限取交集**：多文档页面要求全部来源均在当前用户/工作空间可见。读取、搜索、历史访问重新检查来源状态与版本；取消共享、删除或改版会阻止旧资料继续作为有效知识返回。\n- **编辑使用版本校验**：Markdown 编辑提交当前版本，过期写入返回 409；自动编译保留人工修改，用户可显式重建以释放编辑保护。\n- **按需获取证据**：`work_wiki_search/read/follow_links` 支持搜索、分页读取和链接扩展，与内置产品知识共享最多 8 次成功补查预算；全文完整性任务继续使用附件提取链路。\n- **检索可退化、索引可灰度**：关键词召回结合可选 Embedding/Rerank，模型不可用时保留词法结果。`legacy → shadow → semantic` 分阶段验证新索引，集合名区分模型与维度版本。\n- **缓存跟随证据失效**：缓存键含当前可见页、来源版本及权限范围，页面更新与权限变化会同时失效命中和空结果。\n\n实现入口：[Wiki 服务](../internal/document/wiki.go)、[编译器](../internal/document/wiki_compiler.go)、[权限与失效测试](../internal/document/wiki_test.go)；配置和工具预算见[上下文管理](CONTEXT_MANAGEMENT.md)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 7. 从片段检索到可追溯、可编辑的 Wiki",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-b541e8d57d2838577adb",
+      "title": "8. 随应用发布的内置产品知识",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 8. 随应用发布的内置产品知识\n\nREADME、上手指南和专题文档由白名单生成器构建为版本化知识包，记录源文件 SHA-256，再通过 `go:embed` 编入 API/Worker。检索使用中文双字词、英文词和功能别名的加权 BM25，不需要上传用户资料或依赖远端向量服务，也不占个人文档额度。\n\n相关问题自动召回最多 8 个候选，在 3,600 估算 Token 内选择完整资料段；模型可继续调用 `product_knowledge_search/read` 补查，并返回可打开的产品指南引用。所有聊天模块共享这套资料，因此“介绍伴AI的主要功能”“如何生成PPT”等问题和内容任务能获取当前应用文档。构建检查与 Go 测试对比来源哈希，防止文档更新而知识包过期。\n\n实现入口：[构建脚本](../scripts/build-product-knowledge.mjs)、[本地检索](../internal/productknowledge/catalog.go)、[上下文注入](../internal/productknowledge/context.go)；详见[知识维护](PRODUCT_KNOWLEDGE.md)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 8. 随应用发布的内置产品知识",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-3ff5270f4be4bebe82fa",
+      "title": "9. 受控的 Skill 与 MCP 扩展机制",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 9. 受控的 Skill 与 MCP 扩展机制\n\nSkill 运行时具有版本、状态、租约、重试和生成文件权限控制。Python 算法任务运行在隔离 Worker 中，外部 MCP stdio 服务必须由运营方配置绝对路径并显式声明工具白名单；任何外部副作用都不能绕过 Go 服务的授权边界。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 9. 受控的 Skill 与 MCP 扩展机制",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-cf586fa7e6f7eeb409a5",
+      "title": "10. Passkey 控制面与分层额度管理",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 10. Passkey 控制面与分层额度管理\n\n后台 `/admin` 使用独立邀请制管理员账号和 WebAuthn Passkey。设备 PIN/私钥留在本地；服务端验证 challenge、来源、RP ID、公钥签名和用户验证标志。挑战原子消费，短会话通过 HttpOnly Cookie 传递，写请求要求最近 5 分钟验证并经过同源 CSRF 校验。账号撤销通过会话版本使旧会话失效。\n\n额度按资源独立计算：**指定用户设置 → 全体用户设置 → 套餐默认值**。支持继承、`0` 禁止新增、`-1` 不限额，并显示有效上限的来源。策略使用 revision 检查并发修改，SQL 事务同时保存修改和审计；恢复继承仍保留版本，防止旧页面覆盖新设置。额度上限、实际用量和用量纠正分别记录。月度额度在请求开始时检查累计使用量；单 Run 的调用/Token/成本由 Agent 预算单独控制。\n\n实现入口：[Passkey 服务](../internal/adminpasskey/service.go)、[额度规则](../internal/billing/quota.go)、[事务与审计](../internal/billing/quota_sql.go)；操作说明见[管理员登录](ADMIN_PASSKEY_LOGIN.md)和[额度管理](ADMIN_QUOTAS.md)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 10. Passkey 控制面与分层额度管理",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-c563d2a2f9f58303695b",
+      "title": "11. 从模型调用到发布决策的全链路可观测性",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 11. 从模型调用到发布决策的全链路可观测性\n\n系统使用 OpenTelemetry Trace 贯穿 HTTP、事务性 Outbox、异步消费和 Agent 调度；Prometheus 暴露低基数可靠性指标；Grafana Alloy 与 Loki 承载脱敏结构化日志，并在 Loki 不可用时回退到 PostgreSQL 审计日志。\n\nLangfuse 作为可选、故障开放的 LLM/Agent 可观测后端，记录运行、模型生成、节点耗时、Token/成本、版本关联和质量评分。内容采集默认关闭，不影响本地权威运行记录和发布门禁。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 11. 从模型调用到发布决策的全链路可观测性",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-35731330db541e89e8e8",
+      "title": "12. 面向真实故障场景的发布工程",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 12. 面向真实故障场景的发布工程\n\n项目将重试预算、熔断、幂等、租约接管、毒消息、重复投递、超时和对账纳入自动化测试。发布门禁可生成 JSON/JUnit 证据，对 Canary 前后指标、质量、重复回复、单次模型调用约束和延迟进行判断，并采用签名、短期授权和追加式哈希链保护关键证据。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术亮点 / 12. 面向真实故障场景的发布工程",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-3fcd6add971571a17cb2",
+      "title": "工程难点与解决方案",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 工程难点与解决方案\n\n| 难点与触发场景 | 解决方案 | 仓库中的验证依据 |\n| --- | --- | --- |\n| 长对话需要压缩，但早期约束、否定条件和事实归属容易丢失 | 完整消息组 + 带来源的结构化摘要 + 记忆替代链；节点选择预算后再校验完整请求窗口 | [共享快照测试](../internal/conversation/context_snapshot_test.go)、[Python 上下文测试](../workers/python/tests/test_conversation_context.py) |\n| 长文档超过模型窗口，跨片记录容易重复或缺失 | 全轮读取、Source IR 稳定实体 ID、双上限分片、来源顺序合并和覆盖率门禁 | [Agent 分片与覆盖测试](../workers/python/tests/test_agent_runtime.py) |\n| 并行完成顺序不稳定，局部失败后费用和结果可能丢失 | 冻结分支输入、预分配互不重叠预算、按批次排序合并、结算已启动分支并缓存成功结果 | [调度器测试](../internal/agent/dispatcher_test.go)、[并行效果测试说明](blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md) |\n| 原文删除、改版或取消共享后，派生摘要与缓存可能泄露旧内容 | 每次读取验证全部来源权限/版本；缓存指纹纳入依赖；编译提交前重查来源 | [Wiki 权限、删除和失效测试](../internal/document/wiki_test.go) |\n| Wiki 自动重编译与用户人工编辑发生冲突 | 带版本的条件写入、人工编辑保护、显式重建；同一所有者编译串行、租约令牌阻止旧 Worker 发布 | [Wiki 编译与编辑测试](../internal/document/wiki_test.go) |\n| Worker 崩溃、消息重复或取消后仍收到模型响应 | PostgreSQL Run/检查点、幂等键、租约接管、一次尾随 Replay 和 revision fencing | [Agent Worker 测试](../internal/agent/worker_test.go)、[运行控制手册](runbooks/agent-run-control.md) |\n| 管理员并发调额度、旧会话重放或策略与审计不同步 | Passkey 原子挑战、会话版本、额度 revision、策略与审计同事务 | [认证测试](../internal/adminpasskey/service_test.go)、[额度持久化测试](../internal/billing/quota_durable_test.go) |\n| 功能文档更新后，模型仍使用旧说明或把示例当成已完成操作 | 白名单构建、来源哈希校验、只读知识注入、指南引用与实际业务工具分离 | [产品知识一致性与召回测试](../internal/productknowledge/catalog_test.go) |",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 工程难点与解决方案",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-29a05f8c598bb9e9a2bb",
+      "title": "系统架构",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 系统架构\n\n```mermaid\nflowchart LR\n    subgraph Clients[客户端]\n        Web[Next.js Web]\n        Android[Android / Compose]\n        iOS[iOS / SwiftUI]\n    end\n\n    subgraph Core[Go 应用层]\n        API[API 服务]\n        Worker[异步 Worker]\n        Gateway[Tool Gateway]\n        Context[统一上下文快照]\n        Wiki[Wiki 编译与证据检索]\n        Knowledge[内置产品知识 / BM25]\n    end\n\n    subgraph AgentRuntime[Agent 运行时]\n        Agent[LangGraph Agent Worker]\n        Python[隔离 Python Worker]\n        Model[OpenRouter / 模型服务]\n    end\n\n    subgraph Data[数据与基础设施]\n        PG[(PostgreSQL)]\n        Redis[(Redis)]\n        Qdrant[(Qdrant)]\n        MinIO[(MinIO)]\n        Kafka[(Kafka，可选)]\n    end\n\n    subgraph Observability[可观测性]\n        Metrics[Prometheus]\n        Logs[Loki / Alloy]\n        Traces[Langfuse / OTel]\n    end\n\n    Web --> API\n    Android --> API\n    iOS --> API\n    API --> PG\n    API --> Redis\n    API --> Qdrant\n    API --> MinIO\n    API --> Context\n    Context --> PG\n    Context --> Knowledge\n    PG --> Worker\n    PG --> Agent\n    Worker --> Wiki\n    Wiki --> PG\n    Wiki --> Qdrant\n    Context --> Agent\n    API -. Outbox .-> Kafka\n    Kafka -. 扩展调度 .-> Worker\n    Kafka -. 扩展调度 .-> Agent\n    Agent --> Model\n    Agent --> Gateway\n    Gateway --> Wiki\n    Gateway --> API\n    Agent --> Python\n    API -. 指标 / 日志 / Trace .-> Observability\n    Worker -. 指标 / 日志 / Trace .-> Observability\n    Agent -. 指标 / 日志 / Trace .-> Observability\n```\n\n默认模式下，任务由 PostgreSQL 驱动；达到多 Worker 扩展或事件扇出需求后，可启用 Kafka profile 加速分发。两种模式共享相同的业务状态、租约、幂等和恢复语义。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 系统架构",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-3795efc4cd974781f04d",
+      "title": "大文件并行处理流水线",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 大文件并行处理流水线\n\n```mermaid\nflowchart LR\n    File[默认最大 20 MiB 附件] --> Extract[有序 Token 窗口提取]\n    Extract --> Manifest[Round Manifest<br/>页码 / Chunk 范围 / 续读游标]\n    Manifest --> Coverage{源文件覆盖 100%?}\n    Coverage -- 否 --> Extract\n    Coverage -- 是 --> IR[结构化 Source IR]\n    IR --> Split[Token + 字符双重有界分片]\n    Split --> Budget[预分配调用 / Token / 成本预算]\n    Budget --> B1[Composer Batch 1]\n    Budget --> B2[Composer Batch 2]\n    Budget --> BN[Composer Batch N]\n    B1 --> Join[按来源顺序确定性合并]\n    B2 --> Join\n    BN --> Join\n    Join --> Gate{覆盖率与结构质量门禁}\n    Gate -- 缺失 --> Retry[只重试失败或缺失分片]\n    Retry --> Join\n    Gate -- 通过 --> Render[确定性渲染与文件交付]\n```\n\n每个 Composer 分支都可独立检查点化、计费、观测和缓存。并行执行只改变处理时延，不改变最终合并顺序、来源覆盖要求或总预算上限。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 系统架构 / 大文件并行处理流水线",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-ab131f4993e810b09449",
+      "title": "技术栈",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 技术栈\n\n| 层级 | 主要技术 |\n| --- | --- |\n| Web | Next.js 16、React 19、TypeScript 5.9 |\n| 后端 | Go 1.26、模块化领域包、HTTP API、OpenAPI |\n| Agent | LangGraph、`Send` fan-out/fan-in、PostgreSQL Checkpointer、持久 Python 进程池、OpenRouter 兼容模型调用 |\n| 上下文与知识 | `conversation-context-v1`、Source IR、版本化 Wiki、Qdrant 混合检索、可选 Embedding/Rerank、本地 BM25 |\n| 身份与治理 | WebAuthn Passkey、HttpOnly Session、RBAC/CSRF、分层额度、版本冲突检测、事务审计 |\n| 算法 Worker | Python 3.12+、隔离文档/数据/媒体处理 |\n| 数据 | PostgreSQL 18、Redis 8、Qdrant、MinIO；保留 MySQL 兼容存储 |\n| 异步与事件 | 数据库租约、Transactional Outbox、可选 Kafka 4、Inbox/DLQ/补偿 |\n| 可观测性 | OpenTelemetry、Prometheus、Grafana Alloy、Loki、可选 Langfuse |\n| 客户端 | Next.js Web、Kotlin/Jetpack Compose、Swift/SwiftUI |\n| 交付 | Docker Compose、Caddy、Makefile、JSON/JUnit 发布证据 |",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术栈",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-0062056c3627f9ec14c0",
+      "title": "关键并行与分片参数",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 关键并行与分片参数\n\n| 环境变量 | 默认值 | 作用 |\n| --- | ---: | --- |\n| `AGENT_WORKER_CONCURRENCY` | `4` | Go 层同时执行的 Agent Run 数量，也是持久 Python 池的容量基准 |\n| `AGENT_DISPATCH_QUEUE_SIZE` | `32` | Agent 调度器有界队列容量，用于显式背压 |\n| `AGENT_PYTHON_POOL_WARM_SIZE` | `1` | Worker 就绪前预热的 Python Agent 进程数 |\n| `AGENT_MODEL_FANOUT_CONCURRENCY` | `3` | 单个 LangGraph Run 内 Composer 分支并发数，有效范围为 1–4 |\n| `AGENT_COMPOSER_SOURCE_BATCH_MAX_TOKENS` | `2000` | 单个大文档 Composer 来源分片的 Token 上限 |\n| `AGENT_COMPOSER_SOURCE_BATCH_MAX_CHARS` | `12000` | 单个大文档 Composer 来源分片的字符上限 |\n| `MODEL_COMPOSER_BATCH_MAX_TOKENS` | `6144` | 单个 Composer 分支的结构化输出上限 |\n| `MODEL_TRANSLATION_CONCURRENCY` | `2` | PDF 翻译批次并发数，有效范围为 1–4 |\n| `MODEL_PRESENTATION_IMAGE_CONCURRENCY` | `2` | 演示文稿图片生成并发数，有效范围为 1–4 |\n\n所有并发参数都有硬上限或有界队列保护。模型分支在启动前先预留独立预算，因此增大并发不会放大单次运行允许的调用次数、Token 或成本。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 技术栈 / 关键并行与分片参数",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-4215814c4118ec9e87d3",
+      "title": "快速开始",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
       "body": "## 快速开始",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 快速开始",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 快速开始",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-eed4b5c68f69053378b8",
+      "id": "builtin-6a330025d46205be495c",
       "title": "环境要求",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 环境要求\n\n- Go 1.26+\n- Python 3.12+\n- Node.js 24+ 与 pnpm 11+\n- Docker Desktop 与 Docker Compose v2\n\n仅开发 Web/后端时无需安装 Android 或 iOS 工具链。原生客户端分别需要 JDK 17 + Android Studio/API 37，以及 Xcode 26+ + XcodeGen。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 快速开始 / 环境要求",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 环境要求\n\n- Go 1.26+\n- Python 3.12+\n- Node.js 24+ 与 pnpm 11+\n- Docker Desktop 与 Docker Compose v2\n\n仅开发 Web/后端时无需安装 Android 或 iOS 工具链。原生客户端分别需要 JDK 17 + Android Studio/API 37，以及 Xcode 26+ + XcodeGen。\n\n以下完整 Docker 路径由镜像提供 Go/Python/Node 运行时，宿主机无需逐一安装；这些版本用于本机开发。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 快速开始 / 环境要求",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-767b08287976dbb2ce3d",
+      "id": "builtin-55a4c8d4677ad9137a9b",
       "title": "使用 Docker 启动完整开发环境",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 使用 Docker 启动完整开发环境\n\n```bash\ncp .env.example .env\n# 在对外暴露服务前，请替换所有 change-* 开发密钥\nmake docker-up\nmake docker-ps\n```\n\n启动后访问：\n\n- Web：<http://localhost:3000>\n- API：<http://localhost:8080>\n- 健康检查：<http://localhost:8080/healthz>\n- 就绪检查：<http://localhost:8080/readyz>\n\n常用命令：\n\n```bash\nmake docker-logs   # 查看 API、Worker、Agent Worker 和 Web 日志\nmake docker-down   # 停止完整应用栈\n```",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 快速开始 / 使用 Docker 启动完整开发环境",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 使用 Docker 启动完整开发环境\n\n```bash\ntest -f .env || cp .env.example .env\n# 在对外暴露服务前，请替换所有 change-* 开发密钥\nmake docker-up\nmake docker-ps\n```\n\n启动后访问：\n\n- Web：<http://localhost:3000>\n- API：<http://localhost:8080>\n- 健康检查：<http://localhost:8080/healthz>\n- 就绪检查：<http://localhost:8080/readyz>\n- 管理后台：<http://localhost:3000/admin>（需[管理员邀请与通行密钥](ADMIN_PASSKEY_LOGIN.md)，普通注册账户不能登录）\n\nCompose 自动应用 PostgreSQL 业务迁移并初始化 LangGraph 检查点。首次使用依次注册、登录、添加角色；建议再从工作台生成一份 Markdown 文档，在「历史任务」确认并下载，验证完整任务链路。\n\n常用命令：\n\n```bash\nmake docker-logs   # 查看 API、Worker、Agent Worker 和 Web 日志\nmake docker-down   # 停止完整应用栈\n```",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 快速开始 / 使用 Docker 启动完整开发环境",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-6a7bc1b86405471133a3",
+      "id": "builtin-e5818c394436b9cc00fb",
       "title": "在宿主机运行 Go 服务",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "### 在宿主机运行 Go 服务\n\n```bash\nmake infra-up\nmake postgres-migrate\nmake run-api\n```\n\n另开终端启动后台 Worker：\n\n```bash\nmake run-worker\n```\n\n需要在宿主机运行 Agent 时，再开一个终端：\n\n```bash\nmake run-agent-worker\n```\n\n如需启用 Kafka 横向扩展模式：\n\n```bash\nmake docker-up-kafka-scale\n```",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 快速开始 / 在宿主机运行 Go 服务",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "### 在宿主机运行 Go 服务\n\n先安装 Python Worker 依赖，并将本机 `.env` 的 `AGENT_GATEWAY_URL` 改为 `http://127.0.0.1:8080`（模板中的 `api` 是容器主机名）。已有 Docker 应用栈时先停止，避免端口冲突。\n\n```bash\npython3 -m venv workers/python/.venv\nworkers/python/.venv/bin/python -m pip install -e 'workers/python[agent,dev]'\nmake infra-up\nmake postgres-migrate\nmake agent-checkpoint-setup\nmake agent-checkpoint-smoke\nmake run-api\n```\n\n另开终端启动后台 Worker：\n\n```bash\nmake run-worker\n```\n\n默认三个聊天模块均路由到 Agent，因此再开一个终端启动 Agent Worker：\n\n```bash\nmake run-agent-worker\n```\n\nWeb 另开终端运行 `cd web && pnpm install --frozen-lockfile && pnpm dev`。默认 API 地址为 `http://localhost:8080`；自定义地址需配置 `web/.env.local`，根目录 `.env` 不会自动传入 Next.js。完整配置与故障排查见[新手上手指南](GETTING_STARTED.md)。\n\n如需启用 Kafka 横向扩展模式：\n\n```bash\nmake docker-up-kafka-scale\n```",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 快速开始 / 在宿主机运行 Go 服务",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-35182b71779ee7bfa501",
+      "id": "builtin-0161b08d59fc235398b3",
       "title": "配置模型服务",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 配置模型服务\n\n默认 `.env.example` 使用 `MODEL_PROVIDER=development`，无需真实模型密钥即可进行本地工程验证。接入 OpenRouter 时，请设置服务端的 `MODEL_PROVIDER`、`MODEL_BASE_URL`、`MODEL_API_KEY` 和具体模型名称。\n\n生产环境注意事项：\n\n- 不要使用动态的 `latest`、`auto` 或未固定版本的模型别名；\n- `AGENT_GATEWAY_TOKEN`、`AGENT_CONFIRMATION_SECRET` 和模型密钥只能作为服务端秘密，不能使用 `NEXT_PUBLIC_*` 前缀；\n- 真实密钥应由 Secret Manager 注入，不应提交到仓库或写入发布证据；\n- 模型升级需同步更新配置版本，并经过项目评测集与 Canary 验证。\n\n模型角色、回退顺序、预算和隐私策略详见 [OpenRouter 模型配置](docs/OPENROUTER_MODELS.md)。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 配置模型服务",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 配置模型服务\n\n默认 `.env.example` 使用 `MODEL_PROVIDER=development`，无需真实模型密钥即可进行本地工程验证，但只返回固定模拟回复，不代表真实问答、自然语言工具选择或内容生成质量。接入 OpenRouter 时，请设置服务端的 `MODEL_PROVIDER`、`MODEL_BASE_URL`、`MODEL_API_KEY` 和具体模型名称。\n\n生产环境注意事项：\n\n- 不要使用动态的 `latest`、`auto` 或未固定版本的模型别名；\n- `AGENT_GATEWAY_TOKEN`、`AGENT_CONFIRMATION_SECRET` 和模型密钥只能作为服务端秘密，不能使用 `NEXT_PUBLIC_*` 前缀；\n- 真实密钥应由 Secret Manager 注入，不应提交到仓库或写入发布证据；\n- 模型升级需同步更新配置版本，并经过项目评测集与 Canary 验证。\n\n模型角色、回退顺序、预算和隐私策略详见 [OpenRouter 模型配置](OPENROUTER_MODELS.md)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 配置模型服务",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-9838de595ca509ede741",
+      "id": "builtin-7c014a16d68b4c40e0b6",
       "title": "质量与发布门禁",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 质量与发布门禁\n\n运行本地综合检查：\n\n```bash\nmake check\n```\n\n运行 Web/后端内部发布门禁：\n\n```bash\nmake release-check\n```\n\n该门禁覆盖 Go 全量测试、Python Worker 单元测试、OpenAPI YAML 解析、Docker Compose 配置校验、发布证据脚本与验证器测试，以及 Git diff 空白检查。\n\n专项质量检查：\n\n```bash\nmake eval-m2        # 100 条 Wiki 检索质量用例\nmake eval-m4        # 意图路由回归门禁\nmake eval-agent     # Agent 结果与执行链契约\nmake eval-agent-runtime  # 并发、背压与异步恢复契约\nmake validate-observability\n```\n\n更多 Agent、可观测性 Canary、故障演练和发布证据命令请参阅 [英文运维 README](README.md) 与 [运行手册](docs/runbooks/)。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 质量与发布门禁",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 质量与发布门禁\n\n运行本地综合检查：\n\n```bash\nmake check\n```\n\n运行 Web/后端内部发布门禁：\n\n```bash\nmake release-check\n```\n\n该门禁覆盖 Go 全量测试、Python Worker 单元测试、Agent 回放/运行时/性能/重试评测、可观测性发布基线与配置校验、OpenAPI YAML 解析、Docker Compose 配置校验、发布证据脚本与验证器测试，以及 Git diff 空白检查。数据库专项测试未配置专用 DSN 时会跳过，离线样例评测不代表真实生产验收。\n\n`make check` 包含格式化并会改写源码；上述两个目标均不包含 Web 检查。文档或页面指南更新后，还需同步知识包并单独验证 Web：\n\n```bash\nnode scripts/build-product-knowledge.mjs\nnode scripts/build-product-knowledge.mjs --check\ngo test ./internal/productknowledge\ncd web\npnpm check\npnpm test\npnpm build\n```\n\n专项质量检查：\n\n```bash\nmake eval-m2        # 100 条文档检索质量用例\nmake eval-m4        # 意图路由回归门禁\nmake eval-agent     # Agent 结果与执行链契约\nmake eval-agent-runtime  # 并发、背压与异步恢复契约\nmake validate-observability\ngo run ./cmd/context-eval --offline  # 上下文检索离线基线\n```\n\n更多 Agent、可观测性 Canary、故障演练和发布证据命令请参阅 [英文工程与运维指南](ENGINEERING.md) 与 [运行手册](runbooks/)。",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 质量与发布门禁",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-06e827eddc8fea2f06bd",
+      "id": "builtin-ae0643ba0a98e34e4e83",
       "title": "目录结构",
-      "group": "项目介绍与部署",
-      "audience": "project",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
       "body": "## 目录结构\n\n```text\ncmd/api/                 Go HTTP API 入口\ncmd/worker/              通用异步 Worker\ncmd/agent-worker/        Agent 调度与执行进程\ninternal/                后端领域模块与平台基础设施\nworkers/python/          隔离的文档、数据与媒体算法 Worker\nweb/                     Next.js Web 客户端\nmobile/android/          Kotlin + Jetpack Compose 客户端\nmobile/ios/              SwiftUI 客户端与可测试核心\napi/openapi/             HTTP API 契约\nevents/schemas/          事件契约\nmigrations/              正向与回滚数据库迁移\ndeploy/                  Compose、镜像、Caddy 与可观测性配置\nevals/                   Wiki、Agent 与发布质量基线\ndocs/adr/                架构决策记录\ndocs/runbooks/           运维、演练与发布手册\n```",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 目录结构",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 目录结构",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-9c1214af4c5316a8b329",
+      "id": "builtin-9c1d79503eb4b961ed5c",
       "title": "设计原则",
-      "group": "项目介绍与部署",
-      "audience": "project",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
       "body": "## 设计原则\n\n- **数据状态优先于消息投递**：业务表和持久化 Run 是事实来源，队列负责加速而不承担唯一真相。\n- **模型提议，服务端决策**：模型不能绕过工具白名单、人工确认、配额、安全策略和业务鉴权。\n- **默认最小暴露**：日志脱敏、内容观测关闭、密钥服务端化、个人数据按需共享。\n- **失败可恢复，副作用可追踪**：使用幂等键、租约、重试预算、revision fencing 和审计记录处理异常。\n- **用证据发布**：模型或 Agent 变更必须经过版本化评测、Canary、指标对比与可验证证据。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 设计原则",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 设计原则",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
       "links": []
     },
     {
-      "id": "builtin-27977d82f68e378587d6",
-      "title": "当前范围与限制",
-      "group": "项目介绍与部署",
-      "audience": "project",
-      "body": "## 当前范围与限制\n\n仓库已完成 M0–M4、M6 和 Web/后端 M8 范围。以下内容不在当前完成声明内：\n\n- M5 金融研究与付费市场数据链路；\n- M7 Android/iOS 完整 Beta 产品化与应用商店发布；\n- 外部生产环境正式上线和真实流量切换；\n- 模型、邮件、支付、OAuth 等第三方提供商的审批与生产凭据。\n\n在邀请外部测试或接入生产流量前，请按照 [项目完成情况](docs/PROJECT_COMPLETION.md) 和对应 [运行手册](docs/runbooks/) 完成密钥、MFA、迁移、监控、发布证据和区域合规检查。",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 当前范围与限制",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
-      "links": []
-    },
-    {
-      "id": "builtin-137477d4d933641d701c",
+      "id": "builtin-465dd0316d343676614d",
       "title": "相关文档",
-      "group": "项目介绍与部署",
+      "group": "技术实现与开发指南",
+      "audience": "technical",
+      "body": "## 相关文档\n\n- [新手上手与本地开发](GETTING_STARTED.md)\n- [内置产品知识的来源与更新](PRODUCT_KNOWLEDGE.md)\n- [统一上下文、记忆与 Wiki](CONTEXT_MANAGEMENT.md)\n- [大文件分片与中间表示](blog/ppt-generation-vibe-coding/03-large-files-and-intermediate-representation.md)\n- [Agent 并行设计与效果测试](blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md)\n- [管理员通行密钥登录与恢复](ADMIN_PASSKEY_LOGIN.md)\n- [全体与指定用户额度管理](ADMIN_QUOTAS.md)\n- [项目完成情况](PROJECT_COMPLETION.md)\n- [开发计划](DEVELOPMENT_PLAN.md)\n- [详细设计](DETAILED_DESIGN.md)\n- [Agent 与 LangGraph 持久化设计](POSTGRES_LANGGRAPH_MIGRATION.md)\n- [模型角色、并行 Composer 与预算策略](OPENROUTER_MODELS.md)\n- [架构决策记录](adr/)\n- [OpenAPI 契约](../api/openapi/openapi.yaml)\n- [运行与发布手册](runbooks/)\n- [iOS 客户端说明](../mobile/ios/README.md)",
+      "source": "docs/TECHNICAL_GUIDE.zh-CN.md",
+      "section": "伴AI：技术实现与开发指南 / 相关文档",
+      "version": "aad3da2a845aa7047cd940613beecbfaee9339184bec566b639db9823f378745",
+      "links": []
+    },
+    {
+      "id": "builtin-306731e86ad960211fc1",
+      "title": "新手上手指南",
+      "group": "新手上手与本地开发",
       "audience": "project",
-      "body": "## 相关文档\n\n- [项目完成情况](docs/PROJECT_COMPLETION.md)\n- [开发计划](docs/DEVELOPMENT_PLAN.md)\n- [详细设计](docs/DETAILED_DESIGN.md)\n- [Agent 与 LangGraph 持久化设计](docs/POSTGRES_LANGGRAPH_MIGRATION.md)\n- [模型角色、并行 Composer 与预算策略](docs/OPENROUTER_MODELS.md)\n- [架构决策记录](docs/adr/)\n- [OpenAPI 契约](api/openapi/openapi.yaml)\n- [运行与发布手册](docs/runbooks/)\n- [iOS 客户端说明](mobile/ios/README.md)",
-      "source": "README.zh-CN.md",
-      "section": "伴AI（AI Companion） / 相关文档",
-      "version": "74c6939133b855889b3de47f6e22d28a0328e06608ee24bbf3f6446fe532fc93",
+      "body": "# 新手上手指南\n\n核对日期：2026-09-20。本文按当前仓库的 Web 页面、配置和启动脚本编写。功能实现与部署验收的边界见[项目实现情况](PROJECT_COMPLETION.md)。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-42cdedfc8490db83d1bf",
+      "title": "1. 先选使用方式",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 1. 先选使用方式\n\n- **已有可访问的网站**：直接从第 3 节注册和体验，无需安装开发工具。\n- **在自己的电脑启动完整应用**：使用第 2 节 Docker 路径，宿主机只需 Git 和 Docker Desktop / Compose v2。\n- **修改代码并本地调试**：使用第 5 节，需要 Go 1.26+、Python 3.12+、Node.js 24+ 和 pnpm 11.7.0。Android/iOS 工具链不是 Web 开发的前提。\n\n默认配置使用 `MODEL_PROVIDER=development`，返回固定模拟回复，可验证注册、页面和任务链路；不能据此评价真实问答、自然语言工具选择或内容生成质量。真实模型接入见[模型配置](OPENROUTER_MODELS.md)。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 1. 先选使用方式",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-a5d7a6f9694bd96c6be9",
+      "title": "2. 用 Docker 启动",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 2. 用 Docker 启动\n\n在仓库根目录执行。已有 `.env` 时保留原配置：\n\n```sh\ntest -f .env || cp .env.example .env\nmake docker-up\nmake docker-ps\n```\n\n完整栈包含 Web、API、通用 Worker、Agent Worker、PostgreSQL、Redis、Qdrant、MinIO 和 Loki/Alloy。Compose 会先应用业务迁移和 LangGraph 检查点初始化；一次性初始化容器成功退出是正常情况。Kafka 默认不启动。\n\n| 入口 | 用途 |\n| --- | --- |\n| <http://localhost:3000> | 普通用户 Web |\n| <http://localhost:3000/admin> | 独立管理员登录 |\n| <http://localhost:8080/healthz> | API 存活检查 |\n| <http://localhost:8080/readyz> | API 就绪检查 |\n| <http://localhost:9467/readyz> | Agent Worker 就绪检查 |\n\n首次构建需要下载镜像和依赖。用 `make docker-logs` 查看进度；需要退出日志跟随时按 Ctrl+C。`make docker-down` 停止应用并保留数据卷，再次 `make docker-up` 可启动。不要为解决普通启动问题删除数据卷。\n\n默认端口绑定本机地址，示例密钥仅用于本地开发。更换访问域名时同步配置 `WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE_URL`，并重建 Web；管理员 Passkey 绑定域名，不能随意在 `localhost` 与 IP 地址之间切换。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 2. 用 Docker 启动",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-9b918390481b74c972b1",
+      "title": "3. 完成第一次体验",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 3. 完成第一次体验",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 3. 完成第一次体验",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-c89f994fcd0db7e43705",
+      "title": "注册并开始对话",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "### 注册并开始对话\n\n1. 在登录页点击「立即注册」，填写昵称、邮箱和 8–128 位密码。\n2. 注册成功后用邮箱、密码登录，选择「情感陪伴」「生活助手」或「工作伙伴」。\n3. 点击「添加角色」，填写设定或采用默认值，再点击「开始会话」。先发一条简短消息验证回复。\n4. 登录页和页面顶部都可以打开「新手指引」，支持搜索、逐节阅读和页面跳转；阅读进度保存在当前浏览器。\n\n侧栏「个人主页」可查看账户资料、修改密码。改密成功后保留当前设备登录，其他设备需要重新登录。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 3. 完成第一次体验 / 注册并开始对话",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-7314102736bd4921934e",
+      "title": "先查产品知识，再上传个人资料",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "### 先查产品知识，再上传个人资料\n\n- 侧栏「产品知识」和「工作伙伴 → Wiki」都能打开内置产品说明，无需上传项目文档或配置向量模型。\n- 接入真实模型后，也可以问「如何生成 PPT」「如何修改长期记忆」，点击回复中的产品指南引用查看原文。产品知识只解释用法，不读取当前账户的实时用量或替你修改配置。\n- 个人资料通过「工作伙伴 → Wiki」上传文本 PDF 或 UTF-8 TXT，等待解析完成后再提问，核对引用中的文档名、页码和片段。\n- Wiki 页面支持搜索、阅读、编辑、导出及反馈；证据不足时补充来源。纯图片扫描件不保证能在默认解析配置下提取正文。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 3. 完成第一次体验 / 先查产品知识，再上传个人资料",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-1bbe9593b5c8c594ba0c",
+      "title": "体验生活助手",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "### 体验生活助手\n\n1. 打开「生活助手 → 账本」，输入「昨晚打车36元」并点击「解析」。\n2. 核对收支方向、金额、分类与时间，点击「确认入账」，再在账本查看记录和汇总。\n3. 在「提醒事项」解析安排，确认日期、时间与时区后创建；只有日期的提醒会显示「时间待安排」。\n4. 「今日计划」包含手动事项、今天到期和已逾期的未完成提醒。完成事项后更新状态。\n\n应用内提醒记录不等于手机系统通知已授权或同步成功。需要导出账本时点击「导出 Excel」，等待后台生成文件。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 3. 完成第一次体验 / 体验生活助手",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-690c367f7526564b7599",
+      "title": "生成第一份办公文件",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "### 生成第一份办公文件\n\n1. 打开「工作伙伴 → 工作台」，确认相应 Skill 已启用。\n2. 建议先用「Markdown 文档」填写标题和短正文，点击「生成待确认任务」。\n3. 打开「历史任务」，核对参数并「确认执行」，完成后下载文件。\n4. 再尝试 PPTX 大纲、DOCX 副本编辑或 CSV/XLSX 分析。复杂资料任务可在工作聊天中上传附件，并明确目的、受众、语言与输出格式。\n\n邮件草稿只生成内容；邮件投递是独立后端能力，不能把草稿生成成功当作已发送。任务处于待确认时不会自行执行；失败或取消后可按页面提示重试。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 3. 完成第一次体验 / 生成第一份办公文件",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-be787c57cbcab4ada4c4",
+      "title": "4. 文件与额度边界",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 4. 文件与额度边界\n\n| 入口 | 当前约束 |\n| --- | --- |\n| 工作聊天附件 / 个人 Wiki | 文本 PDF、UTF-8 TXT；默认单文件 20 MiB，由服务端 `DOCUMENT_MAX_UPLOAD_BYTES` 配置 |\n| 工作台 DOCX 副本编辑 | 单文件最大 700 KiB；在新副本末尾追加段落 |\n| 工作台 CSV/XLSX 分析 | 单文件最大 700 KiB；UTF-8 CSV 或无宏 XLSX；最多分析 10,000 行 |\n| 工作台 PPTX 表单 | 页数 3–20；生成后仍需检查内容与排版 |\n\n页面将上述二进制大小显示为 MB/KB。聊天附件上限不适用于所有办公表单。\n\n额度按每项资源分别取「指定用户设置 → 全体用户设置 → 套餐」的有效值。达到文档、Skill、Agent 或模型成本额度时，按错误提示联系管理员；反复重试不会恢复额度。提高上限不会清零用量，也不会自动重启失败任务。详情见[额度管理](ADMIN_QUOTAS.md)。\n\n团队工作空间、邀请和资源共享、邮件投递、订阅与未成年人策略已有后端能力；当前普通用户 Web 导航没有为这些能力全部提供独立页面。金融研究和原生 Android/iOS 完整 Beta 不在本次完成范围。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 4. 文件与额度边界",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-3202ea49cd8762e04858",
+      "title": "5. 在宿主机调试",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 5. 在宿主机调试\n\n以下是 Docker 完整栈的另一种启动方式。先停止占用相同端口的应用进程，然后在仓库根目录执行：\n\n```sh\ntest -f .env || cp .env.example .env\npython3 -m venv workers/python/.venv\nworkers/python/.venv/bin/python -m pip install -e 'workers/python[agent,dev]'\nmake infra-up\nmake postgres-migrate\nmake agent-checkpoint-setup\nmake agent-checkpoint-smoke\n```\n\n修改本机 `.env` 中 `AGENT_GATEWAY_URL=http://127.0.0.1:8080`；模板中的 `http://api:8080` 是容器地址。保留指向本机虚拟环境的 `PYTHON_EXECUTABLE` 和 `SPREADSHEET_EXECUTABLE`。API、两个 Worker 应读取同一份数据库、文件存储及网关密钥配置；不要改用各进程互不共享的 memory 数据库。\n\n在三个终端中，分别从仓库根目录运行：\n\n```sh\nmake run-api\n```\n\n```sh\nmake run-worker\n```\n\n```sh\nmake run-agent-worker\n```\n\n默认 `AGENT_CHAT_MODULES=companion,life,work`，因此三个模块聊天都需要 Agent Worker；通用 Worker 负责文档、Skill 等后台任务。只启动 API 不能完成全部体验。\n\n第四个终端启动 Web：\n\n```sh\ncd web\npnpm install --frozen-lockfile\npnpm dev\n```\n\nWeb 本地默认访问 `http://localhost:8080`。根目录 `.env` 不会自动成为 Next.js 的环境文件；使用自定义地址时，在 `web/.env.local` 设置 `NEXT_PUBLIC_API_BASE_URL` 和服务端 `ADMIN_API_BASE_URL`。后者只用于管理员同源代理，不能填入浏览器公开的密钥。\n\n仅在需要验证 Kafka 扩展模式时使用 `make docker-up-kafka-scale`；日常开发无需开启。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 5. 在宿主机调试",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-b37be7c235a77d37937e",
+      "title": "6. 首次进入管理后台",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 6. 首次进入管理后台\n\n普通注册账户不能登录 `/admin`。完整 Docker 栈启动后，由部署管理员在可信终端签发首次邀请：\n\n```sh\ndocker compose --env-file .env -f deploy/compose/compose.yml exec api \\\n  /admin-invite --id owner --name '管理员' --reason '初始化本地后台管理员'\n```\n\n打开输出的一次性邀请链接，点击「绑定通行密钥并登录」，按设备提示完成验证。邀请有效期 30 分钟，开始绑定即消费；中途取消后需重新签发。PIN 留在设备本地，具体验证方式由浏览器和设备决定。\n\n登录后先读后台「新手指引」：运行观测用于定位问题；配置中心可查看模型、套餐以及用户有效额度；Agent Studio 用于编排、评测与发布。额度修改要求填写原因；发布类配置可能要求另一位管理员审批。备用凭证、恢复及宿主机初始化见[管理员登录](ADMIN_PASSKEY_LOGIN.md)。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 6. 首次进入管理后台",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-33639d29610ec7a8be9a",
+      "title": "7. 常见问题",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 7. 常见问题\n\n| 现象 | 检查顺序 |\n| --- | --- |\n| 网页打不开或 API 请求失败 | `make docker-ps` → API `/readyz` → `make docker-logs`；核对端口、Web API 地址和 `WEB_ORIGIN` |\n| 回复固定、不会按要求调用工具 | 查看是否仍为 `MODEL_PROVIDER=development`；按模型文档配置并重启相关服务 |\n| 聊天持续等待 | 检查 Agent Worker `/readyz`、检查点初始化、网关地址及密钥；宿主机不要使用容器主机名 `api` |\n| 文档或 Skill 一直排队 | 确认通用 Worker 正在运行，检查 Python 虚拟环境、任务错误及文件目录；不要重复上传同一资料来催进度 |\n| 文件任务没有执行 | 先查看「历史任务」是否待确认，再查看错误、额度和对应 Skill 启停状态 |\n| Wiki 查不到来源 | 等待文档解析完成，检查是否为文本 PDF、问题是否有对应证据；内置产品知识与个人 Wiki 分开检索 |\n| 后台 Passkey 失败 | 用邀请绑定的域名访问，核对 `WEB_ORIGIN` 和 Web 服务端代理地址；检查邀请是否已消费及设备验证支持 |\n| 修改指南后产品仍显示旧内容 | 重新生成内置知识包、重建 API/Worker 与 Web；仅改 Markdown 不会替换已发布二进制 |",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 7. 常见问题",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
+      "links": []
+    },
+    {
+      "id": "builtin-86e986961b44b63816ea",
+      "title": "8. 文档更新与验证",
+      "group": "新手上手与本地开发",
+      "audience": "project",
+      "body": "## 8. 文档更新与验证\n\n页面指南来源是 `web/app/onboarding-content.ts`。本指南、中文 README 和专题文档由白名单生成器编入内置知识包；更新后在根目录执行：\n\n```sh\nnode scripts/build-product-knowledge.mjs\nnode scripts/build-product-knowledge.mjs --check\ngo test ./internal/productknowledge\ncd web\npnpm check\npnpm test\n```\n\n完整后端门禁是 `make release-check`；Web 还需单独运行 `pnpm build`。`make check` 会执行格式化、Go/Python 测试、Go 构建及 Compose 配置校验，不包含 Web 检查。以上本地检查不代表已完成真实模型、邮件投递、生产迁移或外部上线验收。",
+      "source": "docs/GETTING_STARTED.md",
+      "section": "新手上手指南 / 8. 文档更新与验证",
+      "version": "d4fe9c89fc80ffe83f0a93f23e001f092a12649d6bfa10f39c988c1d9f0fab7b",
       "links": []
     },
     {
@@ -949,6 +1214,39 @@
       "links": []
     },
     {
+      "id": "builtin-03c61a4235e693a1cbe4",
+      "title": "管理用户额度",
+      "group": "全体与指定用户额度管理",
+      "audience": "admin",
+      "body": "# 管理用户额度\n\n在 `/admin` 打开「配置中心 → 用户额度与用量」。管理员完成通行密钥验证后可设置全体用户或指定用户的额度；支持人员只能查看。\n\n- **全体用户额度**：作用于全部现有用户和未来注册用户，包括付费套餐。保存前需确认适用范围。\n- **指定用户额度**：通过邮箱、昵称或用户 ID 搜索用户，对各项资源单独设置。\n- 每项资源独立按「用户单独设置 → 全体用户设置 → 用户套餐」确定有效上限。选择继承或「全部恢复继承」并保存，可恢复上一级设置。\n- `0` 阻止新增使用，`-1` 表示不限额。前端通过下拉选项设置不限额，金额以美元输入，最多六位小数。\n- 可管理活跃文档数、工作区数、每月 Skill 次数、每月 Agent 次数和每月模型成本。月度资源沿用原有订阅周期，无订阅时为 UTC 自然月。\n- 修改上限不清空实际用量，不删除已有资源，也不取消正在执行的任务。后续请求立即读取有效上限；现有额度检查按请求开始时已累计的用量拦截，不提供运行中逐 Token 硬预算或并发额度预留。\n- 「已用量纠正」仍用于补偿或纠错，与修改上限分开记录。\n\n所有修改必须填写原因，持久数据库在同一事务中保存策略和 `billing.quota.update` 审计（操作者、作用范围、修改前后值及版本）。并发修改返回 409，重新加载后再保存，不自动覆盖其他管理员的修改。全空策略仍保留版本，防止旧页面覆盖恢复继承后的新设置。",
+      "source": "docs/ADMIN_QUOTAS.md",
+      "section": "管理用户额度",
+      "version": "75edd778ecec4592e6932b4b6ead26a80c7d785dc56c02e220a3c699d5ff23dc",
+      "links": []
+    },
+    {
+      "id": "builtin-720d1cf678c133e51ef3",
+      "title": "部署",
+      "group": "全体与指定用户额度管理",
+      "audience": "admin",
+      "body": "## 部署\n\n先执行 PostgreSQL `000043_billing_quota_policies` 或 MySQL `000032_billing_quota_policies`，再更新 API 和 Web。迁移只新增策略表，默认没有覆盖设置，所有用户继续使用现有套餐额度。没有为任何真实用户预设新的限额。\n\nAPI：`GET/PUT /v1/ops/billing/quotas`、`GET/PUT /v1/ops/billing/users/{user_id}/quotas`。PUT 替换该范围的完整设置，必须提交 `limits`、当前 `revision`（初始为 0）、`reason`；空或省略的资源字段表示继承。浏览器写请求要求同源 CSRF 校验与最近五分钟内的 Passkey 验证。\n\n```json\n{\n  \"limits\": {\n    \"documents\": 100,\n    \"skill_runs_per_month\": null,\n    \"workspaces\": null,\n    \"agent_runs_per_month\": -1,\n    \"model_cost_micros_monthly\": 10000000\n  },\n  \"revision\": 0,\n  \"reason\": \"根据账户服务约定调整额度\"\n}\n```\n\n`GET /v1/billing/me` 和后台用量响应新增 `effective_limits`；各用量项的 `limit_source` 标注 `plan`、`global`、`user` 或开发环境豁免 `development`。`plan.limits` 保留套餐原始定义。",
+      "source": "docs/ADMIN_QUOTAS.md",
+      "section": "管理用户额度 / 部署",
+      "version": "75edd778ecec4592e6932b4b6ead26a80c7d785dc56c02e220a3c699d5ff23dc",
+      "links": []
+    },
+    {
+      "id": "builtin-e56b80eee2052fa5db34",
+      "title": "验证",
+      "group": "全体与指定用户额度管理",
+      "audience": "admin",
+      "body": "## 验证\n\n```sh\ngo test -race ./internal/billing ./internal/httpserver\ncd web && pnpm check && pnpm test && pnpm build\n```\n\n在应用全部迁移的可丢弃数据库中设置 `BILLING_QUOTA_POSTGRES_TEST_DSN` / `BILLING_QUOTA_MYSQL_TEST_DSN`，运行 `go test ./internal/billing -run TestDurableQuotaPolicies -v` 可验证持久化、并发版本保护和审计失败时的事务回滚。不得指向生产数据库。",
+      "source": "docs/ADMIN_QUOTAS.md",
+      "section": "管理用户额度 / 验证",
+      "version": "75edd778ecec4592e6932b4b6ead26a80c7d785dc56c02e220a3c699d5ff23dc",
+      "links": []
+    },
+    {
       "id": "builtin-7cd8ea4c5e175a1cfcaf",
       "title": "管理员通行密钥登录",
       "group": "管理员登录与恢复",
@@ -956,7 +1254,7 @@
       "body": "# 管理员通行密钥登录\n\n`/admin` 使用独立管理员账号和 Passkey（WebAuthn）。点击登录后在系统弹窗中选择设备 PIN；PIN 留在设备本地，服务器只验证公钥签名。网站强制用户验证，但不能指定系统必须显示 PIN。若当前平台不提供 PIN，可选择支持 PIN 的 FIDO2 安全密钥或其他设备。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -964,10 +1262,10 @@
       "title": "部署与首次管理员",
       "group": "管理员登录与恢复",
       "audience": "admin",
-      "body": "## 部署与首次管理员\n\n1. 为后台确定稳定域名。设置 API 的 `WEB_ORIGIN` 为完整来源，例如 `https://app.example.com`，不包含 `/admin`。该来源的 hostname 是 RP ID，注册后的凭证绑定该域名。开发使用 `http://localhost:3000`。普通 HTTP 域名和 IP 地址不支持。\n2. 设置 Next.js 服务端 `ADMIN_API_BASE_URL` 为 API 地址，例如本机 `http://localhost:8080`。Compose 已设置为 `http://api:8080`。浏览器始终通过同源 `/api/admin/*` 请求，不依赖跨站 Cookie。\n3. 在部署新版 API 前执行迁移：PostgreSQL `000042_admin_passkeys`，MySQL `000031_admin_passkeys`。需要 PostgreSQL 或 MySQL；纯内存开发模式不提供可跨进程初始化的管理员账号。\n4. 在可信终端中使用与 API 相同的 `DATABASE_DRIVER`、数据库 DSN 和 `WEB_ORIGIN`：\n\n```sh\ngo run ./cmd/migrate\ngo run ./cmd/admin-invite --id owner --name '管理员' --reason '初始化后台管理员'\n```\n\n已构建的 API 容器内提供 `/admin-invite` 二进制，可以在该容器中执行相同参数。命令使用容器现有数据库配置；不需要关闭生产 MFA。命令不会自动加载 `.env`，运行前应通过部署工具或可信环境注入所需变量。\n\n5. 打开命令输出的 `/admin#invite=...` 链接，点击「绑定通行密钥并登录」，在系统弹窗中完成设备 PIN 验证。\n\n邀请是账号绑定凭据，30 分钟后失效，在开始绑定时即被一次性消费。链接使用 fragment，页面读取后从地址栏移除。取消、超时或首次绑定失败后需重新签发。已有账号尚未绑定时，重复初始化命令会撤销其旧邀请和待完成绑定。",
+      "body": "## 部署与首次管理员\n\n1. 为后台确定稳定域名。设置 API 的 `WEB_ORIGIN` 为完整来源，例如 `https://app.example.com`，不包含 `/admin`。该来源的 hostname 是 RP ID，注册后的凭证绑定该域名。开发使用 `http://localhost:3000`。普通 HTTP 域名和 IP 地址不支持。\n2. 设置 Next.js 服务端 `ADMIN_API_BASE_URL` 为 API 地址，例如本机 `http://localhost:8080`。Compose 已设置为 `http://api:8080`。浏览器始终通过同源 `/api/admin/*` 请求，不依赖跨站 Cookie。\n3. 在部署新版 API 前执行迁移：PostgreSQL `000042_admin_passkeys`，MySQL `000031_admin_passkeys`。需要 PostgreSQL 或 MySQL；纯内存开发模式不提供可跨进程初始化的管理员账号。\n4. 在可信终端中使用与 API 相同的 `DATABASE_DRIVER`、数据库 DSN 和 `WEB_ORIGIN`：\n\n```sh\ngo run ./cmd/migrate\ngo run ./cmd/admin-invite --id owner --name '管理员' --reason '初始化后台管理员'\n```\n\n已构建的 API 容器内提供 `/admin-invite` 二进制，可以在该容器中执行相同参数。命令使用容器现有数据库配置；不需要关闭生产 MFA。命令不会自动加载 `.env`，运行前应通过部署工具或可信环境注入所需变量。\n\n本机开发使用 PostgreSQL 时，可在仓库根目录执行以下完整命令（不要对尚未核对的生产配置执行）：\n\n```sh\n(\n  set -a\n  . ./.env\n  set +a\n  export DATABASE_DRIVER=postgres\n  go run ./cmd/migrate\n  go run ./cmd/admin-invite --id owner --name '管理员' --reason '初始化本地后台管理员'\n)\n```\n\n`APP_DATABASE_DRIVER` 用于 API/Worker；迁移和邀请 CLI 使用 `DATABASE_DRIVER`。迁移 CLI 未指定该变量时仍默认 MySQL，不能仅凭 `.env` 中的 `APP_DATABASE_DRIVER=postgres` 判断其目标库。Docker 完整栈已执行迁移，可直接使用[新手指南](GETTING_STARTED.md)中的容器邀请命令。\n\n5. 打开命令输出的 `/admin#invite=...` 链接，点击「绑定通行密钥并登录」，在系统弹窗中完成设备 PIN 验证。\n\n邀请是账号绑定凭据，30 分钟后失效，在开始绑定时即被一次性消费。链接使用 fragment，页面读取后从地址栏移除。取消、超时或首次绑定失败后需重新签发。已有账号尚未绑定时，重复初始化命令会撤销其旧邀请和待完成绑定。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录 / 部署与首次管理员",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -978,7 +1276,7 @@
       "body": "## 日常管理\n\n- 在 `/admin` 点击「使用通行密钥登录」。浏览器显示已绑定的管理员账号，完成设备验证即可登录。\n- 刷新页面可恢复服务器会话。会话最长 8 小时，连续 30 分钟没有请求则失效。后台自动刷新也属于请求；离开共享设备时应主动退出。\n- 管理写入要求最近 5 分钟内完成 Passkey 验证，过期后自动重新验证同一账号，再执行原请求。\n- 侧栏「账号与通行密钥」可添加备用设备/安全密钥或退出该账号所有会话。每个账号最多绑定 10 个凭证。\n- admin 可以创建成员邀请并指定 `viewer`、`support` 或 `admin`。邀请尚未完成时，用相同 ID、名称、角色可重新签发；旧邀请失效。已绑定账号不能通过这个入口重新接管。\n- 普通退出只撤销当前会话。退出所有会话同时旋转该账号的 Operator Token，使并发旧会话失效；已绑定 Passkey 仍可登录。\n- 账号禁用、Token 重置、TOTP 重置递增账号会话版本。重新启用账号不会复活旧会话。权限由 API 在每个请求中检查。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录 / 日常管理",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -989,7 +1287,7 @@
       "body": "## 丢失设备后的恢复\n\n优先用预先绑定的备用凭证登录。全部凭证丢失时，部署管理员核验身份后，在可信终端执行：\n\n```sh\ngo run ./cmd/admin-invite --id owner --recover --reason '核验身份后恢复丢失设备的管理员账号'\n```\n\n恢复会撤销该账号全部 Passkey、旧 Token、会话、邀请与未完成绑定，然后返回新邀请。禁用账号需要先由有权限的管理员启用。不要把邀请链接写入公共工单或日志。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录 / 丢失设备后的恢复",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -1000,7 +1298,7 @@
       "body": "## 安全与持久化\n\n- 生产 Cookie 使用 `__Host-` 前缀、`Path=/`、`HttpOnly`、`Secure`、`SameSite=Strict`；localhost 开发使用不带前缀的 HttpOnly Cookie。\n- 注册与登录验证 challenge、来源、RP ID、公钥签名和 UV 标志。挑战原子消费；支持计数器的验证器出现回退时拒绝登录。\n- 登录和绑定请求受持久化速率限制：每个直接连接来源每分钟最多 120 次开始请求。反向代理部署下多个用户共享该额度；外围网关可另行配置可信客户端 IP 限流。\n- 会话令牌、邀请令牌和验证流程 Cookie 的随机标识仅以 SHA-256 哈希键存储；公开的 WebAuthn challenge 随验证上下文保存。公钥凭证按 RP ID 区分。数据库不存储设备 PIN 或私钥。\n- 账号授权操作记录在既有 operator 审计中；Passkey 邀请、绑定、会话创建和退出事件记录在 `operator_passkey_records` 的 `audit` 类型中，保留 90 天。开始验证时清理过期临时记录和过期审计。\n- CLI/自动化继续使用现有 Bearer + TOTP API；网页登录不接收长期管理密钥。生产保持 `OPERATOR_MFA_REQUIRED=true`。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录 / 安全与持久化",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -1011,7 +1309,7 @@
       "body": "## 验证\n\n协议测试使用软件 ES256 验证器生成真实注册数据和签名，覆盖错误来源、RP ID、UV、签名、计数器、挑战重放、邀请过期、会话撤销、并发消费、CSRF 和权限隔离。\n\n```sh\ngo test -race ./internal/adminpasskey ./internal/opsauth ./internal/httpserver\ncd web\npnpm check\npnpm test\n```\n\n在应用全部迁移的**专用可丢弃数据库**中设置 `ADMIN_PASSKEY_POSTGRES_TEST_DSN` / `ADMIN_PASSKEY_MYSQL_TEST_DSN`，再运行 `go test ./internal/adminpasskey -run TestDurablePasskeys -v`，可验证重启后登录、SQL 原子消费和最后一个 Passkey 管理员保护。该测试会创建账号，不应连接生产数据库。",
       "source": "docs/ADMIN_PASSKEY_LOGIN.md",
       "section": "管理员通行密钥登录 / 验证",
-      "version": "4e0ae2aa79b3ae7baafc7c5994fecd1aee6fe0686ca307b00ad2534bd9612a97",
+      "version": "853f46c4c846abda0d29b18c67aedca485fd02814cf5230469abef89335cc3c9",
       "links": []
     },
     {
@@ -1022,7 +1320,7 @@
       "body": "# 内置项目知识库\n\n产品介绍、使用步骤和配置说明随 API/Worker 二进制发布。新注册用户无需上传项目文档、等待 Wiki 编译或配置向量模型，即可在情感陪伴、生活助手、工作伙伴里询问产品用法。",
       "source": "docs/PRODUCT_KNOWLEDGE.md",
       "section": "内置项目知识库",
-      "version": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890",
+      "version": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a",
       "links": []
     },
     {
@@ -1033,7 +1331,7 @@
       "body": "## 使用方式\n\n- 侧栏「产品知识」可搜索、分类浏览、阅读完整章节；「工作伙伴 → Wiki」也包含相同入口。\n- 可以直接问「伴AI有哪些功能」「如何纠正长期记忆」「怎么上传资料到知识库」「如何生成PPT」「管理员怎么用PIN登录」。\n- 对话自动召回相关章节；「具体有什么限制」「然后怎么操作」等追问可沿用紧邻的用户话题。聊天中的「产品指南」引用会打开对应章节，普通登录过期时仍需登录。\n- 搜索结果只是预览。打开章节可看全文；长章节带有同章节其他部分的链接。\n- 内置产品资料与个人上传资料分开显示。内置资料只读，随应用更新；个人 Wiki 继续支持上传、编辑、版本与删除。",
       "source": "docs/PRODUCT_KNOWLEDGE.md",
       "section": "内置项目知识库 / 使用方式",
-      "version": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890",
+      "version": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a",
       "links": []
     },
     {
@@ -1041,10 +1339,10 @@
       "title": "来源与更新",
       "group": "内置项目知识库",
       "audience": "technical",
-      "body": "## 来源与更新\n\n白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README 的项目介绍、架构和部署内容，`web/app/onboarding-content.ts` 的全部用户/后台指南，以及上下文管理、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。\n\n更新来源后执行：\n\n```sh\nnode scripts/build-product-knowledge.mjs\nnode scripts/build-product-knowledge.mjs --check\ngo test ./internal/productknowledge\n```\n\n生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。部署正常重新构建 API/Worker 即生效，无需新数据库迁移。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。",
+      "body": "## 来源与更新\n\n白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。\n\n更新来源后执行：\n\n```sh\nnode scripts/build-product-knowledge.mjs\nnode scripts/build-product-knowledge.mjs --check\ngo test ./internal/productknowledge\n```\n\n生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。部署正常重新构建 API/Worker 即生效，无需新数据库迁移。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。",
       "source": "docs/PRODUCT_KNOWLEDGE.md",
       "section": "内置项目知识库 / 来源与更新",
-      "version": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890",
+      "version": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a",
       "links": []
     },
     {
@@ -1055,7 +1353,7 @@
       "body": "## 对话与执行边界\n\nGo 常规聊天和 Agent 入口使用同一个 `conversation-context-v1`，新增可选的 `knowledge` 字段。知识以参考资料的 user 消息传入，不升级为系统指令。router、planner、composer、assessor、repairer、responder 都保留该资料，以支持说明、规划和内容生成。\n\n本地检索采用中文双字词、英文词及功能别名的加权 BM25，不依赖远程向量服务；新表达仍可能漏召回，模型可使用所有模块都具备的 `product_knowledge_search`、`product_knowledge_read` 补查。自动召回最多 8 个候选，按 3,600 估算 Token 保留完整知识段，省略数量写入 manifest。工具搜索最多 5 个候选，结果预算 5,500 Token；阅读每次最多 2,400 个 Unicode 字符，明确返回 `has_more`、`next_offset` 和总长度。Wiki 与产品知识合计最多 8 次成功补查，并继续服从运行的总步骤、模型窗口和成本预算。因此不能承诺一次回答覆盖整个知识库；回答应覆盖当前问题相关内容，缺证据时说明缺口。\n\n用法咨询不应创建账单、提醒、任务或更改管理员配置。明确要求执行时，仍由现有业务工具检查身份、模块、参数与人工确认；没有对应工具时提供手动操作步骤。后台文档是说明，普通用户不会因阅读它而获得后台权限。实际模型仍负责回答与工具选择；`MODEL_PROVIDER=development` 是固定模拟回复，不代表真实模型问答质量。",
       "source": "docs/PRODUCT_KNOWLEDGE.md",
       "section": "内置项目知识库 / 对话与执行边界",
-      "version": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890",
+      "version": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a",
       "links": []
     },
     {
@@ -1066,7 +1364,7 @@
       "body": "## API\n\n以下接口要求普通用户 Bearer 身份，读取的是固定内置资料，不接受上传或修改：\n\n- `GET /v1/knowledge/builtin/pages`：目录和知识包 revision，不含全文。\n- `POST /v1/knowledge/builtin/search`：`query` 为 2–1000 字，`limit` 为 1–12（默认 8），返回可打开的预览。\n- `GET /v1/knowledge/builtin/pages/{page_id}`：完整章节、来源路径、章节名、内容版本和续篇链接。\n\n链接 `/#knowledge=builtin-…` 打开 Web 阅读页。历史对话的引用保留旧来源版本标识，阅读页显示当前应用的文档版本；不提供内置文档历史版本回放。删除个人 Wiki 不影响内置项目说明，且内置搜索不会读取私人文档或实时业务状态。",
       "source": "docs/PRODUCT_KNOWLEDGE.md",
       "section": "内置项目知识库 / API",
-      "version": "ce479178510ec8c3d980bb6e119e40cfe0f3e71d5ac646327d8beca78ff17890",
+      "version": "be0f3f8c768c04e0d9fa1376e84f310440ca209b766874393f158679ba4a4a5a",
       "links": []
     }
   ]

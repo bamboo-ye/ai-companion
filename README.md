@@ -1,760 +1,235 @@
-# 伴AI
+<p align="center">
+  <img src="web/public/icons/logo.png" width="128" alt="AI Companion mascot">
+</p>
 
-[简体中文](README.zh-CN.md) | English
+# 伴AI · AI Companion
 
-伴AI is a conversational personal AI workspace spanning emotional companionship, life assistance, work skills, collaboration, billing/safety controls, and operator-run internal-release workflows.
+<p align="center"><strong>Someone to talk to. A hand with life. A partner for getting things done.</strong></p>
+<p align="center">Companionship · Life management · Office productivity</p>
 
-Current completion scope and verification are recorded in [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md).
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> · <a href="README.md">English</a><br>
+  <a href="#quick-start">Quick start</a> · <a href="#product-in-action">See it in action</a> · <a href="#technical-highlights">Technical highlights</a> · <a href="#documentation">Docs</a> · <a href="https://github.com/bamboo-ye/ai-companion/issues">Feedback</a>
+</p>
 
-## Product preview
+<p align="center">
+  <a href="go.mod"><img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26"></a>
+  <a href="web/package.json"><img src="https://img.shields.io/badge/Next.js-16-111111?logo=nextdotjs" alt="Next.js 16"></a>
+  <a href="workers/python/pyproject.toml"><img src="https://img.shields.io/badge/Agent-LangGraph-64748B" alt="LangGraph Agent"></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white" alt="Self-hosted with Docker"></a>
+</p>
 
-> Screenshots are captured from the local development environment with synthetic demo data.
+AI Companion is a self-hostable personal AI workspace. Continue a meaningful conversation, organize everyday tasks in natural language, and turn your own material into office deliverables. Characters, memory, knowledge and tools work together—from a request to a result you can check.
 
-### Companion conversations and long-term memory
+![Companion home: character conversations and long-term memory](docs/images/readme/companion-dashboard.jpg)
 
-Create persona-based companions, continue conversations, and manage durable memories that carry useful context across sessions.
+## One workspace, three ways to help
 
-![Companion dashboard with role conversations and memory management](docs/images/readme/companion-dashboard.jpg)
+| What you need | Where to start | What you get |
+| --- | --- | --- |
+| Talk things through and pick up where you left off | **Companion** | Custom characters, multi-turn conversations, inspectable and correctable memory |
+| Organize daily plans and spending | **Life assistant** | Today's plan, reminders, ledger records and summaries, Excel export |
+| Turn ideas and source material into deliverables | **Work partner** | Knowledge Wiki, PPTX generation, PDF translation, DOCX copy editing, CSV/XLSX analysis |
 
-#### Conversation demo: emotional continuity and actionable guidance
+All three experiences share context, knowledge and governed tools. A separate admin console manages models, Agents, permissions, quotas and execution records.
 
-The user first shares presentation anxiety and then narrows it down to time pressure. The companion carries the earlier context into the next turn and responds with concrete suggestions for trimming content, allocating time, preparing an escape route, and rehearsing with spare capacity.
+## Why AI Companion
 
-![Companion conversation with contextual presentation guidance](docs/images/readme/companion-conversation.jpg)
-
-### Life planning, reminders, and ledger
-
-The life workspace brings today's plans, reminders, and daily ledger entries together, with confirmation gates before sensitive data is written.
-
-![Life dashboard with plans, reminders, and ledger](docs/images/readme/life-dashboard.jpg)
-
-#### Conversation demo: natural-language life tools
-
-The user describes an expense amount, purpose, and category directly in chat. The Agent converts that request into a governed ledger action, writes only after confirmation, and reports the successful business result in the conversation, completing the flow from intent recognition to an authorized write.
-
-![Life-assistant conversation with a successful natural-language ledger entry](docs/images/readme/life-conversation.jpg)
-
-#### Result verification: ledger and reminder records
-
-Completed tool actions are reflected in their dedicated product views instead of existing only as chat messages. The ledger summarizes monthly income, expenses, and balance while showing the newly written CNY 18.00 entry. The reminder demo first creates “Prepare AI Companion demo materials” in chat, then verifies the matching title, trigger time, and notification channel in the reminder view.
-
-**Ledger record**
-
-![Life ledger with the conversation-created expense and monthly totals](docs/images/readme/life-ledger-result.jpg)
-
-**Reminder conversation**
-
-![Life-assistant conversation successfully creating a reminder](docs/images/readme/life-reminder-conversation.jpg)
-
-**Persisted reminder verification**
-
-![Life reminders with the conversation-created demo-materials reminder and trigger time](docs/images/readme/life-reminder-result.jpg)
-
-### Governed Skills and parallel Agent execution
-
-The workbench exposes versioned document, PDF, presentation, and spreadsheet Skills together with intent routing and MCP allowlists. Large inputs run through lossless chunking, bounded Agent fan-out/fan-in, deterministic merging, and targeted retries; generated files and write actions remain previewable and auditable.
-
-![Workbench with Skills, task routing, and MCP controls](docs/images/readme/workbench.jpg)
-
-#### Conversation demo: the exact PPT generation prompt sent to the platform
-
-The screenshots below show the exact prompt received by the platform. It instructs the work partner to retrieve the project Wiki document, add the technical highlights, implemented features, and usage guidance to context, and generate an eleven-slide Chinese PPTX from three real product screenshots. It explicitly requires visual storytelling and two editable tables: a three-module capability-and-usage comparison and an Agent three-layer parallelism comparison. The next-step and key-takeaway slides are both retained.
-
-[View the exact prompt sent to the platform](docs/demo/ai-companion-platform-prompt.txt)
-
-**Goals, source material, and slide structure**
-
-![Work-partner conversation showing the actual PPT goals, source material, and eleven-slide structure](docs/images/readme/work-prompt-overview.jpg)
-
-**Visual storytelling requirements**
-
-![Work-partner conversation requiring real screenshots, flow diagrams, architecture diagrams, icons, or tables on each core slide](docs/images/readme/work-prompt-visual.jpg)
-
-**Editable tables and slide plan**
-
-![Work-partner conversation requiring module and Agent-parallelism comparison tables while retaining next steps and key takeaways](docs/images/readme/work-prompt-table.jpg)
-
-#### Generated artifact: Wiki-enriched eight-slide PPTX deck
-
-The work partner first indexes the project's positioning, technical highlights, implemented features, usage flows, and FAQ material, then retrieves evidence for product capabilities, large-file processing, Agent parallelism, and governance. Those results are passed to the `PPTX multimodal generation` Skill together with three real product screenshots for Companion, Life Assistant, and Work Partner. The verified artifact shown below is the earlier eight-slide deliverable; the newly submitted platform prompt expands the target to eleven slides, restores next steps and key takeaways, and adds visual-storytelling and editable-table requirements. All three product screenshots come directly from the running system rather than AI-generated replacements.
-
-[View the project knowledge document used for Wiki retrieval](docs/demo/ai-companion-wiki-knowledge.txt)
-
-[Download the complete PPTX: ai-companion-overview.pptx](docs/demo/ai-companion-overview.pptx)
-
-**Slide 1: Cover**
-
-![Generated PPT slide 1: AI Companion technical highlights and implementation](docs/images/readme/generated-ppt/slide-1.png)
-
-**Slide 2: Product positioning and architecture**
-
-![Generated PPT slide 2: unified workspace, service boundaries, and data architecture](docs/images/readme/generated-ppt/slide-2.png)
-
-**Slide 3: Companion implementation**
-
-![Generated PPT slide 3: Companion home and long-term memory capabilities](docs/images/readme/generated-ppt/slide-3.png)
-
-**Slide 4: Life Assistant implementation**
-
-![Generated PPT slide 4: plans, reminders, and ledger flow on the Life Assistant home](docs/images/readme/generated-ppt/slide-4.png)
-
-**Slide 5: Work Partner workflow**
-
-![Generated PPT slide 5: Work Partner workbench, Wiki, and versioned Skills](docs/images/readme/generated-ppt/slide-5.png)
-
-**Slide 6: Lossless large-file chunking**
-
-![Generated PPT slide 6: Source IR, bounded chunking, deterministic merging, and targeted retry](docs/images/readme/generated-ppt/slide-6.png)
-
-**Slide 7: Three-layer Agent parallelism**
-
-![Generated PPT slide 7: run-level, process-level, and graph-node parallelism](docs/images/readme/generated-ppt/slide-7.png)
-
-**Slide 8: Wiki, memory, and governance**
-
-![Generated PPT slide 8: document retrieval, long-term memory, tool gateway, and observability](docs/images/readme/generated-ppt/slide-8.png)
-
-## Repository map
-
-```text
-cmd/api, cmd/worker       Go API and asynchronous worker processes
-internal/                 Go platform and future domain modules
-workers/python/           Isolated document/data/media algorithm worker
-web/                      Next.js web client
-mobile/android/           Kotlin + Jetpack Compose Android client
-mobile/ios/               SwiftUI app source and testable Swift core
-deploy/                   Docker Compose and service images
-api/openapi/              HTTP contract
-events/schemas/           Event contract
-migrations/               Forward and rollback SQL migrations
-docs/adr/                  Architecture decisions
-```
-
-## Prerequisites
-
-- Go 1.26+
-- Python 3.12+
-- Node.js 24+ and pnpm 11+
-- Docker Desktop with Compose v2
-- Android: JDK 17, Android Studio with API 37, Gradle 9.4.1
-- iOS: Xcode 26+ and XcodeGen
+- **Conversations with continuity.** Recent messages, sourced summaries and correctable memories retain useful preferences and constraints across sessions.
+- **Knowledge with evidence.** Search, read and edit a Wiki built from uploaded sources. Follow citations to the original material; source permission changes affect access.
+- **Results beyond the chat.** Ledger entries appear in the ledger, reminders in the reminder list, and office tasks return files you can use.
+- **A plan for long-running work.** Complete source intake, bounded parallel batches and deterministic merging handle material beyond one model window, with targeted recovery.
+- **Control over execution.** Host the app and data services yourself, configure models, allowlist tools and set quotas. The server enforces authorization and required approvals.
 
 ## Quick start
 
+Install **Git, Docker Desktop / Docker Compose v2, and Make**. The full Docker setup supplies Go, Python and Node.js; host installations are only needed for local development.
+
+### 1. Get the project and configuration
+
 ```bash
-cp .env.example .env
-# Replace every change-* secret before exposing services beyond localhost.
+git clone https://github.com/bamboo-ye/ai-companion.git
+cd ai-companion
+test -f .env || cp .env.example .env
+```
+
+> **Choose your first-run mode:** the default `MODEL_PROVIDER=development` needs no model key and helps check registration, pages and task plumbing, but returns fixed mock responses. For the natural-language conversations, tool selection and content generation shown below, first configure a server-side provider, key and concrete model IDs using the [model guide (Chinese)](docs/OPENROUTER_MODELS.md). Requests go to your configured provider; self-hosting does not imply offline inference.
+
+### 2. Start the app
+
+```bash
 make docker-up
 make docker-ps
 ```
 
-Then open `http://localhost:3000`. The API is available at
-`http://localhost:8080`; follow application logs with `make docker-logs` and
-stop the stack with `make docker-down`.
+Open **<http://localhost:3000>**, register, sign in and add a character to start a conversation. Compose applies business migrations and initializes Agent checkpoints. The first build downloads images and dependencies.
 
-The Docker application profile applies PostgreSQL migrations before starting
-the API and Worker. To run the Go processes on the host instead:
+### 3. Try your first task
 
-```bash
-make infra-up
-make postgres-migrate
-make run-api
-# In another terminal:
-make run-worker
-```
+These are example requests to try after connecting a real model, not actions already performed:
 
-Asynchronous delivery is database-first. PostgreSQL stores authoritative job
-state, Agent Runs, leases, retries, Outbox records and recovery metadata; the
-Worker polls and claims runnable rows with bounded concurrency. Kafka remains an
-optional Outbox/consumer-group accelerator for later horizontal scaling. Enable
-it with `make docker-up-kafka-scale`, or set `KAFKA_ENABLED=true`, provide
-`KAFKA_BROKERS`, and activate the Compose `kafka-scale` profile. See
-[`docs/adr/0005-database-first-async-dispatch.md`](docs/adr/0005-database-first-async-dispatch.md).
+| Module | Try saying | Check the result |
+| --- | --- | --- |
+| Companion | “I'm nervous about tomorrow's project presentation. Help me work through what worries me most.” | Add more context and see whether the next reply follows the conversation |
+| Life assistant | “I spent CNY 18 on lunch today. Record it as a dining expense.” | Review and confirm the candidate, then open the ledger |
+| Life assistant | “Remind me tomorrow at 3 p.m. to prepare the project demo.” | Verify the date, time and timezone, then open reminders |
+| Work partner | “Create an illustrated PPT introducing AI Companion, with a table of its main features.” | Check the completion message and file entry in the conversation |
 
-The LangGraph migration now includes the PostgreSQL checkpointer, durable Agent
-Run store, and an authenticated Go Tool Gateway. Run `make
-agent-checkpoint-setup` once per database and `make agent-checkpoint-smoke` to
-verify persistent interrupt/resume behavior. `AGENT_GATEWAY_TOKEN` and
-`AGENT_CONFIRMATION_SECRET` are server-side secrets and must never use a
-`NEXT_PUBLIC_*` prefix.
+<details>
+<summary>Troubleshooting, admin access and local development</summary>
 
-The dedicated Agent Worker claims persisted Agent Runs directly by default,
-uses OpenRouter tool calling for model-assisted intent selection, and keeps Go
-as the authority for tool definitions, confirmation, and business writes. In
-Kafka scale mode, `agent.run.requested.v1` and
-`agent.run.resume.requested.v1` provide low-latency dispatch hints while the
-database reconciler remains the recovery path. Start it alongside the app with
-`make agent-worker-up`.
+- Follow logs with `make docker-logs`; stop services while retaining data volumes with `make docker-down`.
+- API health: <http://localhost:8080/healthz>; readiness: <http://localhost:8080/readyz>.
+- All three chat modules use the Agent by default, so the Agent Worker must be ready.
+- Admin console: <http://localhost:3000/admin>. It requires a [separate invitation and Passkey (Chinese)](docs/ADMIN_PASSKEY_LOGIN.md), not an ordinary user account.
+- Replace all `change-*` development secrets before exposing services. Configure the deployment's domain and secrets; never commit real keys.
+- See the [first-run guide (Chinese)](docs/GETTING_STARTED.md) for setup and troubleshooting, or the [engineering guide](docs/ENGINEERING.md#quick-start) for host development and additional commands.
 
-Langfuse is the optional, fail-open LLM/Agent observability backend. When
-`LANGFUSE_ENABLED=true`, the Agent Worker exports deterministic Agent traces,
-per-attempt model generations, node observations, token/cost data, immutable
-Agent/model version correlation, and quality scores. Content capture is off by
-default; the local PostgreSQL run record remains authoritative. Configuration,
-privacy rules, self-hosting boundaries, and acceptance steps are in
-[`docs/runbooks/langfuse-agent-observability.md`](docs/runbooks/langfuse-agent-observability.md).
+</details>
 
-Loki is the optional system-log query backend. Grafana Alloy captures the
-application's redacted JSON stdout, keeps only low-cardinality Loki labels, and
-stores Run/Trace/Agent Trace identifiers as structured metadata. The `/admin`
-log center queries Loki through the API and visibly falls back to the durable
-PostgreSQL audit log if ingestion is unavailable or delayed. Configuration,
-retention, privacy rules, and smoke queries are in
-[`docs/runbooks/loki-structured-logging.md`](docs/runbooks/loki-structured-logging.md).
+## Product in action
 
-The `/admin` console uses invited administrator accounts and WebAuthn passkeys
-with required device verification (including device PIN where supported).
-Browser sessions use first-party HttpOnly cookies. Database migrations,
-first-admin provisioning, backup credentials and recovery are documented in
-[`docs/ADMIN_PASSKEY_LOGIN.md`](docs/ADMIN_PASSKEY_LOGIN.md).
+The following real UI and conversation captures come from a local environment with sanitized demo accounts and sample data. They show request, execution and result verification—not actions performed on the current reader's account.
 
-Chat cutover is module-scoped and disabled by default in development. Staging
-can set `AGENT_CHAT_MODULES=life` for a narrow canary; production must set
-`AGENT_CHAT_MODULES=companion,life,work`, so every user-facing model workflow
-uses the governed Graph. A cut-over message creates an Agent Run instead of a
-legacy generation job, and write-tool approval resumes the same persisted run.
-Every run receives a fixed total deadline from `AGENT_RUN_TIMEOUT` (default
-`15m`). The chat stop button calls the idempotent Agent cancellation endpoint;
-the worker polls durable control state at `AGENT_CONTROL_POLL_INTERVAL` (default
-`500ms`) and revision fencing prevents a cancelled or timed-out run from
-committing a late assistant reply.
+### Companion: from listening to practical guidance
 
-Run the isolated life-module canary after the stack is healthy:
+The user expresses anxiety about a presentation, then explains the worry about having too much material and running overtime. The character follows that context with suggestions for trimming content, timeboxing sections and rehearsing. Long-term preferences can be inspected and maintained separately. The homepage remains at the top of this README; the conversation is below.
 
-```bash
-CANARY_TIMEOUT_SECONDS=240 sh scripts/run_agent_life_canary.sh
-```
+<details>
+<summary>See the multi-turn conversation: presentation anxiety and preparation</summary>
 
-The script creates a disposable account and a real CNY 50 ledger entry. It
-verifies Agent dispatch exclusivity, approval token redaction, resume completion,
-one assistant message, and one ledger write. The Kafka-specific transport checks
-are exercised only in the `kafka-scale` profile. See
-[`docs/runbooks/evidence/2026-07-24-agent-life-canary.md`](docs/runbooks/evidence/2026-07-24-agent-life-canary.md).
+![Companion conversation: emotional continuity and time-management suggestions](docs/images/readme/companion-conversation.jpg)
 
-In another terminal:
+</details>
 
-```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/readyz
-curl http://localhost:8080/v1/meta
-```
+### Life assistant: records you can find after the conversation
 
-Run the locally available quality gate:
+Describe an expense, review and confirm it, then check the ledger. Create a reminder and verify it in the list. The demo shows a **CNY 18.00** ledger record and a reminder titled **“准备 AI Companion 项目演示材料”** with its trigger time and notification channel.
 
-```bash
-make check
-```
+<details>
+<summary>See the life workspace and expense flow: conversation → ledger</summary>
 
-Run the backend/internal-release gate used for the completed M0-M8 scope:
+Plans, reminders and spending share one workspace:
 
-```bash
-make release-check
-```
+![Life dashboard: daily plan, reminders and ledger](docs/images/readme/life-dashboard.jpg)
 
-Run the M2 retrieval quality gate:
+Describe the expense in chat and confirm the proposed write:
 
-```bash
-make eval-m2
-```
+![Life conversation: natural-language expense entry and successful write](docs/images/readme/life-conversation.jpg)
 
-Run the M4 legacy/advisory deterministic-routing regression gate (the production chat execution path uses model tool calling):
+Open the ledger to verify the record and monthly summary:
 
-```bash
-make eval-m4
-```
+![Ledger result: CNY 18 expense and monthly totals](docs/images/readme/life-ledger-result.jpg)
 
-Run the versioned Agent result and execution-chain gates:
+</details>
 
-```bash
-make eval-agent
-AGENT_PERFORMANCE_LOG=/path/to/agent-worker.jsonl make eval-agent-performance
-AGENT_RETRY_LOG=/path/to/agent-worker.jsonl make eval-agent-retry
-make postgres-test-agent-retry
-AGENT_RETRY_TEST_COUNT=5 make postgres-test-agent-retry
-make validate-observability
-make observability-drill
-make agent-observability-canary
-make eval-observability-release
-METRICS_URL=http://127.0.0.1:8080/metrics make observability-release-gate
-make agent-direct-canary
-```
+<details>
+<summary>See the reminder flow: creation conversation → reminder record</summary>
 
-The performance command evaluates a real canary log against hard queue, model latency,
-local runtime overhead, direct-answer, error, cold-start, and process-recycle
-thresholds. JSON and JUnit reports are written to `artifacts/agent-eval/`. The log must begin at Agent
-Worker startup so the performance gate can verify the versioned Python warmup handshake.
-The retry gate expects a complete controlled-failure window and rejects orphaned,
-duplicated, over-budget, deadline-crossing or unrecovered retry sequences;
-the PostgreSQL gate verifies durable retry scheduling, recovery/exhaustion metrics,
-revision fencing, concurrent duplicate delivery, and exactly-once assistant output.
-The observability gate protects retry and Agent event-dispatch alert thresholds,
-minimum sample guards, scrape targets, and Grafana metric references. The API
-`/metrics` exposes retry outcomes and the settled recovery ratio; the Agent Worker
-serves health/readiness and low-cardinality dispatch/tool-wake metrics on port 9467.
-`make agent-observability-canary` sends finite mixed Kafka traffic using nonexistent
-run/task IDs, verifies exact no-match/not-claimed outcomes and the one-second wake bound,
-and rejects any Python execution or model call attributable to those IDs. Its versioned
-baseline and private JSON/JUnit reports live under `evals/agent/` and
-`artifacts/agent-eval/`; unrelated business traffic is excluded from its counters, so it
-exercises the online path without model calls or business writes. The live drill starts an isolated Prometheus
-and Alertmanager network, feeds synthetic metrics through the production rules, and
-requires zero-sample suppression, all three firing webhooks, all three resolved
-webhooks, and automatic cleanup. It never calls a model or writes application data.
-The release comparison gate consumes sanitized before/after snapshots and checks both
-absolute SLO limits and bounded regressions. Capture from a live API or an existing
-release evidence bundle, then compare:
+First, request the reminder and receive the creation result:
 
-```bash
-METRICS_URL=http://127.0.0.1:8080/metrics \
-OBSERVABILITY_SNAPSHOT=artifacts/observability-eval/before.json \
-make capture-observability
+![Life conversation: successful creation of the demo-material reminder](docs/images/readme/life-reminder-conversation.jpg)
 
-METRICS_INPUT=.release-evidence/<before>/metrics.prom \
-OBSERVABILITY_SNAPSHOT=artifacts/observability-eval/after.json \
-make capture-observability
+Then verify its title, time and channel in the reminder list:
 
-OBSERVABILITY_BEFORE=artifacts/observability-eval/before.json \
-OBSERVABILITY_AFTER=artifacts/observability-eval/after.json \
-make eval-observability-release
-```
+![Reminder result: demo-material reminder and trigger time](docs/images/readme/life-reminder-result.jpg)
 
-Snapshots contain only allowlisted reliability values, derived totals, a timestamp,
-and the source SHA-256. They exclude URLs, HTTP labels, headers, prompts, and tokens.
-The one-command release gate uses the read-only API health Canary by default and runs
-before snapshot → Canary → stabilization → after snapshot → comparison. Exit 0 means
-`promote`, exit 1 means `rollback`, and exit 2 means the gate could not safely start.
-It records the decision but does not mutate deployment state. To opt into the disposable
-Agent direct-path Canary, which creates test records and may call the configured model:
+</details>
+
+### Work partner: one request, an office deliverable
+
+The exact prompt sent in this demo was:
+
+> 帮我生成一个图文并茂的ppt介绍伴A I，使用表格介绍主要功能
+
+It asks for an illustrated presentation introducing AI Companion, with a table of its main features. The Work partner selects the PPTX generation Skill and returns a `banyai-intro.pptx` file entry in the same conversation. Relevant built-in product knowledge can ground the introduction in documented features and technical details.
+
+<p align="center">
+  <img src="docs/images/readme/work-ppt-conversation.jpg" width="600" alt="Actual Work partner conversation: illustrated PPT request, successful completion and file entry">
+</p>
+
+<details>
+<summary>See the workbench: versioned Skills, intent routing and MCP controls</summary>
+
+The workbench offers attachment extraction, DOCX copy editing, PDF translation, PPTX generation and CSV/XLSX analysis. Background execution connects task status, confirmation steps and artifact permissions.
+
+![Work partner workbench: Skills, intent routing and MCP controls](docs/images/readme/workbench.jpg)
+
+</details>
+
+## Technical highlights
+
+Context engineering, Agentic RAG and parallel Agents are backed by concrete mechanisms, source code and tests.
+
+| Focus | Implementation | Practical value |
+| --- | --- | --- |
+| **Complete large-file processing** | Ordered extraction rounds, stable Source IR entity IDs, token/character bounds, coverage gates, deterministic merging and targeted retries | Maintains a complete source-processing path beyond one model window |
+| **Three-layer Agent parallelism** | Go Run dispatch, persistent Python processes and LangGraph `Send` branches; budgets assigned before execution, results joined in order | Works across tasks and reduces serial waiting within long tasks |
+| **Shared context and memory** | Versioned Go/Python snapshots, sourced summaries, memory correction chains, per-role budgets and full-request window checks | Keeps chat and tool execution consistent and correctable |
+| **Evidence-backed Wiki** | Source/topic/entity/decision pages, on-demand search and reads, citations, edit versions and permission invalidation | Makes retrieved knowledge readable, maintainable and traceable |
+| **Recoverable tool execution** | PostgreSQL Runs/checkpoints, human approval, idempotency, leases and revision fencing; Go controls business writes | Tracks state and side effects through retries, cancellation and interruptions |
+| **Documentation as product knowledge** | Allowlisted docs, SHA-256 versions, `go:embed`, local BM25 and guide citations | Grounds product questions and generation tasks without extra uploads |
+| **Identity and cost governance** | Admin Passkeys, recent verification, per-resource quota inheritance, revision checks and transactional audits | Makes privileged changes, limits and model costs accountable |
+
+### Large files, parallel execution, checked coverage
+
+The default attachment limit is **20 MiB**. After full source intake, Composer batches are bounded by **2,000 estimated tokens / 12,000 source characters**. Go dispatches **4 Runs** by default; Composer fan-out defaults to **3** with a hard cap of **4** per Run. Results are merged in source order, checked for source/entity coverage, then rendered. Recovery targets the affected batches.
+
+Completeness means full intake and verifiable source/entity coverage, not flawless parsing of every file format. Controlled tests use fixed-latency fake providers to verify parallel behavior; real latency depends on the document and model service. No production speedup ratio is claimed from those tests.
+
+[Large-file design (Chinese)](docs/blog/ppt-generation-vibe-coding/03-large-files-and-intermediate-representation.md) · [Parallelism experiments (Chinese)](docs/blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md) · [Implementation details](docs/ENGINEERING.md#implementation-highlights)
+
+### Engineering challenges and solutions
+
+| Challenge | Mechanism | Verification |
+| --- | --- | --- |
+| Missing/duplicate records or unstable batch ordering | Source IR, coverage gates, ordered joins and targeted retries | [Composition tests](workers/python/tests/test_agent_runtime.py) |
+| Overspent parallel budgets or uncounted failed branches | Disjoint preallocated budgets, settlement of admitted branches, successful-result caching | [Parallel design and tests (Chinese)](docs/blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md) |
+| Lost constraints or fact attribution in compressed history | Complete message groups, sourced summaries, correction chains and final window checks | [Shared context tests](internal/conversation/context_snapshot_test.go) |
+| Stale knowledge after source access is revoked | Revalidate every dependency and version; invalidate permission-aware caches | [Wiki tests](internal/document/wiki_test.go) |
+| Crashes, duplicate dispatch or late responses after cancellation | Durable state, idempotency, lease takeover and revision fencing | [Agent Worker tests](internal/agent/worker_test.go) |
+
+For human-edit conflicts, concurrent admin changes and knowledge consistency, see the [full engineering challenge matrix](docs/ENGINEERING.md#engineering-challenges-and-solutions).
+
+## Architecture and stack
+
+A **modular Go monolith, independent asynchronous workers and a Python Agent runtime** separate application authority from model reasoning. Models propose actions and generate content; Go authorizes business writes. PostgreSQL stores authoritative state; Kafka is an optional dispatch accelerator.
+
+| Layer | Technologies |
+| --- | --- |
+| Web | Next.js 16 · React 19 · TypeScript |
+| API and business logic | Go 1.26 · OpenAPI · PostgreSQL 18 |
+| Agents and processing | Python · LangGraph · PostgreSQL Checkpointer · Versioned Skills |
+| Retrieval and files | Qdrant · Redis · MinIO · Source IR · Wiki · Local BM25 |
+| Deployment and observability | Docker Compose · Caddy · OpenTelemetry · Prometheus · Loki / Alloy · Optional Langfuse |
+
+[Architecture and processing diagrams (Chinese)](docs/TECHNICAL_GUIDE.zh-CN.md#系统架构) · [Repository map](docs/ENGINEERING.md#repository-map) · [Concurrency settings (Chinese)](docs/TECHNICAL_GUIDE.zh-CN.md#关键并行与分片参数)
+
+## Documentation
+
+Most topic guides are currently in Chinese; the engineering and operations guide is in English.
+
+| Looking for | Start here |
+| --- | --- |
+| Installation, registration, first tasks and troubleshooting | [First-run guide](docs/GETTING_STARTED.md) |
+| Model providers, server-side keys, roles and budgets | [Model configuration](docs/OPENROUTER_MODELS.md) |
+| Large files, parallelism, architecture and trade-offs | [English engineering guide](docs/ENGINEERING.md) · [中文技术指南](docs/TECHNICAL_GUIDE.zh-CN.md) |
+| Memory, Wiki, retrieval and context organization | [Context management](docs/CONTEXT_MANAGEMENT.md) |
+| Updating built-in product descriptions and help | [Product knowledge maintenance](docs/PRODUCT_KNOWLEDGE.md) |
+| Admin login and user quotas | [Passkey administration](docs/ADMIN_PASSKEY_LOGIN.md) · [Quota management](docs/ADMIN_QUOTAS.md) |
+| Operations, quality gates and verification records | [Runbooks](docs/runbooks/) · [Engineering and release commands](docs/ENGINEERING.md) · [Project verification](docs/PROJECT_COMPLETION.md) |
+| APIs, domain design and architecture decisions | [OpenAPI](api/openapi/openapi.yaml) · [Detailed design](docs/DETAILED_DESIGN.md) · [ADRs](docs/adr/) |
+
+## Get involved
+
+Share use cases and feedback in [Issues](https://github.com/bamboo-ye/ai-companion/issues), or improve code, tests, documentation and demos through [Pull Requests](https://github.com/bamboo-ye/ai-companion/pulls). Include sanitized reproduction steps, versions and logs; never post model keys, credentials or private documents.
+
+See the [engineering guide](docs/ENGINEERING.md#documentation-maintenance) for development and validation. After editing the Chinese README, technical guide or other product-knowledge sources, refresh the embedded catalog:
 
 ```bash
-API_BASE_URL=http://127.0.0.1:8080 \
-METRICS_URL=http://127.0.0.1:8080/metrics \
-OBSERVABILITY_CANARY_SPEC=evals/observability/canaries/agent-direct.v1.json \
-make observability-release-gate
+node scripts/build-product-knowledge.mjs
+node scripts/build-product-knowledge.mjs --check
+go test ./internal/productknowledge
 ```
 
-The direct Canary runs five short-answer cases and requires every run to stay on the
-no-plan/no-tool path with exactly one model call, a single assistant delivery, expected
-topic terms, bounded length and latency, and a passing response-quality check. The final
-persisted response is inspected again for repeated sentences. Exact duplicate sentences
-are repaired deterministically without another model call; residual repetition, an
-unsuccessful repair, a model rewrite, content drift, planning, or a second model call
-forces `rollback`. The versioned baseline and suite are under `evals/agent/`; the private
-JSON/JUnit evidence is copied into the Gate bundle, recomputed during signing, and included
-in the append-only trend ledger.
-
-To make the zero-model Agent path a blocking part of the same before/after release Gate:
-
-```bash
-METRICS_URL=http://127.0.0.1:8080/metrics \
-OBSERVABILITY_CANARY_SPEC=evals/observability/canaries/agent-observability.v1.json \
-make observability-release-gate
-```
-
-This Canary is safe to run beside normal traffic. Set `OBSERVABILITY_ENVIRONMENT_ID` to a
-stable, non-secret deployment identity. The Gate enforces a shared environment-level lease,
-so an overlapping invocation fails closed before dispatch instead of corrupting the sample.
-Any timeout, missing/incorrect outcome, terminal error, latency
-violation, Python execution, or model call writes a failing report and returns nonzero.
-Every completed Gate is appended to a private, environment-bound, append-only hash-chain
-ledger. `make observability-release-trend` verifies the complete chain and emits recent
-promote/rollback, latency and concurrency rejection trends. It also reports zero-model
-observability totals plus direct-rate, single-call, quality, content, repair and duplicate
-trends when direct Canary runs are present.
-
-After collecting at least three signed-quality Gate samples, evaluate the next direct-answer
-traffic stage without changing traffic:
-
-```bash
-OBSERVABILITY_ENVIRONMENT_ID=staging-cn \
-OBSERVABILITY_GATE_HISTORY_LEDGER=artifacts/observability-eval/history.sqlite3 \
-OBSERVABILITY_DIRECT_ROLLOUT_CURRENT_TRAFFIC=5 \
-make evaluate-agent-direct-rollout
-```
-
-The default stages are `0 → 5 → 10 → 25 → 50 → 100`. A stable 10-minute, three-sample
-window can recommend moving one stage; insufficient/stale evidence holds; a recent latency,
-planning, tool or second-model-call regression rolls back one stage; quality/content,
-duplicate-output or duplicate-delivery regressions recommend disabling the direct path at
-0%. The controller only writes a private recommendation. A separately trusted operator may
-sign and verify it with `OBSERVABILITY_DIRECT_ROLLOUT_ATTESTATION_KEY` and
-`OBSERVABILITY_DIRECT_ROLLOUT_ATTESTATION_KEY_ID`. Verification recomputes the policy against
-the full history chain, so any newly appended Gate automatically invalidates the old decision.
-
-The next boundary is a local SQLite traffic sandbox, not a production traffic adapter. Initialize
-it once at the exact deployed stage, then certify its adapter protocol in a separate namespace:
-
-```bash
-OBSERVABILITY_ENVIRONMENT_ID=staging-cn \
-OBSERVABILITY_DIRECT_ROLLOUT_INITIAL_TRAFFIC=5 \
-make initialize-agent-direct-rollout-sandbox
-
-# Inject the dedicated adapter-certification key and key ID from a secret manager.
-OBSERVABILITY_DIRECT_TRAFFIC_CERTIFICATION_NONCE=staging-cert-001 \
-make certify-agent-direct-traffic-adapter
-
-OBSERVABILITY_DIRECT_ROLLOUT_DECISION_DIR="$DECISION_DIR" \
-make plan-agent-direct-rollout-traffic
-
-OBSERVABILITY_DIRECT_ROLLOUT_DECISION_DIR="$DECISION_DIR" \
-OBSERVABILITY_DIRECT_TRAFFIC_CERTIFICATION="$CERTIFICATE" \
-make apply-agent-direct-rollout-sandbox
-```
-
-Certification proves duplicate apply, lookup, compare-and-swap conflict handling and isolation from
-operational traffic before issuing a short-lived, private certificate. Both preview and apply
-reverify the rollout signature and history under the shared environment lock. Apply additionally
-requires a certificate bound to the adapter name, implementation version, provider instance and
-environment; it fences the Gate chain head inside the SQLite transaction, checks the exact traffic
-stage plus a monotonic revision, and writes one append-only hash-chained operation. Replaying the
-same decision returns the original receipt; a `hold`, expired signature/certificate, new Gate, wrong
-provider/environment, stale stage/revision or tampered ledger fails closed. This command cannot
-alter real traffic; a platform implementation of the certified protocol is still required.
-
-Before enabling a platform writer, run the next boundary as a read-only HTTPS shadow. The platform
-must expose exactly `GET /v1/direct-traffic/state` with the versioned state contract; the observer
-has no mutation methods, rejects redirects and non-443 origins, and reads its bearer token only from
-`OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_TOKEN`:
-
-```bash
-OBSERVABILITY_ENVIRONMENT_ID=staging-cn \
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_NAME=platform-reader \
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_BASE_URL=https://traffic.provider.example/api \
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_ALLOWED_HOST=traffic.provider.example \
-make check-agent-direct-traffic-shadow
-
-make status-agent-direct-traffic-shadow
-```
-
-The comparison requires an exact provider/environment identity, traffic percentage, monotonic
-revision and operation-chain head. A stale snapshot, lookup error, redirect, malformed/duplicate
-JSON key or local change during the read fails closed. Every attempt is appended to a private,
-environment-bound hash-chain ledger without storing the token or URL. This stage still contains no
-`PUT`, `POST`, `PATCH` or `DELETE` platform path and cannot alter real traffic. Initialize the local
-desired-state ledger with the same stable target Provider identity; a ledger created under the
-default local-sandbox identity is deliberately rejected for a different platform Provider.
-
-After accumulating observations, evaluate fast and stable zero-drift windows into a new empty Gate
-directory, then let a separate signer attest the exact live chain head:
-
-```bash
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_GATE_DIR="$GATE_DIR" \
-make evaluate-agent-direct-traffic-shadow-gate
-
-# Inject the dedicated Gate key and key ID from the secret manager.
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_GATE_DIR="$GATE_DIR" \
-make attest-agent-direct-traffic-shadow-gate
-
-OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_GATE_DIR="$GATE_DIR" \
-make verify-agent-direct-traffic-shadow-gate
-```
-
-The default policy requires three immediately healthy samples plus 30 healthy samples spanning at
-least 15 minutes, with no drift, lookup error, future/out-of-order observation or excessive retry.
-The signer replays the Gate against the history before signing. Verification replays again and
-requires the event count and chain head to remain unchanged, so any new observation invalidates the
-old attestation immediately.
-
-The first network writer is restricted to an explicit `preproduction-*` namespace. Configure the
-shadow reader with the same namespace-scoped path, obtain a certificate for the HTTPS execution
-adapter, then consume all three short-lived proofs in one compare-and-swap operation:
-
-```bash
-export OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_NAME=https-direct-traffic-preproduction
-export OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_NAMESPACE=preproduction-agent-direct-blue
-export OBSERVABILITY_DIRECT_TRAFFIC_SHADOW_PROVIDER_STATE_PATH=/v1/namespaces/$OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_NAMESPACE/direct-traffic/shadow-state
-export OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_BASE_URL=https://traffic.provider.example/api
-export OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_ALLOWED_HOST=traffic.provider.example
-
-OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_CERTIFICATION_NONCE=preprod-cert-001 \
-make certify-agent-direct-traffic-preproduction-adapter
-
-# Inject rollout, certification, shadow Gate and preproduction bearer secrets via the secret manager.
-make apply-agent-direct-traffic-preproduction
-```
-
-The Provider contract is `GET .../state`, `GET .../changes/by-idempotency-key/{key}` and exactly one
-`PUT .../changes/{key}`. The request carries the signed rollout authorization, adapter certificate
-and zero-drift shadow attestation so the Provider can independently verify every signature and
-expiry. A timeout after PUT triggers lookup only—the PUT is never retried. Success is accepted only
-after a forced state read matches the result and the local append-only ledger converges to the same
-chain head. Unknown outcomes stop with a distinct indeterminate exit; operators reconcile by the
-idempotency key. Production/staging/global namespaces, redirects, stale CAS state, new Gate or shadow
-events, expired proofs, malformed responses and chain drift all fail closed. This client has no
-production namespace mode.
-
-Before connecting credentials, run the signed local protocol drill. It exercises expansion with a
-timeout after commit, duplicate replay, quality-regression rollback, an offline unknown result and
-same-key recovery without any external network call:
-
-```bash
-# Inject the dedicated drill signing key and key ID from the secret manager.
-make drill-agent-direct-traffic-preproduction
-```
-
-Then run the real HTTPS read-only probe against the exact preproduction namespace:
-
-```bash
-# Also inject the Provider bearer token; this command performs GET only.
-make probe-agent-direct-traffic-preproduction
-
-OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_DRILL_BUNDLE="$BUNDLE" \
-make verify-agent-direct-traffic-preproduction-drill
-```
-
-Set `OBSERVABILITY_DIRECT_TRAFFIC_PREPRODUCTION_DRILL_REQUIRE_MODE` to
-`local-contract-simulation` or `live-read-only-probe` when verifying each bundle. Local evidence is
-explicitly marked `contains_live_provider_evidence=false`; the HTTPS probe is
-marked `true` but does not prove mutation behavior. Both signed bundles are required before an
-operator-authorized expansion/rollback exercise. The normative endpoint and failure semantics are
-documented in [`docs/contracts/direct-traffic-preproduction-provider-v1.md`](docs/contracts/direct-traffic-preproduction-provider-v1.md).
-
-Canary specifications contain an argument array, never a shell command string. Secrets
-must be supplied through the runtime environment and must not be placed in the spec.
-Before a deployment controller consumes a successful Gate, a dedicated signer must inject
-`OBSERVABILITY_ATTESTATION_KEY` and `OBSERVABILITY_ATTESTATION_KEY_ID` from a secret manager,
-then sign the exact output directory. The key must contain at least 32 bytes and must never
-be passed on the command line or written into an artifact. Set `GATE_DIR` to the
-`output_dir` returned by the successful Gate:
-
-```bash
-# OBSERVABILITY_ATTESTATION_KEY and OBSERVABILITY_ATTESTATION_KEY_ID are already injected.
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-make attest-observability-release-gate
-
-# Run immediately before traffic or image promotion, with the same values injected.
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-make verify-observability-release-gate
-```
-
-Verification defaults to requiring a fresh `promote` decision no older than 15 minutes.
-It fails closed on missing/extra files, content changes, stale or future timestamps, wrong
-keys, decision/evidence inconsistencies, symlinks, hard links, or non-private permissions.
-Signing a `rollback` bundle preserves audit evidence, but the default deployment verification
-still rejects it. The attestation and Gate only authorize a downstream controller decision;
-they do not themselves deploy or roll back anything.
-
-The deployment-consumption layer is also safe by default. `check` is a read-only dry run;
-only the explicitly named `issue` target writes a short-lived authorization. Set a unique
-deployment ID for the intended platform release while the same attestation credentials are
-injected:
-
-```bash
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make check-observability-deployment
-
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make issue-observability-deployment-authorization
-
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make verify-observability-deployment-authorization
-```
-
-The authorization defaults to five minutes and can never outlive its Gate. Reissuing the
-same deployment ID for the same Gate returns the original authorization; rebinding that ID
-to a different Gate fails. Its stable `idempotency_key` must be passed to the actual cloud or
-deployment adapter and persisted atomically with that platform's deployment request. This
-repository layer does not claim exactly-once external side effects and never invokes a deploy,
-traffic switch, or rollback command.
-
-The platform-neutral controller currently exposes only the built-in `dry-run` adapter. Planning
-is read-only; preparing or simulating uses a private SQLite ledger with transactional request
-binding, attempt counters, append-only events, dispatch leases, and lease-token fencing:
-
-```bash
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make plan-observability-deployment
-
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make prepare-observability-deployment
-
-OBSERVABILITY_GATE_DIR="$GATE_DIR" \
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make simulate-observability-deployment
-
-OBSERVABILITY_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
-make observability-deployment-status
-```
-
-`simulate` ends in `simulated` and never returns an external operation ID. The controller retries
-a stale dispatch only when an adapter can query by idempotency key or guarantees idempotent submit;
-otherwise it records `indeterminate` and blocks automatic replay. No real provider adapter is
-registered in this stage.
-
-Ledger v4 adds a one-time manual-resolution audit table on top of the v3 durable reconciliation
-scheduler and v2 reconciliation counter. An external adapter result of `accepted` is never
-submitted again by the dispatch path:
-reconciliation acquires its own fenced lease and performs lookup by the original idempotency key.
-The first lookup is delayed, and each pending or retryable result advances a persisted exponential
-backoff capped by policy. The default policy starts at 15 seconds, caps at 120 seconds, permits ten
-lookups, and has a 30-minute total deadline. Exhausting either limit becomes `indeterminate` without
-another provider call. A matching completion becomes `completed`; lookup miss, operation-ID drift,
-or an invalid result also becomes `indeterminate`. Upgrade is explicit:
-
-```bash
-make migrate-observability-deployment-ledger
-
-make observability-deployment-health
-```
-
-The health command is read-only and reports accepted, due, deadline-overdue, missing-schedule, and
-indeterminate counts plus the oldest accepted age. The batch reconciliation API selects only due
-rows and routes them through registered adapters. The only executable reconciliation adapter in
-this repository is the local SQLite sandbox described below; no real provider adapter is registered.
-
-An `indeterminate` operation can only be manually settled through a private provider-evidence
-digest, a short-lived requester HMAC, and an independent approver HMAC. Requester and approver
-identities, key IDs, and raw key values must differ. The request binds the operation's update time,
-error code, adapter, and external operation ID, so any intervening ledger change invalidates it.
-Applying the exact dual-signed bundle is atomic and idempotent; a different resolution can never
-replace the consumed audit row. The approval signer does not receive the requester secret, while
-the final apply job holds both verification secrets. No command edits an operation directly. See
-the release runbook for the explicit evidence, request, approve, check, and apply commands.
-
-The executable `sqlite-sandbox` adapter persists isolated provider operations locally. Certification
-deliberately submits the same synthetic request twice and then performs lookup, requiring one stable
-external operation ID. The signed, short-lived certificate binds the adapter name, implementation
-version, persistent sandbox instance ID, request, report, capabilities, signer key ID, and expiry. Inject a
-secret-manager key of at least 32 bytes and a key ID, then certify the sandbox:
-
-```bash
-export OBSERVABILITY_ADAPTER_CERTIFICATION_KEY
-export OBSERVABILITY_ADAPTER_CERTIFICATION_KEY_ID
-export OBSERVABILITY_ADAPTER_CERTIFICATION_NONCE="$CERTIFICATION_RUN_ID"
-make certify-observability-sandbox-adapter
-```
-
-Pass the returned private certificate path to a one-shot scheduler invocation:
-
-```bash
-OBSERVABILITY_ADAPTER_CERTIFICATION="$CERTIFICATION_PATH" \
-make run-observability-sandbox-scheduler-once
-```
-
-The scheduler verifies the certificate before reading controller work or performing provider lookup,
-then relies on the v4 due-time and lease fences. Missing, expired, tampered, wrong-key, wrong-version,
-or wrong-sandbox certificates fail before a lookup. Concurrent schedulers may observe the same due
-row, but only the lease owner performs lookup and records completion. Repeated certification and
-provider submit are idempotent across process restart. Retry a failed certification job with the
-same nonce; use a new nonce for an intentional recertification. The reusable bounded loop API wraps the
-one-shot operation for a service; an external cron or workload scheduler can invoke the Make target.
-Both paths are local-only and emit strict JSON contracts. No write-capable production adapter is
-registered; the optional read-only network observer is described below.
-
-For continuous local validation, the explicit `deployment-sandbox` Compose profile runs a non-root
-scheduler with an initialization job and a private named volume. The setup job transactionally creates
-the empty v4 controller ledger, provider ledger and certificate; the service resolves exactly one
-certificate by nonce before starting. Export the three required values and start it:
-
-```bash
-export OBSERVABILITY_ADAPTER_CERTIFICATION_KEY
-export OBSERVABILITY_ADAPTER_CERTIFICATION_KEY_ID
-export OBSERVABILITY_ADAPTER_CERTIFICATION_NONCE="$CERTIFICATION_RUN_ID"
-make deployment-sandbox-up
-```
-
-Health, readiness and Prometheus metrics are exposed only on loopback by default at ports 9465
-(`/healthz`, `/readyz`, `/metrics`). Run counters and the last strict scheduler report are atomically
-persisted per certificate and restored after restart. Three consecutive failures stop the service;
-an expired or modified certificate fails before Provider lookup. Stop only this service while keeping
-its named volume with `make deployment-sandbox-down`; `make deployment-sandbox-logs` follows its logs.
-Four alert contracts cover process absence, consecutive failures, certification expiry and due/deadline
-backlog. Configure its Prometheus scrape job as `deployment-scheduler-sandbox`; an environment that
-does not configure that optional target will not fire a false unavailable alert. This profile remains
-a local SQLite sandbox, not a production deployment path.
-
-### Read-only Provider shadow reconciliation
-
-The opt-in `deployment-shadow` profile compares controller records with a pre-production Provider
-without acquiring reconciliation leases or changing deployment status. The adapter contains no
-submit method and issues only `GET` requests to the exact contract endpoint
-`/v1/deployments/by-idempotency-key/{sha256}`. Configuration requires an HTTPS base URL, an exact host
-allowlist, a non-secret provider instance identifier and a bearer token supplied only through
-`OBSERVABILITY_SHADOW_PROVIDER_TOKEN`. Redirects, credentials in URLs, query strings, oversized
-responses, unexpected fields, key mismatches and future timestamps fail closed.
-
-The response must use `observability-provider-read-v1`. Each bounded batch classifies records as
-match, Provider ahead/behind, missing, external-ID mismatch, status mismatch, ledger indeterminate or
-lookup error. Only safe GET failures (408, 429 and selected 5xx/transport errors) receive at most three
-attempts; authentication and contract failures are never retried. Reports intentionally omit bearer
-tokens, URLs, idempotency keys, external operation IDs and raw response bodies.
-
-Set the Provider-specific values in the environment, then run an exact one-shot gate or start the
-observer:
-
-```bash
-export OBSERVABILITY_SHADOW_PROVIDER_NAME
-export OBSERVABILITY_SHADOW_PROVIDER_BASE_URL
-export OBSERVABILITY_SHADOW_PROVIDER_ALLOWED_HOST
-export OBSERVABILITY_SHADOW_PROVIDER_INSTANCE
-export OBSERVABILITY_SHADOW_PROVIDER_TOKEN
-make deployment-shadow-check
-make deployment-shadow-up
-```
-
-The one-shot check returns exit code 3 when any drift or exhausted lookup remains. The service exposes
-loopback `/healthz`, `/readyz` and `/metrics` on port 9466. Its controller volume is mounted read-only;
-only a separate shadow state volume is writable. Persistent counters and the last strict report survive
-restart, while readiness is re-earned by a fresh batch. Configure the optional Prometheus scrape job as
-`deployment-shadow-preprod`; absent profiles do not create false unavailable alerts. Stop the observer
-with `make deployment-shadow-down`. Shadow evidence never authorizes an automatic Provider write or a
-manual ledger resolution.
-
-Every service iteration is also appended to a private SQLite history ledger. Successes and failures
-share one contiguous sequence and SHA-256 hash chain; successful entries bind the complete strict
-shadow report. Replaying the identical timestamp/report is idempotent, while a conflicting event,
-provider change, modified report or broken chain is rejected.
-
-After collecting a real observation window, set the provider digest shown in the private shadow state
-and choose a new empty gate directory:
-
-```bash
-export OBSERVABILITY_SHADOW_PROVIDER_INSTANCE_SHA256
-export OBSERVABILITY_SHADOW_GATE_DIR="artifacts/observability-deployment-shadow/gates/$RUN_ID"
-make evaluate-deployment-shadow-gate
-make attest-deployment-shadow-gate
-make verify-deployment-shadow-gate
-```
-
-The default gate requires at least 30 runs spanning 15 minutes, at least 10 selected records, no gap
-over 90 seconds, a last report no older than 90 seconds, and exactly zero failed runs, drift or lookup
-errors. A passing evaluation exits 0; a correctly executed but insufficient or unhealthy window writes
-a `hold` report and exits 3. Only `pass` can receive a short-lived, domain-separated HMAC attestation.
-Verification rechecks the signature, expiry, exact provider identity, gate report digest and final
-history-chain head. The signed shadow result remains a prerequisite only; it is not a deployment
-authorization and cannot be consumed by the write controller.
-
-`AGENT_PYTHON_POOL_WARM_SIZE=1` is the default and `0` disables only warmup. The
-`performance.v2` gate requires 12 processed dispatch/Python run-id pairs plus four
-terminal-Skill wake samples; it excludes harmless `not_claimed` duplicate deliveries from
-latency percentiles and caps terminal-event-to-Agent-dispatch wake P95 at one second.
-
-Start the web client after installing dependencies:
-
-```bash
-cd web
-pnpm install
-pnpm dev
-```
-
-## Platform notes
-
-- `MODEL_PROVIDER=development` is deterministic and local. `MODEL_PROVIDER=openrouter` uses a versioned role profile: `deepseek/deepseek-v4-flash-0731` is preferred for text Graph roles, the previous GPT-5 Mini/Nano models remain explicit fallbacks, and GPT-5 Mini stays on the file/multimodal path. Concrete model slugs, price-sorted compatible providers with a configurable rolling P90 latency preference, shared fallback deadlines, per-run call/token/cost ceilings, and returned OpenRouter usage replace dynamic routing. See [`docs/OPENROUTER_MODELS.md`](docs/OPENROUTER_MODELS.md).
-- `APP_DATABASE_DRIVER=postgres` is the supported application default. `mysql` is retained only for the bounded migration rollback window; once PostgreSQL accepts new writes, switching back without a reverse reconciliation would lose post-cutover data.
-- Local Compose credentials are development-only and come from `.env`; production secrets must use a secret manager.
-- The iOS app project is generated from `mobile/ios/project.yml` using XcodeGen. `swift test --package-path mobile/ios` tests its core without full Xcode.
-- The Android project is pinned to AGP 9.2, Gradle 9.4.1, Kotlin 2.4, API 37, and the stable June 2026 Compose BOM.
-- System reminder writes are never silent: users authorize and confirm them. The app remains the durable source if a platform permission is denied or revoked.
-
-## Current completion boundary
-
-M0-M4, M6, and the M8 Web/backend platform scope are complete. M5 financial research and M7 native Android/iOS client expansion are skipped by explicit product decision for this completion pass.
-
-The completed scope includes persistent accounts, versioned personas, reliable streaming chat, memory/Wiki, life-assistant ledger and reminders, Skill/office tools, database-first asynchronous execution with optional Kafka scaling, cross-Kafka Trace correlation, reliability/degradation controls, team workspaces, email delivery/replay operations, unified billing/Agent/model-cost quota guards with append-only corrections, minor-mode safety gating, operator MFA/RBAC/admin APIs, an independent `/admin` Operations Console, Loki-backed redacted structured logs with PostgreSQL fallback and Run/Trace/Langfuse correlation, incident workflows, runtime configuration convergence, visual Agent Studio with node debugging and Prompt versioning, cost/quality budgets and review exports, audit CSV export, release-readiness checks, automated release evidence collection/validation, and fail-open Langfuse export for LLM/Agent traces, generations, node observations and scores. Langfuse and Loki remain optional at runtime; Tempo remains a future scale integration.
-
-See [`docs/PROJECT_COMPLETION.md`](docs/PROJECT_COMPLETION.md), [`docs/M6_STATUS.md`](docs/M6_STATUS.md), and [`docs/M8_STATUS.md`](docs/M8_STATUS.md) for acceptance evidence and remaining deployment-only prerequisites.
+If AI Companion is useful to you, a Star helps others discover the project.

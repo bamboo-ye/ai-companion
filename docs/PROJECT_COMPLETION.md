@@ -1,6 +1,8 @@
 # Project Completion Status
 
-Date: 2026-09-09
+Implementation review: 2026-09-20 (including global and per-user quota management).
+
+Start with the [beginner guide](GETTING_STARTED.md) for setup and first-use steps.
 
 ## Completion decision
 
@@ -10,6 +12,29 @@ The project is complete for the agreed Web/backend platform scope after explicit
 - M7 native Android/iOS full Beta client development.
 
 This completion status covers the repository implementation, local quality gates, API contracts, migrations, runbooks, and internal-release evidence tooling. It does not claim external production launch, app-store readiness, licensed financial data coverage, or provider-specific OAuth/payment approval.
+
+The milestone decisions below are historical scope decisions. The current review
+checks code, UI entry points, configuration and documentation; it does not repeat
+every milestone acceptance exercise or certify the deployed environment.
+
+## Current implementation and user-facing entry points
+
+| Capability | Implementation evidence | Current entry point / boundary |
+|---|---|---|
+| Accounts, profile and conversations | [`internal/identity`](../internal/identity/), [`companion-client.tsx`](../web/app/companion-client.tsx), [`profile-panel.tsx`](../web/app/profile-panel.tsx), [`chat-panel.tsx`](../web/app/chat-panel.tsx) | Registration/login, three character modules, password change, streaming/retry/cancel; real model behavior requires a configured provider |
+| Memory and personal Wiki | [`internal/memory`](../internal/memory/), [`internal/document`](../internal/document/), [`wiki-panel.tsx`](../web/app/wiki-panel.tsx) | Memory management, document upload/query, Wiki search/edit/export/feedback; default upload limit 20 MiB, parsing/indexing needs the Worker |
+| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
+| Life and office workflows | [`life-panel.tsx`](../web/app/life-panel.tsx), [`work-panel.tsx`](../web/app/work-panel.tsx), [`task-history-panel.tsx`](../web/app/task-history-panel.tsx), [`internal/skill`](../internal/skill/) | Ledger, reminders, plans, generated files and task confirmation; DOCX/table forms have a separate 700 KiB limit |
+| Durable Agent execution | [`cmd/agent-worker`](../cmd/agent-worker/), [`internal/agent`](../internal/agent/), [`Python runtime`](../workers/python/src/ai_companion_worker/agent_runtime.py) | All three default chat modules use Agent Worker; PostgreSQL checkpoints, gateway authorization, bounded concurrency and recovery; Kafka optional |
+| Administrator identity | [`internal/adminpasskey`](../internal/adminpasskey/), [`admin-invite CLI`](../cmd/admin-invite/main.go), [`login guide`](ADMIN_PASSKEY_LOGIN.md) | Independent `/admin` account, invited WebAuthn passkeys, HttpOnly sessions and recent verification for writes; ordinary registration does not grant admin access |
+| Quotas and accounting | [`internal/billing`](../internal/billing/), [`quota API`](../internal/httpserver/billing_quota.go), [`quota editor`](../web/app/ops/quota-policy-editor.tsx), [`quota guide`](ADMIN_QUOTAS.md) | Admin global/per-user overrides, inheritance, effective source and audited usage correction; requires PostgreSQL migration 000043 or MySQL 000032 before deployment |
+| Operations and Agent Studio | [`web/app/ops`](../web/app/ops/), [`internal/controlplane`](../internal/controlplane/), [`internal/performance`](../internal/performance/) | Runs/logs/incidents, budgets, versioned configurations, graph/Prompt editing, evaluation and governed release; optional Loki/Langfuse |
+| Team, mail, subscription and minor-mode services | [`internal/team`](../internal/team/), [`internal/email`](../internal/email/), [`internal/billing`](../internal/billing/), [`internal/safety`](../internal/safety/), [`HTTP routes`](../internal/httpserver/server.go) | Backend/API capabilities; the current end-user Web navigation does not expose a dedicated page for every service. Mail drafts do not send mail; live delivery needs SMTP configuration; payment-provider integration is not claimed |
+
+Quota overrides are checked against accumulated usage at request start. They are
+not concurrent quota reservations or a per-token spending stop for already
+running requests. Raising a quota does not reset usage or restart failed tasks.
+The separate Agent run budget still controls each run's model/token/cost ceiling.
 
 ## Completed milestones
 
@@ -34,11 +59,12 @@ This completion status covers the repository implementation, local quality gates
 - Database-first asynchronous dispatch with leases and reconciliation, plus an optional Kafka horizontal-scale adapter with outbox/inbox recovery, poison-message handling, DLQ/replay/compensation operations, model circuit breaker, and L0-L3 reliability policy.
 - Team workspaces, invitations, resource sharing for documents/generated files/ledger exports, and privacy isolation for non-shared personal data.
 - Email delivery queue, SMTP/no-op sender adapters, Worker delivery processing, failed-delivery replay, and audit trail.
-- Billing plans, entitlement summary, and service-side quota guards.
+- Billing plans, entitlement summary, service-side quota guards, global/per-user overrides with revision conflict detection, and effective-limit source reporting.
 - Minor mode and risky Skill capability gating.
 - Operator admin APIs, user moderation, operator MFA/RBAC, admin account bootstrap/rotation, lockout prevention, audit CSV export, release-readiness API, production config hardening, and security headers.
 - Release evidence collection and validation with semantic tests covering required files, status artifacts, manifest completeness, response headers/content types, JSON payload syntax, readiness details, metrics, CSV header, and secret-leak patterns.
-- A user-login-independent `/admin` management console using an in-memory management key, with Operations, persistent redacted logs, alert/incident workflows, email and console notifications, and evidence export.
+- A user-login-independent `/admin` management console using invited administrator accounts, WebAuthn passkeys and HttpOnly cookie sessions, with Operations, persistent redacted logs, alert/incident workflows, email and console notifications, and evidence export. Bearer + TOTP remains the CLI/automation authentication path.
+- Searchable user/admin onboarding, account profile/password change, editable personal Wiki pages, and embedded product knowledge with source hashing, citations and a local retrieval budget.
 - Visual Agent Studio with a governed graph canvas, node-level isolated debugging, independent immutable Prompt versions, evaluation gates, stable canary rollout, publish, and rollback.
 - Immutable billing/model/Agent configuration control plane, unified Agent/model-cost usage accounting, append-only audited corrections, and durable per-instance convergence reporting.
 - Cross-Kafka Trace propagation through transactional Outbox, event envelopes/headers, consumer contexts, asynchronous Agent dispatch, persistent logs, and DLQ inspection.
@@ -57,11 +83,38 @@ The gate currently runs:
 
 - Go full test suite;
 - Python Worker unit tests;
+- Agent replay, runtime concurrency, performance and retry evaluation gates;
+- offline observability release comparison and observability configuration/self-tests;
 - OpenAPI YAML parse;
 - Docker Compose config validation;
 - release evidence script syntax checks;
 - release evidence validator semantic tests;
 - Git diff whitespace check.
+
+This Make target does not include Web lint/type checking, unit tests or a
+production build. Run `pnpm check`, `pnpm test` and `pnpm build` in `web/`
+separately. Rebuild embedded documentation with
+`node scripts/build-product-knowledge.mjs`, then run its `--check` mode and
+`go test ./internal/productknowledge` after any source-document changes.
+Database-specific integration tests skip when their dedicated test DSNs are
+absent; passing the ordinary test command is not proof that those tests ran.
+
+### Verification performed for the 2026-09-20 review
+
+| Check | Result |
+|---|---|
+| Go repository tests (`go test ./...`) | All packages passed across the initial run and a targeted retry. Four packages (`cmd/healthcheck`, `internal/conversation`, `internal/memory`, `internal/semantic`) initially could not bind local HTTP test ports in the sandbox and passed when rerun with that restriction lifted |
+| Python Worker unittest discovery | 530 tests passed; emitted SQLite resource and SWIG deprecation warnings |
+| Web `pnpm check`, `pnpm test`, `pnpm build` | Lint/type checking passed, 13 tests passed, production build succeeded |
+| Embedded product knowledge | Regenerated; generator `--check` and Go product-knowledge tests passed |
+| Development Compose model | `docker compose --env-file .env.example -f deploy/compose/compose.yml config --quiet` passed |
+| Documentation links and whitespace | 124 local Markdown targets across 9 reviewed documents resolved; `git diff --check` passed |
+
+This pass did not run the complete `make release-check`, native client builds,
+database migration drills, browser end-to-end flows, real-provider model/mail
+canaries, or production deployment/evidence collection. The commands in the
+beginner guide were checked against the current Makefile, configuration and
+service code; a fresh Docker installation was not performed during this review.
 
 ## Explicitly out of scope for this completion pass
 
@@ -77,10 +130,10 @@ The gate currently runs:
 Before inviting external testers or production traffic:
 
 1. Configure real secrets in a secret manager, not in `.env`.
-2. Create at least one active MFA-enabled admin operator account.
+2. Provision an active administrator through the [invitation CLI and Passkey flow](ADMIN_PASSKEY_LOGIN.md), bind a backup credential, and keep production MFA enabled. Prepare separate Bearer + TOTP credentials for authorized evidence-collection automation.
 3. Configure non-development model provider and approved region/retention policy.
 4. Run migrations against the target database.
-5. Start API, Worker, PostgreSQL, Redis, Qdrant, and object storage. Add Kafka only when the measured horizontal-scale criteria in ADR 0005 are met.
+5. Initialize LangGraph checkpoints and start Web, API, Worker, Agent Worker, PostgreSQL, Redis, Qdrant, and the configured file storage. Ensure API/Worker file paths share the required persistent volume. Add Kafka only when the measured horizontal-scale criteria in ADR 0005 are met.
 6. Collect evidence:
 
    ```sh

@@ -16,6 +16,21 @@ go run ./cmd/admin-invite --id owner --name '管理员' --reason '初始化后�
 
 已构建的 API 容器内提供 `/admin-invite` 二进制，可以在该容器中执行相同参数。命令使用容器现有数据库配置；不需要关闭生产 MFA。命令不会自动加载 `.env`，运行前应通过部署工具或可信环境注入所需变量。
 
+本机开发使用 PostgreSQL 时，可在仓库根目录执行以下完整命令（不要对尚未核对的生产配置执行）：
+
+```sh
+(
+  set -a
+  . ./.env
+  set +a
+  export DATABASE_DRIVER=postgres
+  go run ./cmd/migrate
+  go run ./cmd/admin-invite --id owner --name '管理员' --reason '初始化本地后台管理员'
+)
+```
+
+`APP_DATABASE_DRIVER` 用于 API/Worker；迁移和邀请 CLI 使用 `DATABASE_DRIVER`。迁移 CLI 未指定该变量时仍默认 MySQL，不能仅凭 `.env` 中的 `APP_DATABASE_DRIVER=postgres` 判断其目标库。Docker 完整栈已执行迁移，可直接使用[新手指南](GETTING_STARTED.md)中的容器邀请命令。
+
 5. 打开命令输出的 `/admin#invite=...` 链接，点击「绑定通行密钥并登录」，在系统弹窗中完成设备 PIN 验证。
 
 邀请是账号绑定凭据，30 分钟后失效，在开始绑定时即被一次性消费。链接使用 fragment，页面读取后从地址栏移除。取消、超时或首次绑定失败后需重新签发。已有账号尚未绑定时，重复初始化命令会撤销其旧邀请和待完成绑定。

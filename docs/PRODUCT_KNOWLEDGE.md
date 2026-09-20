@@ -12,7 +12,7 @@
 
 ## 来源与更新
 
-白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README 的项目介绍、架构和部署内容，`web/app/onboarding-content.ts` 的全部用户/后台指南，以及上下文管理、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。
+白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。
 
 更新来源后执行：
 

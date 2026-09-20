@@ -5,6 +5,8 @@
 > 需求来源：`/Users/windcry1/Desktop/伴A I.md`  
 > 适用范围：Web、Android、iOS 与配套服务端
 
+> 实现对照（2026-09-20）：本文是原始方案，包含未纳入当前交付的金融与原生客户端规划。当前运行基线为 PostgreSQL、数据库优先异步调度与可选 Kafka；后台使用通行密钥登录。最新实现边界以[项目实现情况](PROJECT_COMPLETION.md)为准，启动步骤见[新手上手指南](GETTING_STARTED.md)。下文历史本机路径不应作为新环境的安装要求。
+
 ## 0. 已确认的实施基线
 
 - 唯一开发目录：`/Users/windcry1/Documents/code/ai_companion`。

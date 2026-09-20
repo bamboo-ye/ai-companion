@@ -2,6 +2,11 @@
 
 Date: 2026-07-08
 
+This is a historical slice-by-slice record. For the 2026-09-20 implementation
+review, current Passkey login, product knowledge, quota overrides and verification
+boundaries, see [project status](PROJECT_COMPLETION.md). Earlier management-key
+login descriptions and test results below describe their original slices.
+
 M7 native Android/iOS client development is intentionally skipped for this development pass. Work continues on backend/platform capabilities that do not require client UI.
 
 ## Slice 1: team workspace foundation
