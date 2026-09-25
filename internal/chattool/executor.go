@@ -259,7 +259,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 		{Name: "work_no_tool", Description: "普通聊天、知识问答，或当前消息不需要调用工作台和文档库能力时调用。", Parameters: emptyObject()},
 		{Name: "work_list_documents", Description: "用户询问文档库中有哪些文件、文件状态或文档列表时调用。", Parameters: emptyObject()},
 		{Name: "work_list_skills", Description: "用户询问当前有哪些工作台工具、Skill 或可用能力时调用。", Parameters: emptyObject()},
-		{Name: "work_query_documents", Description: "用户要求根据文档库或已上传附件回答具体问题、查找事实或只返回文字摘要时调用。创建 PPT/PPTX、翻译 PDF 或生成其他文件时绝对不要调用。", Parameters: emptyObject()},
+		{Name: "work_query_documents", Description: "用户要求根据文档库或已上传附件回答具体问题、查找事实或只返回文字摘要时调用。创建 PPT/PPTX、翻译 PDF 或生成其他文件时绝对不要调用。", Parameters: object(nil, map[string]any{"query": map[string]any{"type": "string", "minLength": 2, "maxLength": 1000}})},
 		{
 			Name: "work_extract_attached_document", Description: "通用附件内容提取工具。自动按顺序分轮清洗大文件并保留轮次边界；Harness 会让每轮分别完成后续结构化处理，再确定性合并中间结果。若输出 has_more=true，必须使用 next_round 作为 round_start 继续读取同一附件；完整性任务在所有轮次完成前不得生成最终制品。存在多个附件时分别处理。",
 			Parameters: object([]string{"attachment_index"}, map[string]any{
@@ -433,7 +433,7 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 	case "work_list_skills":
 		return e.listSkills(ctx, request)
 	case "work_query_documents":
-		return e.queryDocuments(ctx, request)
+		return e.queryDocumentsWithQuery(ctx, request, call.Arguments)
 	case "work_extract_attached_document":
 		return e.extractAttachedDocument(ctx, request, call.Arguments)
 	case "work_translate_attached_pdf":
@@ -1664,7 +1664,18 @@ func (e *Executor) listSkills(ctx context.Context, request conversation.ToolRequ
 }
 
 func (e *Executor) queryDocuments(ctx context.Context, request conversation.ToolRequest) (conversation.ToolResult, error) {
+	return e.queryDocumentsWithQuery(ctx, request, nil)
+}
+
+func (e *Executor) queryDocumentsWithQuery(ctx context.Context, request conversation.ToolRequest, arguments map[string]any) (conversation.ToolResult, error) {
 	query := chatattachment.VisibleText(request.Text)
+	if raw, exists := arguments["query"]; exists {
+		value, ok := raw.(string)
+		if !ok || len([]rune(strings.TrimSpace(value))) < 2 || len([]rune(value)) > 1000 {
+			return conversation.ToolResult{}, document.ErrValidation
+		}
+		query = strings.TrimSpace(value)
+	}
 	documentIDs := chatattachment.DocumentIDs(request.Text)
 	result, err := e.documents.Query(ctx, request.UserID, document.QueryInput{Query: query, DocumentIDs: documentIDs, Limit: 5})
 	if err != nil {

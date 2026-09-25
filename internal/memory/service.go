@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/windcry1/ai-companion/internal/arbitration"
 	"github.com/windcry1/ai-companion/internal/semantic"
 	"math"
 	"regexp"
@@ -25,23 +26,24 @@ var (
 )
 
 type Memory struct {
-	ID                   string     `json:"id"`
-	UserID               string     `json:"-"`
-	Type                 string     `json:"type"`
-	Content              string     `json:"content"`
-	NormalizedHash       string     `json:"-"`
-	SourceConversationID string     `json:"source_conversation_id,omitempty"`
-	SourceMessageID      string     `json:"source_message_id,omitempty"`
-	Confidence           float64    `json:"confidence"`
-	Importance           float64    `json:"importance"`
-	Sensitivity          string     `json:"sensitivity"`
-	Pinned               bool       `json:"pinned"`
-	Status               string     `json:"status"`
-	ValidFrom            time.Time  `json:"valid_from"`
-	ValidTo              *time.Time `json:"valid_to,omitempty"`
-	SupersedesID         string     `json:"supersedes_id,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	Arbitration          *arbitration.Record `json:"arbitration,omitempty"`
+	ID                   string              `json:"id"`
+	UserID               string              `json:"-"`
+	Type                 string              `json:"type"`
+	Content              string              `json:"content"`
+	NormalizedHash       string              `json:"-"`
+	SourceConversationID string              `json:"source_conversation_id,omitempty"`
+	SourceMessageID      string              `json:"source_message_id,omitempty"`
+	Confidence           float64             `json:"confidence"`
+	Importance           float64             `json:"importance"`
+	Sensitivity          string              `json:"sensitivity"`
+	Pinned               bool                `json:"pinned"`
+	Status               string              `json:"status"`
+	ValidFrom            time.Time           `json:"valid_from"`
+	ValidTo              *time.Time          `json:"valid_to,omitempty"`
+	SupersedesID         string              `json:"supersedes_id,omitempty"`
+	CreatedAt            time.Time           `json:"created_at"`
+	UpdatedAt            time.Time           `json:"updated_at"`
 }
 type UpdateInput struct {
 	Content    *string  `json:"content"`
@@ -85,7 +87,11 @@ func (s *Service) SaveFromModel(ctx context.Context, userID, conversationID, mes
 		return Memory{}, err
 	}
 	item := Memory{ID: memoryID, UserID: userID, Type: classify(content), Content: content, NormalizedHash: hash(normalize(content)), SourceConversationID: conversationID, SourceMessageID: messageID, Confidence: .99, Importance: .7, Sensitivity: sensitivity(content), Status: "active", ValidFrom: now, CreatedAt: now, UpdatedAt: now}
+	if err := s.annotateMemory(ctx, &item); err != nil {
+		return Memory{}, err
+	}
 	saved, _, err := s.store.UpsertMemory(ctx, item)
+	saved.Arbitration = s.visibleArbitration(ctx, saved)
 	return saved, err
 }
 func (s *Service) Create(ctx context.Context, userID, content string) (Memory, error) {
@@ -99,11 +105,23 @@ func (s *Service) Create(ctx context.Context, userID, content string) (Memory, e
 	}
 	now := s.now().UTC()
 	item := Memory{ID: memoryID, UserID: userID, Type: classify(content), Content: content, NormalizedHash: hash(normalize(content)), Confidence: 1, Importance: .7, Sensitivity: sensitivity(content), Status: "active", ValidFrom: now, CreatedAt: now, UpdatedAt: now}
+	if err := s.annotateMemory(ctx, &item); err != nil {
+		return Memory{}, err
+	}
 	saved, _, err := s.store.UpsertMemory(ctx, item)
+	saved.Arbitration = s.visibleArbitration(ctx, saved)
 	return saved, err
 }
 func (s *Service) List(ctx context.Context, userID string) ([]Memory, error) {
-	return s.store.ListMemories(ctx, userID, 500)
+	items, err := s.store.ListMemories(ctx, userID, 500)
+	active := map[string]Memory{}
+	for _, item := range items {
+		active[item.ID] = item
+	}
+	for i := range items {
+		items[i].Arbitration = visibleArbitrationIn(items[i], active)
+	}
+	return items, err
 }
 func (s *Service) Update(ctx context.Context, userID, memoryID string, input UpdateInput) (Memory, error) {
 	item, err := s.store.GetMemory(ctx, userID, memoryID)
@@ -119,6 +137,9 @@ func (s *Service) Update(ctx context.Context, userID, memoryID string, input Upd
 		item.NormalizedHash = hash(normalize(content))
 		item.Type = classify(content)
 		item.Sensitivity = sensitivity(content)
+		if err := s.annotateMemory(ctx, &item); err != nil {
+			return Memory{}, err
+		}
 	}
 	if input.Pinned != nil {
 		item.Pinned = *input.Pinned
@@ -133,6 +154,7 @@ func (s *Service) Update(ctx context.Context, userID, memoryID string, input Upd
 	if err = s.store.UpdateMemory(ctx, item); err != nil {
 		return Memory{}, err
 	}
+	item.Arbitration = s.visibleArbitration(ctx, item)
 	return item, nil
 }
 func (s *Service) Delete(ctx context.Context, userID, memoryID string) error {
@@ -160,6 +182,22 @@ func (s *Service) RecallContext(ctx context.Context, userID, query string, limit
 		return nil, err
 	}
 	semanticScores := s.semanticScores(ctx, userID, query, items)
+	// Flag both sides, even when ranking returns only the older memory.
+	disputed := map[string]string{}
+	active := map[string]Memory{}
+	for _, item := range items {
+		if !item.ValidFrom.After(s.now()) && (item.ValidTo == nil || item.ValidTo.After(s.now())) {
+			active[item.ID] = item
+		}
+	}
+	for _, item := range items {
+		record := visibleArbitrationIn(item, active)
+		if note := arbitrationNote(record); note != "" {
+			for _, ref := range record.Inputs {
+				disputed[ref.ID] = note
+			}
+		}
+	}
 	queryTokens := tokens(query)
 	type scored struct {
 		item  Memory
@@ -206,6 +244,7 @@ func (s *Service) RecallContext(ctx context.Context, userID, query string, limit
 	result := []contextengine.Item{}
 	for _, match := range matches {
 		item := match.item
+		item.Content += disputed[item.ID]
 		result = append(result, contextengine.Item{Content: item.Content, EstimatedTokens: contextengine.EstimateTokens(item.Content), Source: contextengine.Source{
 			Kind: "memory", ID: item.ID, ConversationID: item.SourceConversationID,
 			MessageID: item.SourceMessageID, UpdatedAt: &item.UpdatedAt,

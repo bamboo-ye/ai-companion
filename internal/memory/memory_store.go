@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -24,7 +25,7 @@ func (s *MemoryStore) UpsertMemory(_ context.Context, item Memory) (Memory, bool
 			if item.SupersedesID != "" {
 				return item, false, ErrValidation
 			}
-			return existing, false, nil
+			return cloneMemory(existing), false, nil
 		}
 	}
 	if item.SupersedesID != "" {
@@ -37,7 +38,7 @@ func (s *MemoryStore) UpsertMemory(_ context.Context, item Memory) (Memory, bool
 		old.UpdatedAt = item.ValidFrom
 		s.items[old.ID] = old
 	}
-	s.items[item.ID] = item
+	s.items[item.ID] = cloneMemory(item)
 	return item, true, nil
 }
 func (s *MemoryStore) ListMemories(_ context.Context, userID string, limit int) ([]Memory, error) {
@@ -46,7 +47,7 @@ func (s *MemoryStore) ListMemories(_ context.Context, userID string, limit int) 
 	items := []Memory{}
 	for _, item := range s.items {
 		if item.UserID == userID && item.Status == "active" {
-			items = append(items, item)
+			items = append(items, cloneMemory(item))
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -67,7 +68,7 @@ func (s *MemoryStore) GetMemory(_ context.Context, userID, memoryID string) (Mem
 	if !ok || item.UserID != userID || item.Status != "active" {
 		return Memory{}, ErrNotFound
 	}
-	return item, nil
+	return cloneMemory(item), nil
 }
 func (s *MemoryStore) UpdateMemory(_ context.Context, item Memory) error {
 	s.mu.Lock()
@@ -76,8 +77,17 @@ func (s *MemoryStore) UpdateMemory(_ context.Context, item Memory) error {
 	if !ok || existing.UserID != item.UserID || existing.Status != "active" {
 		return ErrNotFound
 	}
-	s.items[item.ID] = item
+	s.items[item.ID] = cloneMemory(item)
 	return nil
+}
+
+func cloneMemory(item Memory) Memory {
+	if item.Arbitration != nil {
+		data, _ := json.Marshal(item.Arbitration)
+		item.Arbitration = nil
+		_ = json.Unmarshal(data, &item.Arbitration)
+	}
+	return item
 }
 func (s *MemoryStore) DeleteMemory(_ context.Context, userID, memoryID string, now time.Time) error {
 	s.mu.Lock()

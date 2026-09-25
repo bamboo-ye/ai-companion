@@ -131,75 +131,9 @@ func (s *Service) compileWiki(ctx context.Context, job WikiJob) ([]WikiPage, err
 	sourcePage.ID = sourceID
 	sourcePage.Links = links
 	if s.semantic.SummariesEnabled() && len(chunks) > 0 {
-		// Semantic synthesis uses a clearly delimited subset; source pages still link
-		// every chunk. Additional generated pages cannot claim unseen citations.
-		supplied := []WikiEvidence{}
-		size := 0
-		for _, chunk := range chunks {
-			if size+len(chunk.Content) > 24000 {
-				break
-			}
-			supplied = append(supplied, WikiEvidence{d.ID, chunk.ID, chunk.Content, chunk.PageStart})
-			size += len(chunk.Content)
-		}
-		var output struct {
-			Pages []struct {
-				Kind      string   `json:"kind"`
-				Title     string   `json:"title"`
-				Body      string   `json:"body"`
-				ChunkIDs  []string `json:"chunk_ids"`
-				Conflicts []string `json:"conflicts"`
-			} `json:"pages"`
-		}
-		err := s.semantic.JSON(ctx, `Create a source summary and useful topic/entity/decision wiki pages from supplied evidence. Return {"pages":[{"kind":"source|topic|entity|decision","title":"...","body":"Markdown with [chunk:ID] citations for every factual paragraph","chunk_ids":["ID"],"conflicts":["contradictory source claims, with chunk citations"]}]}. At most 8 pages. Only use supplied facts and exact chunk IDs. Clearly label unresolved conflicting claims. Do not infer which source is correct.`, supplied, 4000, &output)
-		if err == nil && len(output.Pages) <= 8 {
-			evidenceByID := map[string]WikiEvidence{}
-			for _, e := range supplied {
-				evidenceByID[e.ChunkID] = e
-			}
-			for _, generated := range output.Pages {
-				if generated.Kind != "source" && generated.Kind != "topic" && generated.Kind != "entity" && generated.Kind != "decision" {
-					continue
-				}
-				if len(generated.Title) == 0 || len([]rune(generated.Title)) > 160 || len(generated.Body) > 16000 || len(generated.ChunkIDs) == 0 {
-					continue
-				}
-				evidence := []WikiEvidence{}
-				valid := true
-				for _, chunkID := range generated.ChunkIDs {
-					e, ok := evidenceByID[chunkID]
-					if !ok || !strings.Contains(generated.Body, "[chunk:"+chunkID+"]") {
-						valid = false
-						break
-					}
-					e.Quote = truncateRunes(e.Quote, 1000)
-					evidence = append(evidence, e)
-				}
-				if !valid || !groundedParagraphs(generated.Body, generated.ChunkIDs) {
-					continue
-				}
-				for _, conflict := range generated.Conflicts {
-					if !groundedParagraphs(conflict, generated.ChunkIDs) {
-						valid = false
-					}
-				}
-				if !valid {
-					continue
-				}
-				page := makePage(generated.Kind, generated.Title, generated.Body, "semantic:"+generated.Kind+":"+generated.Title, evidence)
-				page.Conflicts = generated.Conflicts
-				page.Compiler = WikiCompilerVersion + ":semantic"
-				if generated.Kind == "source" {
-					page.ID = sourceID
-					page.Links = links
-					sourcePage = page
-				} else {
-					pages = append(pages, page)
-					sourcePage.Links = append(sourcePage.Links, page.ID)
-				}
-			}
-		}
+		pages = append(pages, s.synthesizeWiki(ctx, d, chunks, &sourcePage)...)
 	}
+
 	sourcePage.Links = []string{}
 	for _, page := range pages {
 		sourcePage.Links = append(sourcePage.Links, page.ID)

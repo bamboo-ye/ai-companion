@@ -10,6 +10,40 @@ import (
 	"time"
 )
 
+func TestWikiShardCacheScopesRevisionsOwnersAndExpiry(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_TEST_DSN is not set")
+	}
+	ctx := context.Background()
+	store, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	owner, doc, key := mustID(t), mustID(t), "source-model-batch-hash"
+	t.Cleanup(func() { _, _ = store.db.ExecContext(ctx, "DELETE FROM app.wiki_shards WHERE owner_id=$1", owner) })
+	data := []byte(`{"pages":[]}`)
+	if err := store.SaveWikiShard(ctx, owner, doc, key, data); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.LoadWikiShard(ctx, owner, doc, key)
+	if err != nil || len(got) == 0 {
+		t.Fatalf("cached %s %v", got, err)
+	}
+	for _, scope := range [][3]string{{mustID(t), doc, key}, {owner, mustID(t), key}, {owner, doc, "new-model-version"}} {
+		if _, err := store.LoadWikiShard(ctx, scope[0], scope[1], scope[2]); !errors.Is(err, document.ErrNotFound) {
+			t.Fatalf("cross-scope cache hit: %v", err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE app.wiki_shards SET expires_at=$1 WHERE owner_id=$2", time.Now().Add(-time.Hour), owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadWikiShard(ctx, owner, doc, key); !errors.Is(err, document.ErrNotFound) {
+		t.Fatalf("expired shard returned: %v", err)
+	}
+}
+
 func TestWikiSQLTransactionsFencingAndRevisionHistory(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_TEST_DSN")
 	if dsn == "" {

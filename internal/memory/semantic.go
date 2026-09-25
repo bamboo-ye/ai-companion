@@ -82,6 +82,7 @@ func (s *Service) CorrectFromMessage(ctx context.Context, user, memoryID, conten
 	now := s.now().UTC()
 	old.SourceConversationID = conversationID
 	old.SourceMessageID = messageID
+	old.Arbitration = nil
 	old.SupersedesID = old.ID
 	old.ID = nextID
 	old.Content = content

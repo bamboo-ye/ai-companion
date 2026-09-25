@@ -3,9 +3,136 @@ package skill
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestRunnerBoundsConcurrentPollingAndEventClaims(t *testing.T) {
+	entered := make(chan struct{}, 8)
+	release := make(chan struct{})
+	var active, peak atomic.Int32
+	service, _, _ := newQueuedTestService(t, HandlerFunc(func(ctx context.Context, input map[string]any) (ToolResult, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+		}
+		entered <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ToolResult{}, ctx.Err()
+		}
+		return ToolResult{Output: map[string]any{"value": input["value"]}}, nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var ids []string
+	for _, key := range []string{"a", "b", "c", "d"} {
+		run, _, err := service.Start(ctx, "u1", "test.worker", key, map[string]any{"value": key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, run.ID)
+	}
+	runner := NewRunner(service, "parallel", time.Minute, 10*time.Second)
+	runner.SetMaxConcurrency(2)
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx, time.Millisecond) }()
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("tasks did not overlap")
+		}
+	}
+	eventDone := make(chan error, 1)
+	go func() { _, err := runner.RunID(ctx, ids[3]); eventDone <- err }()
+	select {
+	case <-entered:
+		t.Fatal("exceeded two execution slots")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	deadline := time.After(3 * time.Second)
+	for {
+		completed := 0
+		for _, id := range ids {
+			run, _ := service.Get(ctx, "u1", id)
+			if run.Status == "succeeded" {
+				completed++
+			}
+		}
+		if completed == len(ids) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("queued tasks did not drain")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not stop")
+	}
+	select {
+	case <-eventDone:
+	case <-time.After(time.Second):
+		t.Fatal("event claim did not stop")
+	}
+	if peak.Load() != 2 || active.Load() != 0 {
+		t.Fatalf("peak=%d active=%d", peak.Load(), active.Load())
+	}
+}
+
+func TestRunnerCancelledBeforeClaimLeavesTaskQueued(t *testing.T) {
+	service, _, _ := newQueuedTestService(t, HandlerFunc(func(context.Context, map[string]any) (ToolResult, error) {
+		t.Error("executed after cancellation")
+		return ToolResult{}, nil
+	}))
+	run, _, _ := service.Start(context.Background(), "u1", "test.worker", "cancelled", map[string]any{"value": "ok"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner := NewRunner(service, "worker", time.Minute, time.Second)
+	if _, err := runner.RunOnce(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
+	}
+	got, _ := service.Get(context.Background(), "u1", run.ID)
+	if got.Status != "queued" {
+		t.Fatalf("status=%s", got.Status)
+	}
+}
+
+func TestSkillResourceClassesBoundHeavyTasksIndependently(t *testing.T) {
+	runner := NewRunner(nil, "test", time.Minute, time.Second)
+	runner.SetResourceConcurrency(1, 1)
+	releaseRender, err := runner.acquireResource(context.Background(), "office.pptx_generate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseRender()
+	releaseParse, err := runner.acquireResource(context.Background(), "office.document_extract")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseParse()
+	for _, name := range []string{"office.pdf_translate", "office.tabular_profile"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		if release, err := runner.acquireResource(ctx, name); !errors.Is(err, context.DeadlineExceeded) {
+			if release != nil {
+				release()
+			}
+			t.Fatalf("resource cap bypassed by %s: %v", name, err)
+		}
+		cancel()
+	}
+}
 
 func newQueuedTestService(t *testing.T, handler Handler) (*Service, *MemoryStore, *MemoryFileStore) {
 	t.Helper()

@@ -20,6 +20,7 @@ type WikiMemoryStore struct {
 	versions map[string][]WikiPage
 	jobs     map[string]wikiMemoryJob
 	feedback []WikiFeedback
+	shards   map[string]wikiShard
 }
 
 func NewWikiMemoryStore() *WikiMemoryStore {

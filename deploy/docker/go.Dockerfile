@@ -40,5 +40,10 @@ RUN apt-get update \
 COPY --from=build /out/service /service
 COPY --from=build /out/healthcheck /healthcheck
 COPY --from=build /out/admin-invite /admin-invite
+RUN groupadd --gid 10003 modelquota \
+    && usermod -a -G modelquota app \
+    && mkdir -p /app/.model-slots \
+    && chown root:modelquota /app/.model-slots \
+    && chmod 2770 /app/.model-slots
 USER app
 ENTRYPOINT ["/service"]

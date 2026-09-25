@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/windcry1/ai-companion/internal/platform/modelquota"
+
 	"github.com/windcry1/ai-companion/internal/character"
 	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/tracectx"
@@ -35,7 +37,7 @@ type OpenAICompatibleProvider struct {
 }
 
 func NewOpenAICompatibleProvider(baseURL, apiKey, model string, timeout time.Duration, inputCost, outputCost int64) *OpenAICompatibleProvider {
-	return &OpenAICompatibleProvider{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Model: model, Models: []string{model}, ProviderName: "openai-compatible", MaxTokens: 1024, Client: &http.Client{Timeout: timeout}, InputCostMicrosPerMillion: inputCost, OutputCostMicrosPerMillion: outputCost}
+	return &OpenAICompatibleProvider{BaseURL: strings.TrimRight(baseURL, "/"), APIKey: apiKey, Model: model, Models: []string{model}, ProviderName: "openai-compatible", MaxTokens: 1024, Client: &http.Client{Timeout: timeout, Transport: modelquota.Transport{}}, InputCostMicrosPerMillion: inputCost, OutputCostMicrosPerMillion: outputCost}
 }
 
 type OpenRouterOptions struct {

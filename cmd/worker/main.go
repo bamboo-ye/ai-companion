@@ -89,6 +89,8 @@ func main() {
 		}
 		skillService := skill.NewService(store, skillFiles, skillRegistry)
 		skillRunner := skill.NewRunner(skillService, workerID, cfg.SkillWorkerLeaseDuration, cfg.SkillWorkerRenewInterval)
+		skillRunner.SetMaxConcurrency(cfg.SkillWorkerConcurrency)
+		skillRunner.SetResourceConcurrency(cfg.SkillParseConcurrency, cfg.SkillRenderConcurrency)
 		documentIngestor := document.NewIngestor(store, blobs, parser, index, workerID)
 		documentCleaner := document.NewCleaner(store, blobs, index, workerID)
 		knowledgeClient := semantic.New(cfg.Knowledge)

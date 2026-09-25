@@ -3,6 +3,7 @@ package mysqlstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 )
 
 func (s *Store) UpsertMemory(ctx context.Context, item memory.Memory) (memory.Memory, bool, error) {
+	arbitrationJSON, err := json.Marshal(item.Arbitration)
+	if err != nil {
+		return item, false, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return item, false, err
@@ -34,7 +39,7 @@ func (s *Store) UpsertMemory(ctx context.Context, item memory.Memory) (memory.Me
 	if !errors.Is(err, sql.ErrNoRows) {
 		return item, false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO long_term_memories (id,user_id,memory_type,content,normalized_hash,source_conversation_id,source_message_id,confidence,importance,sensitivity,pinned,status,valid_from,supersedes_id,created_at,updated_at) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,UUID_TO_BIN(NULLIF(?,'')),UUID_TO_BIN(NULLIF(?,'')),?,?,?,?,?,?,UUID_TO_BIN(NULLIF(?,'')),?,?)`, item.ID, item.UserID, item.Type, item.Content, item.NormalizedHash, item.SourceConversationID, item.SourceMessageID, item.Confidence, item.Importance, item.Sensitivity, item.Pinned, item.Status, item.ValidFrom, item.SupersedesID, item.CreatedAt, item.UpdatedAt)
+	_, err = tx.ExecContext(ctx, `INSERT INTO long_term_memories (id,user_id,memory_type,content,normalized_hash,source_conversation_id,source_message_id,confidence,importance,sensitivity,pinned,status,valid_from,supersedes_id,created_at,updated_at,arbitration) VALUES (UUID_TO_BIN(?),UUID_TO_BIN(?),?,?,?,UUID_TO_BIN(NULLIF(?,'')),UUID_TO_BIN(NULLIF(?,'')),?,?,?,?,?,?,UUID_TO_BIN(NULLIF(?,'')),?,?,?)`, item.ID, item.UserID, item.Type, item.Content, item.NormalizedHash, item.SourceConversationID, item.SourceMessageID, item.Confidence, item.Importance, item.Sensitivity, item.Pinned, item.Status, item.ValidFrom, item.SupersedesID, item.CreatedAt, item.UpdatedAt, string(arbitrationJSON))
 	if err != nil {
 		return item, false, err
 	}
@@ -64,7 +69,11 @@ func (s *Store) GetMemory(ctx context.Context, userID, memoryID string) (memory.
 	return item, err
 }
 func (s *Store) UpdateMemory(ctx context.Context, item memory.Memory) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE long_term_memories SET memory_type=?,content=?,normalized_hash=?,importance=?,sensitivity=?,pinned=?,updated_at=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, item.Type, item.Content, item.NormalizedHash, item.Importance, item.Sensitivity, item.Pinned, item.UpdatedAt, item.ID, item.UserID)
+	arbitrationJSON, err := json.Marshal(item.Arbitration)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE long_term_memories SET memory_type=?,content=?,normalized_hash=?,importance=?,sensitivity=?,pinned=?,updated_at=?,arbitration=? WHERE id=UUID_TO_BIN(?) AND user_id=UUID_TO_BIN(?) AND status='active'`, item.Type, item.Content, item.NormalizedHash, item.Importance, item.Sensitivity, item.Pinned, item.UpdatedAt, string(arbitrationJSON), item.ID, item.UserID)
 	if err != nil {
 		return err
 	}
@@ -90,12 +99,16 @@ func (s *Store) ClearMemories(ctx context.Context, userID string, now time.Time)
 	return err
 }
 
-const memorySelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),memory_type,content,normalized_hash,COALESCE(BIN_TO_UUID(source_conversation_id),''),COALESCE(BIN_TO_UUID(source_message_id),''),confidence,importance,sensitivity,pinned,status,valid_from,valid_to,COALESCE(BIN_TO_UUID(supersedes_id),''),created_at,updated_at FROM long_term_memories`
+const memorySelect = `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),memory_type,content,normalized_hash,COALESCE(BIN_TO_UUID(source_conversation_id),''),COALESCE(BIN_TO_UUID(source_message_id),''),confidence,importance,sensitivity,pinned,status,valid_from,valid_to,COALESCE(BIN_TO_UUID(supersedes_id),''),created_at,updated_at,arbitration FROM long_term_memories`
 
 func scanMemory(row rowScanner) (memory.Memory, error) {
 	var item memory.Memory
 	var validTo sql.NullTime
-	err := row.Scan(&item.ID, &item.UserID, &item.Type, &item.Content, &item.NormalizedHash, &item.SourceConversationID, &item.SourceMessageID, &item.Confidence, &item.Importance, &item.Sensitivity, &item.Pinned, &item.Status, &item.ValidFrom, &validTo, &item.SupersedesID, &item.CreatedAt, &item.UpdatedAt)
+	var arbitrationJSON []byte
+	err := row.Scan(&item.ID, &item.UserID, &item.Type, &item.Content, &item.NormalizedHash, &item.SourceConversationID, &item.SourceMessageID, &item.Confidence, &item.Importance, &item.Sensitivity, &item.Pinned, &item.Status, &item.ValidFrom, &validTo, &item.SupersedesID, &item.CreatedAt, &item.UpdatedAt, &arbitrationJSON)
+	if err == nil && len(arbitrationJSON) > 0 {
+		err = json.Unmarshal(arbitrationJSON, &item.Arbitration)
+	}
 	if validTo.Valid {
 		item.ValidTo = &validTo.Time
 	}

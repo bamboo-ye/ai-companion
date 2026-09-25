@@ -38,7 +38,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -e 'workers/python[agent,dev]'
-      - run: PYTHONPATH=workers/python/src python -m unittest discover -s workers/python/tests -v
+      - run: PYTHONPATH=workers/python/src python -m pytest workers/python/tests -q
       - run: >-
           PYTHONPATH=workers/python/src python -m ai_companion_worker.evaluation.runner
           --mode replay
@@ -46,6 +46,7 @@ jobs:
           --baseline evals/agent/baselines/pr.v1.json
           --json-report artifacts/agent-eval/replay.json
           --junit-report artifacts/agent-eval/replay.xml
+      - run: make eval-agent-arbitration
       - run: make eval-agent-performance
       - run: make eval-agent-retry
       - run: make eval-observability-release
@@ -66,6 +67,9 @@ jobs:
       - run: >-
           python -m mypy
           workers/python/src/ai_companion_worker/agent_governance.py
+          workers/python/src/ai_companion_worker/parallel_tasks.py
+          workers/python/src/ai_companion_worker/arbitration.py
+          workers/python/src/ai_companion_worker/model_concurrency.py
           workers/python/src/ai_companion_worker/agent_runtime.py
           workers/python/src/ai_companion_worker/openrouter_decision.py
           workers/python/src/ai_companion_worker/agent_worker.py

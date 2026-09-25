@@ -234,6 +234,9 @@ services:
     env_file:
       - ../../.env
     environment:
+      MODEL_CONCURRENCY_DIR: /app/.model-slots
+      MODEL_CONCURRENCY_SHARED_GID: "10003"
+      MODEL_PROVIDER_CONCURRENCY: ${MODEL_PROVIDER_CONCURRENCY:-8}
       APP_DATABASE_DRIVER: postgres
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
       LANGGRAPH_POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable&options=-csearch_path%3Dlanggraph%2Cpublic"
@@ -269,6 +272,8 @@ services:
         condition: service_healthy
       worker:
         condition: service_started
+    volumes:
+      - model-slots:/app/.model-slots
     healthcheck:
       test: ["CMD", "/healthcheck", "http://127.0.0.1:9467/readyz"]
       interval: 30s
@@ -490,6 +495,9 @@ services:
     env_file:
       - ../../.env
     environment:
+      MODEL_CONCURRENCY_DIR: /app/.model-slots
+      MODEL_CONCURRENCY_SHARED_GID: "10003"
+      MODEL_PROVIDER_CONCURRENCY: ${MODEL_PROVIDER_CONCURRENCY:-8}
       API_HTTP_ADDR: :8080
       APP_DATABASE_DRIVER: ${APP_DATABASE_DRIVER:-postgres}
       MYSQL_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
@@ -516,6 +524,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
+      - model-slots:/app/.model-slots
       - app-files:/app/.data/files
       - skill-files:/app/.data/skill-files
       - ledger-exports:/app/.data/ledger-exports
@@ -551,6 +560,9 @@ services:
     env_file:
       - ../../.env
     environment:
+      MODEL_CONCURRENCY_DIR: /app/.model-slots
+      MODEL_CONCURRENCY_SHARED_GID: "10003"
+      MODEL_PROVIDER_CONCURRENCY: ${MODEL_PROVIDER_CONCURRENCY:-8}
       APP_DATABASE_DRIVER: ${APP_DATABASE_DRIVER:-postgres}
       MYSQL_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-ai_companion}:${POSTGRES_PASSWORD:-change-postgres-me}@postgres:5432/${POSTGRES_DB:-ai_companion}?sslmode=disable"
@@ -567,6 +579,7 @@ services:
       SPREADSHEET_EXECUTABLE: /usr/local/bin/python
       SPREADSHEET_WORKER_PATH: /app/workers/python/src/ai_companion_worker/ledger_export.py
     volumes:
+      - model-slots:/app/.model-slots
       - app-files:/app/.data/files
       - skill-files:/app/.data/skill-files
       - ledger-exports:/app/.data/ledger-exports
@@ -611,6 +624,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  model-slots:
   mysql-data:
   postgres-data:
   redis-data:

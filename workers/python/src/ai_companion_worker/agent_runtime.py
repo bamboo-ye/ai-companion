@@ -18,6 +18,11 @@ os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
 
+from ai_companion_worker.arbitration import make_arbitration_node
+from ai_companion_worker.parallel_tasks import (
+    READ_TOOLS, make_parallel_nodes, merge_task_results, review_requested, task_route, validate_research_tasks,
+)
+
 from ai_companion_worker.email_quality import (
     EMAIL_DRAFT_POLICY_VERSION,
     quality_report as email_quality_report,
@@ -207,6 +212,12 @@ class AgentInput(TypedDict):
 
 
 class AgentState(AgentInput, total=False):
+    parallel_plan: dict[str, Any]
+    parallel_job: dict[str, Any]
+    parallel_results: Annotated[list[dict[str, Any]], merge_task_results]
+    research_results: list[dict[str, Any]]
+    specialist_review: dict[str, Any]
+    arbitrations: list[dict[str, Any]]
     graph_name: str
     graph_version: str
     plan: dict[str, Any]
@@ -275,6 +286,7 @@ class AgentPlan:
     steps: tuple[str, ...]
     success_criteria: str
     task_intent: Mapping[str, Any] = field(default_factory=dict)
+    research_tasks: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -3334,6 +3346,11 @@ def _classify_execution_mode(
         return "agentic", "existing_multi_step_plan"
     if not tool_name:
         return "direct", "model_answered_without_project_tool"
+    if state.get("module") == "work" and tool_name in READ_TOOLS and re.search(
+        r"比较|对比|跨文档|方案评估|研究报告|综合.{0,8}(?:资料|文档)|\bcompare\b|\bresearch\b",
+        state.get("user_message", ""), re.I,
+    ):
+        return "agentic", "complex_read_only_research"
     if definition is not None and definition.get("requires_plan") is True:
         return "agentic", "trusted_tool_requires_precondition_plan"
     if definition is not None and definition.get("repeatable") is True:
@@ -3643,6 +3660,10 @@ def build_graph(
                 steps = tuple(step.strip() for step in plan.steps if step.strip())
                 if not steps or len(steps) > 8:
                     raise ValueError("agent plan must contain between 1 and 8 steps")
+                if plan.research_tasks:
+                    if state["module"] != "work":
+                        raise ValueError("parallel research is only available in work")
+                    validate_research_tasks(plan.research_tasks, state.get("context", {}).get("tools", []))
             except ModelBudgetExceeded as exc:
                 return model_terminal_update(state, node="plan", reason=str(exc))
             except Exception as exc:
@@ -3689,6 +3710,7 @@ def build_graph(
                 "steps": list(steps),
                 "success_criteria": plan.success_criteria.strip(),
                 "task_intent": task_intent,
+                "research_tasks": list(plan.research_tasks),
             },
             "task_contract": apply_planned_task_intent(
                 state.get("task_contract", {}),
@@ -3760,6 +3782,8 @@ def build_graph(
         )
         decision_context["agent_plan"] = dict(state.get("plan", {}))
         decision_context["observations"] = list(state.get("observations", []))
+        decision_context["research_results"] = list(state.get("research_results", []))
+        decision_context["arbitrations"] = list(state.get("arbitrations", []))
         decision_context["action_index"] = state.get("action_index", 0)
         decision_context["task_contract"] = dict(state.get("task_contract", {}))
         decision_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
@@ -3852,6 +3876,8 @@ def build_graph(
         proposed = state.get("proposed_tool")
         if proposed and state.get("execution_mode") == "agentic" and not state.get("plan"):
             return "plan"
+        if task_route(state):
+            return "prepare_parallel"
         if proposed and proposed.get("compose_arguments") is True:
             return composition_route(state)
         if proposed:
@@ -3871,6 +3897,8 @@ def build_graph(
             "model_unavailable",
         ):
             return "finalize"
+        if task_route(state):
+            return "prepare_parallel"
         if not state.get("proposed_tool"):
             return state["module"]
         return after_decision(state)
@@ -4199,6 +4227,7 @@ def build_graph(
         context["model_allowance"] = dict(allocation)
         context["agent_plan"] = dict(state.get("plan", {}))
         context["observations"] = [_document_batch_observation(batch)]
+        context["arbitrations"] = list(state.get("arbitrations", []))
         context["action_index"] = state.get("action_index", 0)
         context["task_contract"] = dict(state.get("task_contract", {}))
         context["email_validation"] = dict(state.get("email_validation", {}))
@@ -5133,6 +5162,8 @@ def build_graph(
             node=node,
         )
         composition_context["agent_plan"] = dict(state.get("plan", {}))
+        composition_context["arbitrations"] = list(state.get("arbitrations", []))
+        composition_context["research_results"] = list(state.get("research_results", []))
         composition_context["observations"] = (
             [_document_batch_observation(batch)]
             if batch is not None
@@ -5758,6 +5789,8 @@ def build_graph(
         )
         response_context["agent_plan"] = dict(state.get("plan", {}))
         response_context["observations"] = list(state.get("observations", []))
+        response_context["research_results"] = list(state.get("research_results", []))
+        response_context["arbitrations"] = list(state.get("arbitrations", []))
         response_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             response = responder(
@@ -5891,6 +5924,8 @@ def build_graph(
             and state.get("outcome") != "response_quality_failed"
         ):
             return "revise_response"
+        if review_requested(state):
+            return "prepare_review"
         return "finalize"
 
     def after_response_revision(state: AgentState) -> str:
@@ -5916,6 +5951,8 @@ def build_graph(
             node=node,
         )
         revision_context["agent_plan"] = dict(state.get("plan", {}))
+        revision_context["arbitrations"] = list(state.get("arbitrations", []))
+        revision_context["research_results"] = list(state.get("research_results", []))
         revision_context["observations"] = list(state.get("observations", []))
         revision_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
@@ -6286,6 +6323,8 @@ def build_graph(
         }
 
     def after_artifact_quality(state: AgentState) -> str:
+        if state.get("artifact_validation", {}).get("passed") is True and review_requested(state):
+            return "prepare_review"
         if state.get("artifact_validation", {}).get("passed") is True:
             return "finalize"
         if state.get("outcome") == "artifact_quality_failed":
@@ -7008,6 +7047,7 @@ def build_graph(
                 "model_authentication_error",
                 "model_invalid_response",
                 "model_unavailable",
+                "specialist_review_failed",
             ):
                 outcome = "artifact_quality_failed"
                 violation_codes = [
@@ -7024,6 +7064,14 @@ def build_graph(
         ):
             outcome = "artifact_missing"
             response = "任务要求的生成文件尚未产出并通过质量门禁，已停止文字结果提前收尾。"
+        unresolved_labels: list[str] = []
+        for record in state.get("arbitrations", []):
+            if record.get("kind") != "research":
+                continue
+            labels = {i["id"]: i["label"] for i in record["issues"]}
+            unresolved_labels.extend(labels[v["issue_id"]] for v in record["decisions"] if v["action"] in ("retain", "need_evidence"))
+        if unresolved_labels:
+            response += "\n\n仍待核对的来源分歧：" + "；".join(dict.fromkeys(unresolved_labels)) + "。这些争议结论尚未作为已确认事实采纳。"
         return {
             "outcome": outcome,
             "response": response,
@@ -7039,6 +7087,11 @@ def build_graph(
         }
 
     builder = StateGraph(AgentState)
+
+    parallel_nodes = make_parallel_nodes(
+        tools=tools, decisions=decisions, policy=policy,
+        allowance=with_model_allowance, access_reason=model_access_reason,
+    )
 
     def register(
         name: str,
@@ -7082,6 +7135,18 @@ def build_graph(
     register("continue_action", continue_action)
     register("finalize", finalize)
 
+    for name in ("prepare_parallel", "schedule_parallel", "execute_parallel_read", "execute_parallel_model", "join_parallel", "wait_parallel", "prepare_review"):
+        register(name, cast(Any, parallel_nodes[name]))
+    register("arbitrate_parallel", cast(Any, make_arbitration_node(decisions=decisions, allowance=with_model_allowance, access_reason=model_access_reason)))
+    builder.add_edge("prepare_parallel", "schedule_parallel")
+    builder.add_conditional_edges("prepare_review", lambda state: "finalize" if state.get("outcome") else "schedule_parallel", {"finalize":"finalize", "schedule_parallel":"schedule_parallel"})
+    builder.add_conditional_edges("schedule_parallel", parallel_nodes["dispatch_parallel"], ["execute_parallel_read", "execute_parallel_model", "finalize"])
+    builder.add_edge("execute_parallel_read", "join_parallel")
+    builder.add_edge("execute_parallel_model", "join_parallel")
+    builder.add_conditional_edges("join_parallel", parallel_nodes["after_join_parallel"], {n:n for n in ("finalize", "continue_action", "generate_response", "revise_response", "schedule_parallel", "wait_parallel", "arbitrate_parallel")})
+    builder.add_conditional_edges("arbitrate_parallel", parallel_nodes["after_join_parallel"], {n:n for n in ("finalize", "continue_action", "generate_response", "revise_response")})
+    builder.add_conditional_edges("wait_parallel", lambda state: "finalize" if state.get("outcome") else "schedule_parallel", {"finalize":"finalize", "schedule_parallel":"schedule_parallel"})
+
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
         "supervisor",
@@ -7099,6 +7164,7 @@ def build_graph(
             after_decision,
             {
                 "plan": "plan",
+                "prepare_parallel": "prepare_parallel",
                 "fanout_composition": "fanout_composition",
                 "compose_arguments": "compose_arguments",
                 "preflight_normalize": "preflight_normalize",
@@ -7111,6 +7177,7 @@ def build_graph(
         "plan",
         after_plan,
         {
+            "prepare_parallel": "prepare_parallel",
             "companion": "companion",
             "life": "life",
             "work": "work",
@@ -7172,6 +7239,7 @@ def build_graph(
         "response_quality_gate",
         after_response_quality,
         {
+            "prepare_review": "prepare_review",
             "revise_response": "revise_response",
             "finalize": "finalize",
         },
@@ -7220,7 +7288,7 @@ def build_graph(
     builder.add_conditional_edges(
         "artifact_quality_gate",
         after_artifact_quality,
-        {"continue_action": "continue_action", "finalize": "finalize"},
+        {"continue_action": "continue_action", "finalize": "finalize", "prepare_review": "prepare_review"},
     )
     builder.add_conditional_edges(
         "classify_tool_failure",

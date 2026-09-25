@@ -29,5 +29,10 @@ RUN pip install --no-cache-dir --no-deps ./workers/python \
     && chown -R agent:agent /app/.scheduler /app/.shadow
 COPY --from=build /out/agent-worker /agent-worker
 COPY --from=build /out/healthcheck /healthcheck
+RUN groupadd --gid 10003 modelquota \
+    && usermod -a -G modelquota agent \
+    && mkdir -p /app/.model-slots \
+    && chown root:modelquota /app/.model-slots \
+    && chmod 2770 /app/.model-slots
 USER agent
 ENTRYPOINT ["/agent-worker"]

@@ -810,6 +810,7 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
                     key: item.get(key)
                     for key in (
                         "graph_node",
+                        "parallel_task_id", "arbitration_id",
                         "role",
                         "status",
                         "provider",
@@ -834,6 +835,10 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
                 }
             )
     return {
+        "parallel_plan": _json_value(result.get("parallel_plan")),
+        "research_results": _json_value(result.get("research_results")),
+        "specialist_review": _json_value(result.get("specialist_review")),
+        "arbitrations": _json_value(result.get("arbitrations")),
         "graph": {
             "name": _optional_string(result, "graph_name") or GRAPH_NAME,
             "version": _optional_string(result, "graph_version") or GRAPH_VERSION,

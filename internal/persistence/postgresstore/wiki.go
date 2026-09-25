@@ -35,3 +35,10 @@ func (s *Store) QueueContextBackfill(ctx context.Context, cursor string, limit i
 func (s *Store) WikiStats(ctx context.Context) (map[string]int64, error) {
 	return document.NewWikiSQLStore(s.db, "postgres").WikiStats(ctx)
 }
+
+func (s *Store) LoadWikiShard(ctx context.Context, user, doc, key string) ([]byte, error) {
+	return document.NewWikiSQLStore(s.db, "postgres").LoadWikiShard(ctx, user, doc, key)
+}
+func (s *Store) SaveWikiShard(ctx context.Context, user, doc, key string, data []byte) error {
+	return document.NewWikiSQLStore(s.db, "postgres").SaveWikiShard(ctx, user, doc, key, data)
+}

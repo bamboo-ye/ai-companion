@@ -55,6 +55,9 @@ type Config struct {
 	SkillStorageDir                    string
 	LedgerStorageDir                   string
 	SkillWorkerEnabled                 bool
+	SkillWorkerConcurrency             int
+	SkillParseConcurrency              int
+	SkillRenderConcurrency             int
 	SkillWorkerPollInterval            time.Duration
 	SkillWorkerLeaseDuration           time.Duration
 	SkillWorkerRenewInterval           time.Duration
@@ -216,6 +219,18 @@ func Load(serviceName string) (Config, error) {
 	skillWorkerEnabled, err := strconv.ParseBool(value("SKILL_WORKER_ENABLED", "true"))
 	if err != nil {
 		return Config{}, fmt.Errorf("SKILL_WORKER_ENABLED must be true or false")
+	}
+	skillWorkerConcurrency, err := strconv.Atoi(value("SKILL_WORKER_CONCURRENCY", "4"))
+	if err != nil || skillWorkerConcurrency < 1 || skillWorkerConcurrency > 32 {
+		return Config{}, fmt.Errorf("SKILL_WORKER_CONCURRENCY must be between 1 and 32")
+	}
+	skillParseConcurrency, err := strconv.Atoi(value("SKILL_PARSE_CONCURRENCY", "2"))
+	if err != nil || skillParseConcurrency < 1 || skillParseConcurrency > 32 {
+		return Config{}, fmt.Errorf("SKILL_PARSE_CONCURRENCY must be between 1 and 32")
+	}
+	skillRenderConcurrency, err := strconv.Atoi(value("SKILL_RENDER_CONCURRENCY", "2"))
+	if err != nil || skillRenderConcurrency < 1 || skillRenderConcurrency > 32 {
+		return Config{}, fmt.Errorf("SKILL_RENDER_CONCURRENCY must be between 1 and 32")
 	}
 	skillWorkerPollInterval, err := time.ParseDuration(value("SKILL_WORKER_POLL_INTERVAL", "1s"))
 	if err != nil || skillWorkerPollInterval <= 0 {
@@ -672,6 +687,9 @@ func Load(serviceName string) (Config, error) {
 		SkillStorageDir:               value("SKILL_STORAGE_DIR", ".data/skill-files"),
 		LedgerStorageDir:              value("LEDGER_STORAGE_DIR", ".data/ledger-exports"),
 		SkillWorkerEnabled:            skillWorkerEnabled,
+		SkillWorkerConcurrency:        skillWorkerConcurrency,
+		SkillParseConcurrency:         skillParseConcurrency,
+		SkillRenderConcurrency:        skillRenderConcurrency,
 		SkillWorkerPollInterval:       skillWorkerPollInterval,
 		SkillWorkerLeaseDuration:      skillWorkerLeaseDuration,
 		SkillWorkerRenewInterval:      skillWorkerRenewInterval,
@@ -792,6 +810,20 @@ func splitNonEmpty(value string) []string {
 func loadKnowledge(environment string) (semantic.Config, error) {
 	c := semantic.Config{BaseURL: value("CONTEXT_MODEL_BASE_URL", ""), APIKey: value("CONTEXT_MODEL_API_KEY", ""), EmbeddingModel: value("CONTEXT_EMBEDDING_MODEL", ""), RerankModel: value("CONTEXT_RERANK_MODEL", ""), SummaryModel: value("CONTEXT_SUMMARY_MODEL", ""), IndexMode: value("CONTEXT_INDEX_MODE", "legacy")}
 	var err error
+	for _, setting := range []struct {
+		key               string
+		target            *int
+		fallback, maximum int
+	}{
+		{"CONTEXT_MODEL_CONCURRENCY", &c.Concurrency, 6, 32},
+		{"CONTEXT_WIKI_CONCURRENCY", &c.WikiConcurrency, 3, 8},
+		{"CONTEXT_WIKI_MAX_BATCHES", &c.WikiMaxBatches, 64, 256},
+	} {
+		*setting.target, err = strconv.Atoi(value(setting.key, strconv.Itoa(setting.fallback)))
+		if err != nil || *setting.target < 1 || *setting.target > setting.maximum {
+			return c, fmt.Errorf("%s must be between 1 and %d", setting.key, setting.maximum)
+		}
+	}
 	c.Dimensions, err = strconv.Atoi(value("CONTEXT_EMBEDDING_DIMENSIONS", "1024"))
 	if err != nil || c.Dimensions < 2 || c.Dimensions > 8192 {
 		return c, fmt.Errorf("CONTEXT_EMBEDDING_DIMENSIONS must be 2..8192")

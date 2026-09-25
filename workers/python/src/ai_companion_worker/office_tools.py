@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai_companion_worker.model_concurrency import model_request_slot
+
 import base64
 import csv
 import hashlib
@@ -1098,8 +1100,9 @@ def _openrouter_translate(
     )
     started_ns = time.perf_counter_ns()
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            raw = response.read(MAX_MODEL_RESPONSE_BYTES + 1)
+        with model_request_slot(base_url, 90) as remaining:
+            with urllib.request.urlopen(request, timeout=remaining) as response:
+                raw = response.read(MAX_MODEL_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
         raise ValueError(f"translation_model_http_{exc.code}") from exc
     except Exception as exc:

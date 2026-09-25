@@ -265,7 +265,7 @@ test-go: ## Run Go tests
 	GOCACHE=$(GOCACHE) go test ./...
 
 test-python: ## Run Python worker tests
-	PYTHONPATH=workers/python/src $(PYTHON) -m unittest discover -s workers/python/tests -v
+	PYTHONPATH=workers/python/src $(PYTHON) -m pytest workers/python/tests -q
 
 test-web: ## Type-check and lint the web app
 	cd web && pnpm check
@@ -292,7 +292,11 @@ eval-agent-retry: ## Evaluate bounded retry scheduling and recovery logs
 	mkdir -p artifacts/agent-eval
 	PYTHONPATH=workers/python/src $(PYTHON) -m ai_companion_worker.evaluation.retry --input $(AGENT_RETRY_LOG) --baseline evals/agent/baselines/retry.v1.json --json-report artifacts/agent-eval/retry.json --junit-report artifacts/agent-eval/retry.xml
 
-eval-agent: eval-agent-contract eval-agent-replay eval-agent-performance eval-agent-retry ## Run all offline Agent quality, performance and retry gates
+eval-agent-arbitration: ## Verify evidence arbitration, bounded repair and checkpoint recovery
+	mkdir -p artifacts/agent-eval
+	PYTHONPATH=workers/python/src $(PYTHON) -m pytest workers/python/tests/test_arbitration.py -q --junitxml=artifacts/agent-eval/arbitration.xml
+
+eval-agent: eval-agent-contract eval-agent-replay eval-agent-performance eval-agent-retry eval-agent-arbitration ## Run all offline Agent quality, performance and retry gates
 
 eval-observability-release: ## Compare sanitized before/after release metrics snapshots
 	mkdir -p artifacts/observability-eval
@@ -892,7 +896,7 @@ log-stack-logs: ## Follow Loki and Alloy logs
 
 release-check: ## Run backend release-readiness static gates
 	GOCACHE=$(GOCACHE) go test ./...
-	PYTHONPATH=workers/python/src $(PYTHON) -m unittest discover -s workers/python/tests -v
+	PYTHONPATH=workers/python/src $(PYTHON) -m pytest workers/python/tests -q
 	$(MAKE) eval-agent-replay
 	$(MAKE) eval-agent-runtime
 	$(MAKE) eval-agent-performance

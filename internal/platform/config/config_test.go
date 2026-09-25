@@ -14,6 +14,26 @@ func setProductionOpenRouter(t *testing.T) {
 	t.Setenv("AGENT_CHAT_MODULES", "companion,life,work")
 }
 
+func TestParallelismConfigBounds(t *testing.T) {
+	for key, maximum := range map[string]string{"SKILL_WORKER_CONCURRENCY": "33", "SKILL_PARSE_CONCURRENCY": "33", "SKILL_RENDER_CONCURRENCY": "33", "CONTEXT_MODEL_CONCURRENCY": "33", "CONTEXT_WIKI_CONCURRENCY": "9", "CONTEXT_WIKI_MAX_BATCHES": "257"} {
+		for _, invalid := range []string{"0", "-1", "two", maximum, "2garbage"} {
+			t.Run(key+"/"+invalid, func(t *testing.T) {
+				t.Setenv(key, invalid)
+				if _, err := Load("test"); err == nil {
+					t.Fatal("accepted invalid concurrency")
+				}
+			})
+		}
+	}
+	config, err := Load("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.SkillWorkerConcurrency != 4 || config.SkillParseConcurrency != 2 || config.SkillRenderConcurrency != 2 || config.Knowledge.WikiConcurrency != 3 || config.Knowledge.WikiMaxBatches != 64 {
+		t.Fatalf("unexpected defaults: %+v", config.Knowledge)
+	}
+}
+
 func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SHUTDOWN_TIMEOUT", "")
 	t.Setenv("KAFKA_BROKERS", "")

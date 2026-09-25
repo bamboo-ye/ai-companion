@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.69.0"
+GRAPH_VERSION = "3.71.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -465,6 +465,32 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         allowed_writes=("outcome", "response", "node_trace", "steps"),
     ),
 }
+
+
+for _name in ("prepare_parallel", "schedule_parallel", "join_parallel", "wait_parallel", "prepare_review"):
+    NODE_CONTRACTS[_name] = NodeContract(
+        responsibility="Coordinate bounded, checkpointed read/research/review tasks and merge branch results.",
+        kind="external_wait" if _name == "wait_parallel" else "deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(*_MODEL_CONTROL_WRITES, "parallel_plan", "parallel_results", "specialist_review",
+                        "proposed_tool", "preparation", "tool_result", "action_index", "observations",
+                        "research_results", "artifact_validation", "response_validation", "task_polls", "recovery"),
+    )
+NODE_CONTRACTS["execute_parallel_read"] = NodeContract(
+    responsibility="Execute one allowlisted read under a stable branch key and the Go gateway fence.",
+    kind="tool", recovery="checkpoint_replay", allowed_writes=("parallel_results",),
+)
+NODE_CONTRACTS["execute_parallel_model"] = NodeContract(
+    responsibility="Analyze scoped evidence or review a frozen candidate within a reserved branch budget.",
+    kind="model", model_role="composer", recovery="checkpoint_replay", max_model_calls=24,
+    allowed_writes=("parallel_results",),
+)
+
+NODE_CONTRACTS["arbitrate_parallel"] = NodeContract(
+    responsibility="Resolve semantic disputes against frozen evidence, retaining uncertainty on failure.",
+    kind="model", model_role="composer", recovery="checkpoint_replay", max_model_calls=3,
+    allowed_writes=(*_MODEL_CONTROL_WRITES, "parallel_plan", "arbitrations", "research_results", "specialist_review", "response_validation", "artifact_validation"),
+)
 
 
 @dataclass(frozen=True)

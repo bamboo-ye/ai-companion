@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai_companion_worker.model_concurrency import model_request_slot
+
 import base64
 import hashlib
 import io
@@ -109,8 +111,9 @@ def generate_presentation_visual(
     )
     started_ns = time.perf_counter_ns()
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
+        with model_request_slot(config.base_url, 120) as remaining:
+            with urllib.request.urlopen(request, timeout=remaining) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
         raise ValueError(f"presentation_image_http_{exc.code}") from exc
     except Exception as exc:

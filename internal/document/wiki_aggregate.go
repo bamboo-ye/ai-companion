@@ -41,6 +41,7 @@ func (s *Service) aggregateWiki(ctx context.Context, user, documentID string, fr
 		groups[key] = append(groups[key], p)
 	}
 	out := []WikiPage{}
+	raw := map[string][]WikiEvidence{}
 	for key, pages := range groups {
 		bySource := map[string]WikiSource{}
 		for _, p := range pages {
@@ -61,6 +62,7 @@ func (s *Service) aggregateWiki(ctx context.Context, user, documentID string, fr
 		for _, child := range pages {
 			p.Links = append(p.Links, child.ID)
 			for _, e := range child.Evidence {
+				raw[p.ID] = append(raw[p.ID], e)
 				for _, match := range wikiClaim.FindAllStringSubmatch(e.Quote, -1) {
 					claim := strings.TrimSpace(match[1])
 					value := strings.TrimSpace(match[2])
@@ -95,5 +97,6 @@ func (s *Service) aggregateWiki(ctx context.Context, user, documentID string, fr
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	s.arbitrateWiki(ctx, out, raw)
 	return out, nil
 }

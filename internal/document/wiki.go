@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/windcry1/ai-companion/internal/arbitration"
 	"github.com/windcry1/ai-companion/internal/contextengine"
 	"github.com/windcry1/ai-companion/internal/platform/id"
 	"github.com/windcry1/ai-companion/internal/semantic"
@@ -33,20 +34,30 @@ type WikiEvidence struct {
 	Page       int    `json:"page"`
 }
 type WikiPage struct {
-	ID        string         `json:"id"`
-	OwnerID   string         `json:"-"`
-	Version   int            `json:"version"`
-	Kind      string         `json:"kind"`
-	Title     string         `json:"title"`
-	Body      string         `json:"body"`
-	Sources   []WikiSource   `json:"sources"`
-	Evidence  []WikiEvidence `json:"evidence"`
-	Links     []string       `json:"links"`
-	Conflicts []string       `json:"conflicts"`
-	Compiler  string         `json:"compiler"`
-	Edited    bool           `json:"edited"`
-	Stale     bool           `json:"stale"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID          string              `json:"id"`
+	OwnerID     string              `json:"-"`
+	Version     int                 `json:"version"`
+	Kind        string              `json:"kind"`
+	Title       string              `json:"title"`
+	Body        string              `json:"body"`
+	Sources     []WikiSource        `json:"sources"`
+	Evidence    []WikiEvidence      `json:"evidence"`
+	Links       []string            `json:"links"`
+	Conflicts   []string            `json:"conflicts"`
+	Compiler    string              `json:"compiler"`
+	Edited      bool                `json:"edited"`
+	Stale       bool                `json:"stale"`
+	UpdatedAt   time.Time           `json:"updated_at"`
+	Synthesis   *WikiSynthesis      `json:"synthesis,omitempty"`
+	Arbitration *arbitration.Record `json:"arbitration,omitempty"`
+}
+
+// Coverage describes semantic processing separately from the exhaustive
+// source pages, including explicit fallback when the model budget is too small.
+type WikiSynthesis struct {
+	Batches   int    `json:"batches"`
+	Completed int    `json:"completed"`
+	Degraded  string `json:"degraded,omitempty"`
 }
 type WikiJob struct {
 	DocumentID string

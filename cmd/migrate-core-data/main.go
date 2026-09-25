@@ -717,8 +717,8 @@ func coreTables() []tableSpec {
 		},
 		{
 			name: "long_term_memories", target: "app.long_term_memories",
-			columns:    fields("id,user_id,memory_type,content,normalized_hash,source_conversation_id,source_message_id,confidence,importance,sensitivity,pinned,status,valid_from,valid_to,supersedes_id,created_at,updated_at"),
-			sourceRows: `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),memory_type,content,normalized_hash,BIN_TO_UUID(source_conversation_id),BIN_TO_UUID(source_message_id),confidence,importance,sensitivity,pinned,status,valid_from,valid_to,NULL,created_at,updated_at FROM long_term_memories ORDER BY id`,
+			columns:    fields("id,user_id,memory_type,content,normalized_hash,source_conversation_id,source_message_id,confidence,importance,sensitivity,pinned,status,valid_from,valid_to,supersedes_id,created_at,updated_at,arbitration"),
+			sourceRows: `SELECT BIN_TO_UUID(id),BIN_TO_UUID(user_id),memory_type,content,normalized_hash,BIN_TO_UUID(source_conversation_id),BIN_TO_UUID(source_message_id),confidence,importance,sensitivity,pinned,status,valid_from,valid_to,NULL,created_at,updated_at,arbitration FROM long_term_memories ORDER BY id`,
 			sourceKeys: `SELECT BIN_TO_UUID(id) FROM long_term_memories`,
 			targetKeys: `SELECT id::text FROM app.long_term_memories`,
 			normalize:  normalizeBooleans(10),
