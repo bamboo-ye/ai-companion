@@ -39,6 +39,16 @@ Python 按节点选择完整历史消息组：Router/Assessor 2000、Repairer 30
 
 Web「我的 Wiki」支持分类、搜索、阅读、原文引用、链接、Markdown 编辑与导出、版本历史和质量反馈。更新须提交当前 `version`，冲突返回 409。编译器保留人工修改；人工页来源变化后可显式选择“按新来源重建”，释放编辑保护。数据库保留旧修订，但过期来源的历史正文不会作为有效参考返回。
 
+## 并行综合与证据仲裁（2026-09-25）
+
+Wiki 语义综合按最多 24,000 UTF-8 字节分批处理全部片段，默认单文档并发 3、最多 64 批。每个片段的原文页面始终保留；超出批次数预算或部分失败时，来源页 `synthesis` 元数据报告覆盖范围，不能将保留原文误称为语义综合全部成功。成功分片缓存 24 小时，绑定用户、文档、来源版本、模型与输入；重建可复用成功分片，并重新校验引用和权限。
+
+多来源显式字段差异可由证据仲裁标注等价、范围不同、明确版本替代、矛盾或待核对。Wiki 正文追加「来源差异核对」，保留原记录及冲突提示；较晚上传不能证明版本替代。模型上下文按完全相同的来源权限与版本依赖分组，失败或预算不足时保留争议。
+
+创建或编辑记忆会对文本重合的同一用户活动记忆进行有界核对。结果只标注关系，双方仍保留；替代旧记忆继续要求显式纠正接口。关联内容变更、删除或被替代后，旧仲裁记录不再作为有效关系返回。当前记忆管理页提供编辑、固定和删除，尚未展示仲裁记录详情；后台能力不等于已有对应的页面控件。
+
+除原有迁移外，还需 PostgreSQL `000044_wiki_shards`、`000045_memory_arbitration`（MySQL `000033`、`000034`）。具体预算、共享模型许可和验证步骤见[并行执行](PARALLEL_AGENTS.md)与[证据仲裁](ARBITRATION.md)。
+
 ## P3：按需补查、缓存、反馈与灰度
 
 工作模块新增 `work_wiki_search`、`work_wiki_read`、`work_wiki_follow_links`：搜索最多 5 个摘要；读取按 offset 连续分页并返回 `has_more`；链接最多 4 页。单次工具返回有 6000 Token 硬上限。内置 Router 在 8 次成功 Wiki 调用后停止提供这些工具；全部节点另受 Run 预算约束。Wiki 不替代真实账本、任务、计划工具或完整文档提取。
@@ -101,7 +111,7 @@ go run ./cmd/context-eval --min-recall 0.8
 
 ```sh
 go test ./...
-PYTHONPATH=workers/python/src workers/python/.venv/bin/python -m unittest discover -s workers/python/tests
+make test-python  # pytest，包含并行与仲裁的函数式测试
 pnpm -C web check
 pnpm -C web build
 # 专用测试实例，请勿指向生产库。

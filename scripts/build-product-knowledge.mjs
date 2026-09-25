@@ -12,6 +12,8 @@ const files = [
   ["docs/TECHNICAL_GUIDE.zh-CN.md", "技术实现与开发指南", "technical"],
   ["docs/GETTING_STARTED.md", "新手上手与本地开发", "project"],
   ["docs/CONTEXT_MANAGEMENT.md", "上下文、记忆与 Wiki", "technical"],
+  ["docs/PARALLEL_AGENTS.md", "并行任务、资源与恢复", "technical"],
+  ["docs/ARBITRATION.md", "审校与证据仲裁", "technical"],
   ["docs/ADMIN_QUOTAS.md", "全体与指定用户额度管理", "admin"],
   ["docs/ADMIN_PASSKEY_LOGIN.md", "管理员登录与恢复", "admin"],
   ["docs/PRODUCT_KNOWLEDGE.md", "内置项目知识库", "technical"],

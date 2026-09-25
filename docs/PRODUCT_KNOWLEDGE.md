@@ -1,6 +1,6 @@
 # 内置项目知识库
 
-产品介绍、使用步骤和配置说明随 API/Worker 二进制发布。新注册用户无需上传项目文档、等待 Wiki 编译或配置向量模型，即可在情感陪伴、生活助手、工作伙伴里询问产品用法。
+产品介绍、使用步骤和配置说明随 API、Worker 和 Agent Worker 二进制发布。新注册用户无需上传项目文档、等待 Wiki 编译或配置向量模型，即可在情感陪伴、生活助手、工作伙伴里询问产品用法。
 
 ## 使用方式
 
@@ -12,7 +12,7 @@
 
 ## 来源与更新
 
-白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。
+白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及[并行任务与资源配置](PARALLEL_AGENTS.md)、[审校与证据仲裁](ARBITRATION.md)、上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。
 
 更新来源后执行：
 
@@ -22,7 +22,7 @@ node scripts/build-product-knowledge.mjs --check
 go test ./internal/productknowledge
 ```
 
-生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。部署正常重新构建 API/Worker 即生效，无需新数据库迁移。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。
+生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。仅更新说明时，重新构建 API、Worker、Agent Worker 和 Web 即可同步内容，无需为知识包单独迁移数据库。若同时升级功能，仍须执行功能对应的迁移，例如并行与仲裁的 PostgreSQL 000044/000045。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。
 
 ## 对话与执行边界
 

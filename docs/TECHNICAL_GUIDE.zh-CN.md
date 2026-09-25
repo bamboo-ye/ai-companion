@@ -2,7 +2,7 @@
 
 [返回产品首页](../README.zh-CN.md) · [English engineering guide](ENGINEERING.md) · [新手上手](GETTING_STARTED.md)
 
-本文保留首页背后的实现细节、工程难点、架构、默认参数、开发与验证命令。首次体验建议先按新手指南启动；以下命令均从仓库根目录执行。默认值与代码核对日期：2026-09-20。
+本文保留首页背后的实现细节、工程难点、架构、默认参数、开发与验证命令。首次体验建议先按新手指南启动；以下命令均从仓库根目录执行。默认值与代码核对日期：2026-09-25。
 
 ## 技术亮点
 
@@ -39,6 +39,10 @@
 
 实现入口：[Go 调度器](../internal/agent/dispatcher.go)、[进程池测试](../internal/agent/python_executor_test.go)、[并行设计与受控实验](blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md)。实验使用固定延迟的模拟供应商验证并行效果，实际耗时取决于文档规模和模型服务。
 
+当前图版本 `ai-companion-supervisor@3.71.0` 还支持：2–3 份附件的独立读取、2–6 个受校验的只读研究任务 DAG，以及按需并行检查来源和表达。依赖任务先后执行，异步任务恢复时观察已有任务，失败分支最多重试一次。工作聊天中明确提出“审校”“审阅”“仔细核对”可触发默认按需审校，必要时修订一次再复核；检查对象是候选内容或生成参数，不是文件渲染后的版式。
+
+Go Skill Worker 的任务执行、解析、渲染各有并发许可；Go/Python 模型请求还共用同主机供应商许可。多来源研究分歧与审校意见进入证据仲裁，严格校验候选和原文摘录；未解决的研究分歧会阻止文件生成。研究与审校继续使用既有 Composer 配置，不保证模型意见彼此独立。详见[并行执行与资源配置](PARALLEL_AGENTS.md)、[证据仲裁](ARBITRATION.md)。
+
 ### 3. 数据库优先的可靠异步架构
 
 PostgreSQL 是任务状态、Agent Run、租约、重试计划、幂等键和审计记录的事实来源。Worker 使用有界并发、行级租约和 `SKIP LOCKED` 认领任务，可在进程中断后继续恢复。
@@ -61,6 +65,7 @@ Agent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态�
 
 - **保留语义组**：按同一 `sequence` 的完整消息组裁剪，保留最新组，避免从限定词或否定条件中间截断。Router/Assessor、Repairer、Planner、Composer/Responder 的历史选择预算分别为 2,000、3,000、4,000、6,000 估算 Token。
 - **摘要可核对**：摘要中的目标、约束、事实、已完成、待办和背景均附原消息 ID 与角色；未知来源被拒绝，语义摘要失败时回退到结构化抽取。
+- **记忆关系可核对**：新建或编辑内容与已有记忆重合时可标注兼容或冲突，保留双方；仲裁记录绑定来源内容版本，失效后不继续召回。
 - **记忆可纠正**：用户纠正创建新事实，通过 `supersedes_id` 关联旧事实并关闭旧有效期；召回过滤过期、未来生效和已替代事实。
 - **完整请求二次检查**：调用前按 UTF-8 字节计算保守上界，包含消息、工具 Schema、响应 Schema、输出预留和 1,024 Token 安全余量；历史选择预算不替代最终窗口保护。
 - **资料不授予权限**：摘要、记忆和知识以参考资料注入，当前用户纠正优先；正文中的命令不能改变工具授权，也不能证明业务动作已完成。
@@ -71,7 +76,8 @@ Agent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态�
 
 文档解析后，持久化 Wiki Job 将 Source IR/Chunks 编译为页面与证据关系。每个 Chunk 都有抽取页，来源页链接全部片段；可选模型再组织主题、实体和决策页，并逐段校验 `[chunk:ID]` 引用。
 
-- **冲突保留双方证据**：聚合页对显式字段值差异保留来源并标记待核对，不自动选择某个值作为事实。
+- **全量分批综合**：全部片段按 24,000 UTF-8 字节分批，默认并发 3、最多 64 批；成功批次按用户、来源版本和模型缓存 24 小时。部分失败或超限会报告覆盖范围，仍保留全部原文页面。
+- **冲突保留双方证据**：聚合页保留显式字段值差异，可追加证据仲裁的等价、范围或版本关系说明；原文和冲突提示不删除。明确版本替代必须有原文依据，上传时间不能作为判定依据。
 - **依赖权限取交集**：多文档页面要求全部来源均在当前用户/工作空间可见。读取、搜索、历史访问重新检查来源状态与版本；取消共享、删除或改版会阻止旧资料继续作为有效知识返回。
 - **编辑使用版本校验**：Markdown 编辑提交当前版本，过期写入返回 409；自动编译保留人工修改，用户可显式重建以释放编辑保护。
 - **按需获取证据**：`work_wiki_search/read/follow_links` 支持搜索、分页读取和链接扩展，与内置产品知识共享最多 8 次成功补查预算；全文完整性任务继续使用附件提取链路。
@@ -241,20 +247,28 @@ flowchart LR
 | `AGENT_WORKER_CONCURRENCY` | `4` | Go 层同时执行的 Agent Run 数量，也是持久 Python 池的容量基准 |
 | `AGENT_DISPATCH_QUEUE_SIZE` | `32` | Agent 调度器有界队列容量，用于显式背压 |
 | `AGENT_PYTHON_POOL_WARM_SIZE` | `1` | Worker 就绪前预热的 Python Agent 进程数 |
-| `AGENT_MODEL_FANOUT_CONCURRENCY` | `3` | 单个 LangGraph Run 内 Composer 分支并发数，有效范围为 1–4 |
+| `AGENT_MODEL_FANOUT_CONCURRENCY` | `3` | 单个 LangGraph Run 内 Composer、研究和审校等模型分支的并发上限，有效范围为 1–4 |
 | `AGENT_COMPOSER_SOURCE_BATCH_MAX_TOKENS` | `2000` | 单个大文档 Composer 来源分片的 Token 上限 |
 | `AGENT_COMPOSER_SOURCE_BATCH_MAX_CHARS` | `12000` | 单个大文档 Composer 来源分片的字符上限 |
 | `MODEL_COMPOSER_BATCH_MAX_TOKENS` | `6144` | 单个 Composer 分支的结构化输出上限 |
+| `SKILL_WORKER_CONCURRENCY` / `SKILL_PARSE_CONCURRENCY` / `SKILL_RENDER_CONCURRENCY` | `4 / 2 / 2` | Skill 执行池及解析、渲染许可，分别为 1–32 |
+| `AGENT_PARALLEL_ATTACHMENTS` | `true` | 符合条件的 2–3 份附件独立读取 |
+| `AGENT_SPECIALIST_REVIEW_MODE` | `requested` | 工作模块审校：`off` / `requested` / `always` |
+| `CONTEXT_MODEL_CONCURRENCY` / `CONTEXT_WIKI_CONCURRENCY` | `6 / 3` | 单语义客户端总请求、单文档 Wiki 分片并发，分别为 1–32 / 1–8 |
+| `CONTEXT_WIKI_MAX_BATCHES` | `64` | 单文档语义综合批次上限，范围 1–256 |
+| `MODEL_PROVIDER_CONCURRENCY` | `8` | 同共享目录、同供应商主机的跨 Go/Python 请求并发，范围 1–64 |
 | `MODEL_TRANSLATION_CONCURRENCY` | `2` | PDF 翻译批次并发数，有效范围为 1–4 |
 | `MODEL_PRESENTATION_IMAGE_CONCURRENCY` | `2` | 演示文稿图片生成并发数，有效范围为 1–4 |
 
 所有并发参数都有硬上限或有界队列保护。模型分支在启动前先预留独立预算，因此增大并发不会放大单次运行允许的调用次数、Token 或成本。
 
+同机进程通过 `MODEL_CONCURRENCY_DIR` 共享 POSIX 文件锁许可；Compose 已配置共享卷和组。所有参与进程应使用相同并发值，跨主机需额外集中式限流。升级需执行 Wiki 分片及记忆仲裁迁移，并先处理旧图版本的未完成 Run，详见[升级与测试](PARALLEL_AGENTS.md#升级与测试)。
+
 ## 快速开始
 
 ### 环境要求
 
-- Go 1.26+
+- Go 1.26.8+
 - Python 3.12+
 - Node.js 24+ 与 pnpm 11+
 - Docker Desktop 与 Docker Compose v2
@@ -350,7 +364,7 @@ make check
 make release-check
 ```
 
-该门禁覆盖 Go 全量测试、Python Worker 单元测试、Agent 回放/运行时/性能/重试评测、可观测性发布基线与配置校验、OpenAPI YAML 解析、Docker Compose 配置校验、发布证据脚本与验证器测试，以及 Git diff 空白检查。数据库专项测试未配置专用 DSN 时会跳过，离线样例评测不代表真实生产验收。
+该门禁覆盖 Go 全量测试、Python Worker pytest 测试（包括并行与仲裁）、Agent 回放/运行时/性能/重试评测、可观测性发布基线与配置校验、OpenAPI YAML 解析、Docker Compose 配置校验、发布证据脚本与验证器测试，以及 Git diff 空白检查。数据库专项测试未配置专用 DSN 时会跳过，离线样例评测不代表真实生产验收。
 
 `make check` 包含格式化并会改写源码；上述两个目标均不包含 Web 检查。文档或页面指南更新后，还需同步知识包并单独验证 Web：
 
@@ -370,6 +384,7 @@ pnpm build
 make eval-m2        # 100 条文档检索质量用例
 make eval-m4        # 意图路由回归门禁
 make eval-agent     # Agent 结果与执行链契约
+make eval-agent-arbitration  # 证据仲裁与有界修订，输出独立报告
 make eval-agent-runtime  # 并发、背压与异步恢复契约
 make validate-observability
 go run ./cmd/context-eval --offline  # 上下文检索离线基线

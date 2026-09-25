@@ -29,11 +29,17 @@ Before fan-out, model calls, prompt/completion tokens and cost allowances are re
 
 Direct answers and single-tool requests can bypass planning; multi-step requests use the full Agent loop. Parallel tests check actual peak concurrency, stable ordering, complete usage settlement and relative wall time using controlled provider delays. See the [dispatcher](../internal/agent/dispatcher.go), [pool tests](../internal/agent/python_executor_test.go) and [parallelism experiments](blog/ppt-generation-vibe-coding/09-parallelism-design-and-results.md).
 
+Graph `ai-companion-supervisor@3.71.0` also supports independent reads of 2–3 attachments, validated read-only research DAGs of 2–6 tasks, and requested source/expression review in Work chat. Dependencies preserve ordering; asynchronous resumes observe existing tasks. Source and expression reviewers can request at most one revision and a recheck. Review covers candidate text or generation arguments, not the rendered file layout.
+
+Skill execution, parsing and rendering use bounded pools (defaults 4/2/2). Go and Python model calls share provider permits on one host (default 8). Conflicting research claims and review findings are arbitrated against original evidence; unresolved research disputes stop file generation. Arbitration does not replace permission, schema, approval or budget checks. See [parallel execution](PARALLEL_AGENTS.md) and [evidence arbitration](ARBITRATION.md) for settings, limits and upgrade steps.
+
 ### 3. Shared context and correctable memory
 
 Regular chat and Agent intake use the same Go `BuildContext` entry point and `conversation-context-v1` snapshot. Recent history, rolling summaries, long-term memories and built-in product knowledge have separate budgets and provenance. Python selects complete message groups by role: Router/Assessor 2,000, Repairer 3,000, Planner 4,000 and Composer/Responder 6,000 estimated history tokens.
 
 Summaries retain goals, constraints, facts, completed work, pending work and background with source message IDs and speaker roles. Invalid sources trigger rejection or extractive fallback. Memory corrections create a new fact linked through `supersedes_id` and close the old validity interval; expired, future and superseded facts are excluded from recall.
+
+New or edited memories can receive evidence-based compatibility/conflict annotations without replacing either record. Source changes invalidate those annotations; only explicit correction replaces old facts. The current memory Web panel does not display arbitration details.
 
 Selection budgets are followed by a conservative UTF-8 byte upper-bound check of the entire model request, including tool/response schemas, output reservation and a 1,024-token safety allowance. References cannot grant tool permissions or prove a business action occurred. Diagnostic manifests contain provenance and counters rather than private reference text.
 
@@ -41,7 +47,7 @@ Sources: [context contract](../internal/contextengine/context.go), [shared build
 
 ### 4. Evidence-backed Wiki with permission-aware invalidation
 
-Durable compilation jobs create a page for every source chunk and a source page linking them all. Optional semantic synthesis adds source/topic/entity/decision pages only after checking chunk IDs and paragraph-level citations. Aggregates retain conflicting explicit field values with both sources for review.
+Durable compilation jobs create a page for every source chunk and a source page linking them all. Optional semantic synthesis adds source/topic/entity/decision pages only after checking chunk IDs and paragraph-level citations. Semantic synthesis processes all chunks in batches of up to 24,000 UTF-8 bytes, with default concurrency 3 and a 64-batch ceiling. Successful shards are cached for 24 hours with owner, source-version and model isolation; partial coverage is reported while original chunk pages remain available. Aggregates retain conflicting explicit field values and may append evidence-arbitration explanations; a later upload alone never proves that an older source was superseded.
 
 Multi-source pages require access to **every** dependency. Reads, searches and history access recheck source existence, readiness and version, so deletion, unsharing or reparsing prevents stale evidence from being returned as current knowledge. Cache fingerprints include accessible page and source versions, invalidating both hits and misses.
 
@@ -92,6 +98,8 @@ Agent Studio provides graph/node debugging, immutable Prompt versions, evaluatio
 | Concurrent quota edits or replayed admin sessions bypass governance | Atomic WebAuthn challenge consumption, session versions, quota revisions and transactional audits | [Passkey tests](../internal/adminpasskey/service_test.go), [durable quota tests](../internal/billing/quota_durable_test.go) |
 | Product answers use stale documentation or treat examples as executed actions | Allowlisted embedded knowledge, source hashes, reference-only injection and separate business tools | [Product-knowledge tests](../internal/productknowledge/catalog_test.go) |
 
+Upgrade requires PostgreSQL migrations `000044_wiki_shards` and `000045_memory_arbitration` (MySQL `000033`/`000034`), rebuilding API/Worker/Agent images, and completing old-graph Runs or restarting them explicitly. Run `make test-python` (pytest) to include both function-based parallel/arbitration tests and existing unittest cases; `make eval-agent-arbitration` emits a separate report.
+
 ## Documentation maintenance
 
 The Chinese README and technical guide are also sources for built-in product knowledge. After editing them or the onboarding/topic guides, rebuild the catalog and run its consistency and retrieval checks:
@@ -123,7 +131,7 @@ docs/adr/                  Architecture decisions
 
 ## Prerequisites
 
-- Go 1.26+
+- Go 1.26.8+
 - Python 3.12+
 - Node.js 24+ and pnpm 11+
 - Docker Desktop with Compose v2
