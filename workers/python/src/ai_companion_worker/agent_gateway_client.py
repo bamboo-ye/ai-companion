@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -80,6 +81,35 @@ class HTTPToolGateway:
 
     def bind_trace_context(self, run: Mapping[str, Any]) -> None:
         self._trace_headers = propagation_headers(run)
+
+    def read_evidence(self, *, deadline_at: float, **kwargs: Any) -> ToolPreparation | ToolOutcome:
+        """Clamp a read to the persisted debate deadline without mutating this
+        shared adapter (two evidence reads can run concurrently)."""
+        remaining = deadline_at - time.time()
+        if remaining <= 0:
+            raise TimeoutError("evidence read deadline expired")
+        scoped = HTTPToolGateway(
+            self._base_url, self._service_token, min(self._timeout_seconds, remaining),
+            self._expected_revision,
+        )
+        scoped._trace_headers = dict(self._trace_headers)
+        if "task_id" in kwargs:
+            return scoped.observe(**kwargs)
+        return scoped.prepare(**kwargs)
+
+    def validate_evidence(self, *, run_id: str, references: list[dict[str, str]], deadline_at: float) -> dict[str, str]:
+        remaining = deadline_at - time.time()
+        if remaining <= 0:
+            raise TimeoutError("evidence validation deadline expired")
+        scoped = HTTPToolGateway(self._base_url, self._service_token,
+                                 min(self._timeout_seconds, remaining), self._expected_revision)
+        scoped._trace_headers = dict(self._trace_headers)
+        result = scoped._post(f"/internal/v1/agent/runs/{self._run_path(run_id)}/evidence/validate",
+                              {"references": references})
+        versions = result.get("versions")
+        if not isinstance(versions, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in versions.items()):
+            raise RuntimeError("invalid evidence validation response")
+        return versions
 
     def prepare(
         self,

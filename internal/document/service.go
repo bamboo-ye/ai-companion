@@ -37,6 +37,7 @@ type Document struct {
 	SHA256        string     `json:"sha256"`
 	StorageKey    string     `json:"-"`
 	Status        string     `json:"status"`
+	IndexState    string     `json:"index_state,omitempty"`
 	ParserVersion string     `json:"parser_version,omitempty"`
 	PageCount     int        `json:"page_count"`
 	ChunkCount    int        `json:"chunk_count"`
@@ -137,7 +138,11 @@ func (s *Service) Upload(ctx context.Context, userID, originalName string, data 
 }
 
 func (s *Service) List(ctx context.Context, userID string) ([]Document, error) {
-	return s.store.ListDocuments(ctx, userID, 200)
+	items, err := s.store.ListDocuments(ctx, userID, 200)
+	if err == nil {
+		s.annotateIndexStates(ctx, items)
+	}
+	return items, err
 }
 
 func (s *Service) Get(ctx context.Context, userID, documentID string) (Document, error) {
@@ -170,7 +175,11 @@ func (s *Service) ListWorkspace(ctx context.Context, workspaceID string) ([]Docu
 	if workspaceID == "" {
 		return nil, fmt.Errorf("%w: workspace_id is required", ErrValidation)
 	}
-	return s.store.ListWorkspaceDocuments(ctx, workspaceID, 200)
+	items, err := s.store.ListWorkspaceDocuments(ctx, workspaceID, 200)
+	if err == nil {
+		s.annotateIndexStates(ctx, items)
+	}
+	return items, err
 }
 
 func (s *Service) Delete(ctx context.Context, userID, documentID string) error {

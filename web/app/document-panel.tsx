@@ -13,6 +13,7 @@ type DocumentItem = {
   media_type: string;
   size_bytes: number;
   status: "queued" | "processing" | "ready" | "failed";
+  index_state?: "pending" | "ready" | "failed" | "unavailable";
   page_count: number;
   chunk_count: number;
   failure_code?: string;
@@ -50,7 +51,7 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
   }, [load]);
 
   useEffect(() => {
-    if (!items.some((item) => item.status === "queued" || item.status === "processing")) return;
+    if (!items.some((item) => item.status === "queued" || item.status === "processing" || item.index_state === "pending")) return;
     const timer = window.setInterval(() => {
       void load().catch((error: Error) => setMessage(error.message));
     }, 1500);
@@ -148,7 +149,7 @@ export function DocumentPanel({ token, onClose }: { token: string; onClose: () =
             <div>
               <strong>{item.name}</strong>
               <small>{formatBytes(item.size_bytes)} · {item.media_type}</small>
-              <p>{statusLabels[item.status]}{item.status === "ready" ? ` · ${item.page_count} 页 / ${item.chunk_count} 个片段` : ""}</p>
+              <p>{item.status === "ready" && item.index_state && item.index_state !== "ready" ? ({ pending: "原文已就绪，正在准备检索", failed: "原文已就绪，检索加工需重试", unavailable: "原文已就绪，检索状态暂不可用" })[item.index_state] : statusLabels[item.status]}{item.status === "ready" ? ` · ${item.page_count} 页 / ${item.chunk_count} 个片段` : ""}</p>
             </div>
             <div className="wikiActions">{item.status === "ready" && <button type="button" onClick={() => void fetch(`${apiBase}/v1/documents/${item.id}/wiki/rebuild`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).then(response => { if (!response.ok) throw new Error("重建失败"); setMessage("知识页面已进入重建队列。"); }).catch(error => setMessage(error.message))}>重建知识</button>}<button className="dangerButton" type="button" onClick={() => void remove(item)}>删除</button></div>
           </article>

@@ -27,6 +27,7 @@ workers/python/.venv
 web/node_modules
 node_modules
 web/.next
+web/.next-*
 mobile/android/.gradle
 mobile/android/**/build
 mobile/ios/.build

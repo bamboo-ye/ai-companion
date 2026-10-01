@@ -18,6 +18,7 @@ type RolloutIndex struct {
 
 func NewKnowledgeIndex(url, collection, key string, timeout time.Duration, c semantic.Config) VectorIndex {
 	legacy := NewQdrantIndex(url, collection, key, timeout)
+	legacy.managedRoot = collection
 	if c.EmbeddingModel == "" || c.IndexMode == "" || c.IndexMode == "legacy" {
 		return legacy
 	}

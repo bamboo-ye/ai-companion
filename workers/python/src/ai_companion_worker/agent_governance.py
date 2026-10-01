@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal, Mapping
 
 GRAPH_NAME = "ai-companion-supervisor"
-GRAPH_VERSION = "3.71.0"
+GRAPH_VERSION = "3.72.0"
 DEFAULT_MODEL_CONFIG_VERSION = "2026-08-structured-composer-v4"
 
 NodeKind = Literal["deterministic", "model", "tool", "human", "external_wait"]
@@ -51,6 +51,7 @@ NODE_CONTRACTS: dict[str, NodeContract] = {
         allowed_writes=(
             "graph_name",
             "graph_version",
+            "debate_mode",
             "observations",
             "action_index",
             "action_budget",
@@ -489,7 +490,32 @@ NODE_CONTRACTS["execute_parallel_model"] = NodeContract(
 NODE_CONTRACTS["arbitrate_parallel"] = NodeContract(
     responsibility="Resolve semantic disputes against frozen evidence, retaining uncertainty on failure.",
     kind="model", model_role="composer", recovery="checkpoint_replay", max_model_calls=3,
-    allowed_writes=(*_MODEL_CONTROL_WRITES, "parallel_plan", "arbitrations", "research_results", "specialist_review", "response_validation", "artifact_validation"),
+    allowed_writes=(*_MODEL_CONTROL_WRITES, "parallel_plan", "arbitrations", "research_results", "research_candidates", "specialist_review", "response_validation", "artifact_validation"),
+)
+
+for _name in ("prepare_debate", "join_debate_positions", "prepare_debate_evidence",
+              "join_debate_evidence", "wait_debate_evidence", "finish_debate"):
+    NODE_CONTRACTS[_name] = NodeContract(
+        responsibility="Coordinate isolated judgments, bounded evidence reads and explicit convergence.",
+        kind="external_wait" if _name == "wait_debate_evidence" else "deterministic",
+        recovery="checkpoint_replay",
+        allowed_writes=(*_MODEL_CONTROL_WRITES, "debate_session", "parallel_plan", "arbitrations",
+                        "research_results", "research_candidates", "specialist_review",
+                        "response_validation", "artifact_validation", "observations", "action_index", "task_polls"),
+    )
+NODE_CONTRACTS["debate_position"] = NodeContract(
+    responsibility="Assess every candidate from an isolated, frozen evidence snapshot.",
+    kind="model", model_role="composer", recovery="checkpoint_replay", max_model_calls=4,
+    allowed_writes=("debate_results",),
+)
+NODE_CONTRACTS["arbitrate_debate"] = NodeContract(
+    responsibility="Arbitrate committed assessments and request bounded read-only evidence.",
+    kind="model", model_role="composer", recovery="checkpoint_replay", max_model_calls=2,
+    allowed_writes=(*_MODEL_CONTROL_WRITES, "debate_session", "arbitrations"),
+)
+NODE_CONTRACTS["read_debate_evidence"] = NodeContract(
+    responsibility="Execute one reserved evidence request through the tool gateway.",
+    kind="tool", recovery="checkpoint_replay", allowed_writes=("debate_results",),
 )
 
 

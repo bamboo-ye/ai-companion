@@ -239,6 +239,9 @@ func (s *MemoryStore) CompleteIngestJob(_ context.Context, jobID string, now tim
 	state.status = "completed"
 	s.jobs[jobID] = state
 	item := s.items[state.job.Document.ID]
+	if item.Status != "processing" {
+		return ErrNotFound
+	}
 	item.Status = "ready"
 	item.UpdatedAt = now
 	s.items[item.ID] = item

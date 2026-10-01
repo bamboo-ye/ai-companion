@@ -28,6 +28,25 @@ func (s *Server) getAgentRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, publicAgentRun(item))
 }
 
+func (s *Server) getAgentEvidenceReview(w http.ResponseWriter, r *http.Request) {
+	if s.agentRuns == nil {
+		writeAgentRunError(w, agent.ErrNotFound)
+		return
+	}
+	item, err := s.agentRuns.GetForUser(r.Context(), currentAuth(r).User.ID, r.PathValue("run_id"))
+	if err != nil {
+		writeAgentRunError(w, err)
+		return
+	}
+	public := publicAgentRun(item)
+	output, _ := public["output"].(map[string]any)
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": item.ID, "conversation_id": item.ConversationID, "status": item.Status,
+		"output": map[string]any{"evidence_review": output["evidence_review"]},
+	})
+}
+
 func (s *Server) getActiveAgentRun(w http.ResponseWriter, r *http.Request) {
 	if s.agentRuns == nil {
 		w.WriteHeader(http.StatusNoContent)
@@ -224,6 +243,20 @@ func publicAgentRun(item agent.Run) map[string]any {
 		var output any
 		if json.Unmarshal(item.Output, &output) == nil {
 			if object, ok := output.(map[string]any); ok {
+				// The checkpoint keeps audit history. A failed source revalidation
+				// must not leak that same history through the public polling API.
+				invalid := sourceInvalidation(object)
+				review := publicEvidenceReview(object["evidence_review"])
+				if invalid && review != nil {
+					review["status"], review["resolved_issues"] = "unresolved", 0
+					review["sources_verified"], review["termination_reason"] = false, "evidence_access_changed"
+				}
+				object["evidence_review"] = review
+				if invalid {
+					output = map[string]any{"outcome": "evidence_access_changed", "response": "来源或权限已变化，已停止使用旧证据，请重新发起核对。", "evidence_review": review}
+					response["output"] = output
+					return response
+				}
 				if interrupts, ok := object["interrupts"].([]any); ok {
 					for _, interrupt := range interrupts {
 						if value, ok := interrupt.(map[string]any); ok {

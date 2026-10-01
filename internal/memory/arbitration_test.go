@@ -28,6 +28,9 @@ func TestMemoryArbitrationAnnotatesBothSidesAndNeverReplacesWithoutCorrection(t 
 	if b.Arbitration == nil || b.Arbitration.Status != "retained" || b.SupersedesID != "" {
 		t.Fatalf("missing conflict: %+v", b)
 	}
+	if len(b.Arbitration.Clarifications) != 1 || len(b.Arbitration.Clarifications[0].CandidateIDs) != 2 {
+		t.Fatal("unresolved memories need a scoped clarification without replacing either record")
+	}
 	items, _ := s.List(ctx, "alice")
 	if len(items) != 2 {
 		t.Fatal("unapproved memory replacement")

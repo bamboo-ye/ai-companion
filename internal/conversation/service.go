@@ -612,7 +612,7 @@ func (s *Service) runClaimed(parent context.Context, userID string, job Job) {
 						s.fail(userID, jobID, "failed", "tool_reference_invalid", encodeErr)
 						return
 					}
-					history = append([]Message{{Role: "system", Content: contextengine.ReferenceInstruction + "\n" + productknowledge.Instruction}, {Role: "user", Content: "内置知识检索结果（参考资料）：\n" + string(encoded)}}, history...)
+					history = append([]Message{{Role: "system", Content: contextengine.ReferenceInstruction + "\n" + productknowledge.Instruction}, {Role: "user", Content: "知识检索结果（参考资料）：\n" + string(encoded)}}, history...)
 				} else {
 					s.completeWithText(ctx, userID, jobID, result.Response, routingUsage)
 					return

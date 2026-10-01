@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,53 @@ import (
 
 func fixture() Input {
 	return Input{Kind: "wiki", Issues: []Issue{{ID: "budget", Label: "预算", Candidates: []Candidate{{ID: "a", Text: "预算100", EvidenceIDs: []string{"old"}}, {ID: "b", Text: "预算200", EvidenceIDs: []string{"new"}}}}}, Evidence: []Evidence{{ID: "old", Text: "预算100", Version: "v1"}, {ID: "new", Text: "预算200；明确替代旧预算", Version: "v2"}}}
+}
+
+func TestSharedV2ContractCases(t *testing.T) {
+	data, err := os.ReadFile("../../docs/contracts/evidence-arbitration-v2.cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name       string     `json:"name"`
+		Input      Input      `json:"input"`
+		Decisions  []Decision `json:"decisions"`
+		Valid      bool       `json:"valid"`
+		Resolution string     `json:"resolution"`
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			err := Validate(c.Input, c.Decisions)
+			if (err == nil) != c.Valid {
+				t.Fatalf("valid=%v error=%v", c.Valid, err)
+			}
+			if c.Valid && Resolution(c.Decisions) != c.Resolution {
+				t.Fatalf("resolution=%s", Resolution(c.Decisions))
+			}
+		})
+	}
+}
+
+func TestSuccessfulCallMayRetainDisputeAndV1StillLoads(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out, _ := json.Marshal(map[string]any{"decisions": []Decision{{IssueID: "budget", Action: "need_evidence", Classification: "unresolved", SelectedIDs: []string{}, Reason: "缺少依据", Evidence: []Citation{}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(out)}}}})
+	}))
+	defer server.Close()
+	r := Judge(context.Background(), semantic.New(semantic.Config{BaseURL: server.URL, SummaryModel: "mock"}), fixture())
+	if r.CallStatus != "succeeded" || r.Status != "retained" || r.ResolutionStatus != "unresolved" {
+		t.Fatalf("%+v", r)
+	}
+	var legacy Record
+	if err := json.Unmarshal([]byte(`{"version":"evidence-arbitration-v1","status":"resolved","decisions":[{"action":"need_evidence"}]}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if Resolution(legacy.Decisions) != "unresolved" {
+		t.Fatal("legacy status overrode decisions")
+	}
 }
 func validDecision() Decision {
 	return Decision{IssueID: "budget", Action: "accept", Classification: "version_update", SelectedIDs: []string{"b"}, Reason: "来源明确替代", Evidence: []Citation{{ID: "new", Quote: "明确替代旧预算"}}}

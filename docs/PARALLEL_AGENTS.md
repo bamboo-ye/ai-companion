@@ -1,6 +1,6 @@
 # 并行 Agent 与执行资源
 
-本次图版本为 `ai-companion-supervisor@3.71.0`。简单聊天与单次生活工具继续走原有短路径。
+本次图版本为 `ai-companion-supervisor@3.72.0`。简单聊天与单次生活工具继续走原有短路径。
 
 ## 执行链路
 
@@ -11,6 +11,8 @@
 - 用户提出“审校”“审阅”“仔细核对”等要求时，来源与表达两个专家并行检查同一份候选内容。发现问题后最多修订一次并复核；仍不通过时停止交付。评审对象是回复或生成参数的内容，不是渲染后文件的视觉版式。研究分析和评审使用既有 Composer 模型配置。
 
 有关审校意见、研究结论、Wiki 和记忆的争议处理，见 [仲裁机制](ARBITRATION.md)。
+
+`AGENT_DEBATE_MODE` 默认 `off`，可设置 `requested` 或 `on_conflict`。开启后，研究分歧/缺少原文和具体审校问题可进入两轮以内的独立判断、补证及仲裁流程。首轮核验者并行处理隔离输入，补证只读，所有结果保存检查点；仅当前有效裁决用于交付。Wiki 可按独立开关在后台任务中补证，记忆增加明确澄清入口但仍为单次仲裁，详见上述机制。
 
 ## 状态与失败恢复
 
@@ -30,6 +32,7 @@ Wiki 成功分片在 `wiki_shards` 中缓存 24 小时，键绑定用户、文�
 | `AGENT_PARALLEL_ATTACHMENTS` | `true` | 多附件独立读取；`false` 回退原串行路径 |
 | `AGENT_MODEL_FANOUT_CONCURRENCY` | `3` | 单 Run 的图分支并发，范围 1–4 |
 | `AGENT_SPECIALIST_REVIEW_MODE` | `requested` | `off` / `requested` / `always`，仅适用于 Work |
+| `AGENT_DEBATE_MODE` | `off` | `off` / `requested` / `on_conflict`；Work 研究与审校的有界辩论 |
 | `CONTEXT_MODEL_CONCURRENCY` | `6` | 单个语义客户端总请求并发，范围 1–32 |
 | `CONTEXT_WIKI_CONCURRENCY` | `3` | 单文档 Wiki 分片并发，范围 1–8 |
 | `CONTEXT_WIKI_MAX_BATCHES` | `64` | Wiki 批次数上限；每批最多尝试两次，范围 1–256 |

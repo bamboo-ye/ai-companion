@@ -28,6 +28,8 @@ from ai_companion_worker.agent_governance import (
 
 READ_TOOLS = frozenset(
     {
+        "work_knowledge_search",
+        "work_knowledge_read",
         "work_wiki_search",
         "work_wiki_read",
         "work_wiki_follow_links",
@@ -137,7 +139,7 @@ def review_requested(state: Mapping[str, Any]) -> bool:
     if mode == "off":
         return False
     if mode == "requested" and not re.search(
-        r"审校|审阅|仔细核对|严格检查|核查来源|fact.check|peer.review",
+        r"审校|审阅|仔细核对|严格检查|核查来源|独立核验|交叉核验|辩论|debate|fact.check|peer.review",
         str(state.get("user_message", "")),
         re.I,
     ):
@@ -631,13 +633,16 @@ def make_parallel_nodes(
         return update(state, "join_parallel", **values)
 
     def after_join_parallel(state: dict[str, Any]) -> str:
+        from ai_companion_worker.debate import debate_requested
+        from ai_companion_worker.arbitration import arbitration_packet
+
         if state.get("outcome") not in (None, "", "completed"):
             return "finalize"
         plan = state["parallel_plan"]
         if plan.get("complete"):
             if plan["kind"] == "review":
                 if not state["specialist_review"].get("passed") and not plan.get("arbitrated"):
-                    return "arbitrate_parallel"
+                    return "prepare_debate" if debate_requested(state) else "arbitrate_parallel"
                 if state["specialist_review"].get("passed"):
                     return "finalize"
                 return (
@@ -646,6 +651,8 @@ def make_parallel_nodes(
                     else "revise_response"
                 )
             if plan["kind"] == "research":
+                if not plan.get("arbitrated") and debate_requested(state) and arbitration_packet(state, require_original=True)["issues"]:
+                    return "prepare_debate"
                 if not plan.get("arbitrated") and research_issues(state["research_results"]):
                     return "arbitrate_parallel"
                 return (

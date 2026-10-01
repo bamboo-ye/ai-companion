@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import type { SkillRun } from "./skill-run-client";
+import { PresentationStudio } from "./presentation-studio";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -16,7 +17,8 @@ type IntentRoute = {
 };
 type MCPServerSummary = { name: string; enabled: boolean; allowed_tools: string[]; protocol_version: string; transport: string };
 
-export function WorkPanel({ token, onClose }: { token: string; onClose: () => void }) {
+export function WorkPanel({ token, userID, onClose }: { token: string; userID: string; onClose: () => void }) {
+  const [studioOpen, setStudioOpen] = useState(false);
   const [skills, setSkills] = useState<SkillManifest[]>([]);
   const [route, setRoute] = useState<IntentRoute | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServerSummary[]>([]);
@@ -95,15 +97,6 @@ export function WorkPanel({ token, onClose }: { token: string; onClose: () => vo
     });
   }
 
-  function generatePptx(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const data = new FormData(event.currentTarget);
-    const action = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value;
-    void startSkill(action === "outline" ? "office.pptx_outline" : "office.pptx_generate", {
-      title: data.get("title"), audience: data.get("audience"), style: data.get("style"), brief: data.get("brief"),
-      slide_count: Number(data.get("slide_count")), filename: data.get("filename"),
-    });
-  }
-
   function profileTable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget);
     void withSourceFile(data, "source", [".csv", ".xlsx"], async (source) => {
@@ -122,6 +115,8 @@ export function WorkPanel({ token, onClose }: { token: string; onClose: () => vo
     } catch (error) { setNotice(error instanceof Error ? error.message : "文件读取失败"); }
   }
 
+  if (studioOpen) return <PresentationStudio token={token} userID={userID} enabled={skillEnabled("office.pptx_generate") && skillEnabled("office.pptx_outline")} onClose={() => setStudioOpen(false)}/>;
+
   return <section className="workPanel" aria-labelledby="work-title">
     <header><div><h3 id="work-title">工作台</h3><small>创建任务、配置 Skill 与生成文件</small></div><button className="textButton" type="button" onClick={onClose}>返回</button></header>
     {notice && <p className="workNotice" role="status">{notice}</p>}
@@ -133,11 +128,11 @@ export function WorkPanel({ token, onClose }: { token: string; onClose: () => vo
     </section>
     <div className="mcpSummary" aria-label="MCP 白名单状态"><strong>MCP 2025-11-25 · stdio 双白名单</strong>{mcpServers.length === 0 ? <small>未配置外部服务器（默认安全状态）</small> : mcpServers.map((server) => <small key={server.name}>{server.name}：{server.allowed_tools.join("、")}</small>)}</div>
     <div className="workGrid">
+      <article className="studioEntry"><div><h4>PPT 制作工作台</h4><p>从成品模板或自己的资料开始，逐页编辑、试播并导出。</p></div><button type="button" onClick={() => setStudioOpen(true)}>开始制作 →</button></article>
       <article className="workSkill"><h4>翻译预览</h4><p>保留原文，对照输出；无外部副作用。</p><form className="workForm" onSubmit={translate}><textarea name="text" required placeholder="输入要翻译的内容"/><div><input name="target" required defaultValue="English" aria-label="目标语言"/><select name="tone" defaultValue="neutral" aria-label="翻译语气"><option value="neutral">中性</option><option value="formal">正式</option></select></div><button disabled={busy !== "" || !skillEnabled("office.translate")}>开始翻译</button></form></article>
       <article className="workSkill"><h4>邮件草稿</h4><p>邮件生成已统一进入工作伙伴聊天的质量工作流：自动识别语言，补齐称呼、自我介绍、礼貌请求和署名，消除重复段落，并在不合格时限次重写。</p><button type="button" disabled={busy !== "" || !skillEnabled("office.email_draft")} onClick={onClose}>返回工作伙伴</button></article>
       <article className="workSkill"><h4>Markdown 文档</h4><p>先预览确认，再创建新副本；不会覆盖源文件。</p><form className="workForm" onSubmit={createDocument}><input name="title" required placeholder="文档标题"/><input name="filename" placeholder="文件名（可选）"/><textarea name="content" required placeholder="文档内容"/><button disabled={busy !== "" || !skillEnabled("office.markdown_document")}>生成待确认任务</button></form></article>
       <article className="workSkill"><h4>DOCX 副本编辑</h4><p>读取小型 DOCX，确认后在新副本末尾追加段落。</p><form className="workForm" onSubmit={editDocx}><input name="source" type="file" accept=".docx" required aria-label="DOCX 源文件"/><input name="output_filename" placeholder="输出文件名（可选）"/><textarea name="append_text" required placeholder="要追加的段落，每行一个段落"/><button disabled={busy !== "" || !skillEnabled("office.docx_edit")}>生成待确认编辑</button></form></article>
-      <article className="workSkill"><h4>PPTX 大纲/生成</h4><p>可先预览逐页大纲；受众、页数和风格填写完整后直接生成新演示。</p><form className="workForm" onSubmit={generatePptx}><input name="title" required placeholder="演示标题"/><input name="audience" required placeholder="目标受众"/><div><input name="slide_count" type="number" min="3" max="20" defaultValue="6" required aria-label="幻灯片页数"/><input name="style" defaultValue="简洁专业" required aria-label="演示风格"/></div><input name="filename" placeholder="输出文件名（可选）"/><textarea name="brief" required placeholder="内容简报；可按行填写章节"/><div className="workFormActions"><button name="action" value="outline" disabled={busy !== "" || !skillEnabled("office.pptx_outline")}>预览大纲</button><button name="action" value="generate" disabled={busy !== "" || !skillEnabled("office.pptx_generate")}>直接生成演示</button></div></form></article>
       <article className="workSkill"><h4>CSV/XLSX 分析</h4><p>识别表头、类型、缺失值、重复行和数值摘要。</p><form className="workForm" onSubmit={profileTable}><input name="source" type="file" accept=".csv,.xlsx" required aria-label="CSV 或 XLSX 源文件"/><small>UTF-8 CSV 或无宏 XLSX，最大 700KB，最多分析 10,000 行。</small><button disabled={busy !== "" || !skillEnabled("office.tabular_profile")}>开始分析</button></form></article>
     </div>
   </section>;

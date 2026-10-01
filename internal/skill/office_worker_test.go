@@ -24,10 +24,14 @@ func TestParseOfficeWorkerFailurePreservesRepairContract(t *testing.T) {
 	}
 }
 
-type fakeOfficeWorker struct{ calls []string }
+type fakeOfficeWorker struct {
+	calls  []string
+	inputs []map[string]any
+}
 
-func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[string]any) (ToolResult, error) {
+func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, input map[string]any) (ToolResult, error) {
 	w.calls = append(w.calls, operation)
+	w.inputs = append(w.inputs, input)
 	switch operation {
 	case "docx_edit":
 		return ToolResult{Output: map[string]any{
@@ -67,6 +71,37 @@ func (w *fakeOfficeWorker) Execute(_ context.Context, operation string, _ map[st
 		}, Files: []FileOutput{{Name: "source-Chinese.pdf", MediaType: "application/pdf", Data: []byte("translated-pdf")}}}, nil
 	default:
 		return ToolResult{}, ErrNotFound
+	}
+}
+
+func TestPresentationDesignVersionDefaultPreservesCallerInput(t *testing.T) {
+	worker := &fakeOfficeWorker{}
+	input := map[string]any{"title": "test"}
+	handler := officeWorkerHandler(worker, "pptx_generate")
+	if _, err := handler.Execute(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if worker.inputs[0]["design_version"] != "2" {
+		t.Fatal("new tasks must use design v2")
+	}
+	if _, ok := input["design_version"]; ok {
+		t.Fatal("caller input was mutated")
+	}
+	legacy := map[string]any{"design_version": "1"}
+	if _, err := handler.Execute(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
+	if worker.inputs[1]["design_version"] != "1" {
+		t.Fatal("legacy override was lost")
+	}
+	registry := NewRegistry()
+	if err := RegisterOfficeSkills(registry, worker); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(NewMemoryStore(), NewMemoryFileStore(), registry)
+	manifest, err := service.ManifestForUser(context.Background(), "u1", "office.pptx_outline")
+	if err != nil || manifest.Version != "2.0.0" || manifest.MaxInputBytes != 30<<20 {
+		t.Fatalf("preview cannot accept saved assets: %#v %v", manifest, err)
 	}
 }
 
@@ -116,7 +151,7 @@ func TestPPTXGenerationRunsWithoutConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, manifest := range manifests {
-		if manifest.Name == "office.pptx_generate" && (manifest.MaxInputBytes != 30<<20 || manifest.MaxOutputFileBytes != 32<<20 || manifest.MaxCostMicros != 250_000 || manifest.Version != "1.5.0") {
+		if manifest.Name == "office.pptx_generate" && (manifest.MaxInputBytes != 30<<20 || manifest.MaxOutputFileBytes != 32<<20 || manifest.MaxCostMicros != 275_000 || manifest.Version != "2.0.0") {
 			t.Fatalf("pptx manifest = %#v", manifest)
 		}
 	}

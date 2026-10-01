@@ -41,6 +41,7 @@ node_modules/
 workers/spreadsheet/node_modules
 .pnpm-store/
 web/.next/
+web/.next-*/
 .next/
 web/out/
 web/.turbo/

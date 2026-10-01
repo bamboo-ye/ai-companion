@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { ChatPanel } from "./chat-panel";
 import { DocumentPanel } from "./document-panel";
-import { BuiltinKnowledgePanel } from "./builtin-knowledge-panel";
+import { KnowledgeCenter } from "./knowledge-center";
 import { LifePanel } from "./life-panel";
 import { MemoryPanel } from "./memory-panel";
 import { TaskHistoryPanel } from "./task-history-panel";
@@ -464,7 +464,7 @@ export function CompanionStart() {
           ))}
         </nav>
         <div className="sidebarFooter">
-          <button className="sidebarLogout" type="button" onClick={() => { setKnowledgePageID(""); setScreen("knowledge"); }}>产品知识</button>
+          <button className="sidebarLogout" type="button" onClick={() => { setKnowledgePageID(""); setScreen("knowledge"); }}>知识中心</button>
           <button className={`sidebarProfile ${screen === "profile" ? "active" : ""}`} type="button" onClick={() => { setScreen("profile"); setActiveCharacter(null); setShowCharacterForm(false); setMessage(""); }}>
             <span aria-hidden="true">{currentUser ? (Array.from(currentUser.display_name.trim())[0] ?? currentUser.email.slice(0, 1).toUpperCase()) : "我"}</span>
             <div><strong>{currentUser?.display_name ?? "个人主页"}</strong><small>个人主页</small></div>
@@ -543,9 +543,9 @@ export function CompanionStart() {
 
         {screen === "chat" && activeCharacter && <ChatPanel token={token} character={activeCharacter} onClose={() => { setScreen("dashboard"); setActiveCharacter(null); void loadDashboard(token); }} />}
         {screen === "memories" && <MemoryPanel token={token} onClose={() => setScreen("dashboard")} />}
-        {screen === "work-tools" && <WorkPanel token={token} onClose={() => setScreen("dashboard")} />}
+        {screen === "work-tools" && <WorkPanel token={token} userID={currentUser?.id ?? ""} onClose={() => setScreen("dashboard")} />}
         {screen === "task-history" && <TaskHistoryPanel token={token} onClose={() => setScreen("dashboard")} />}
-        {screen === "knowledge" && <section className="documentPanel"><button type="button" className="textButton" onClick={() => setScreen("dashboard")}>返回角色</button><BuiltinKnowledgePanel token={token} initialPageID={knowledgePageID} /></section>}
+        {screen === "knowledge" && <section className="documentPanel"><button type="button" className="textButton" onClick={() => setScreen("dashboard")}>返回角色</button><KnowledgeCenter key={`${token}:${knowledgePageID}`} token={token} initialPageID={knowledgePageID} onDocuments={() => setScreen("documents")} onMemories={() => setScreen("memories")} /></section>}
         {screen === "documents" && <DocumentPanel token={token} onClose={() => setScreen("dashboard")} />}
         {screen === "profile" && currentUser && <ProfilePanel token={token} user={currentUser} onClose={() => setScreen("dashboard")} />}
       </section>

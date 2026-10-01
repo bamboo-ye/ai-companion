@@ -1,0 +1,704 @@
+[
+  {
+    "name": "accept_supported",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": true,
+    "resolution": "resolved"
+  },
+  {
+    "name": "need_evidence_is_not_resolved",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "need_evidence",
+        "classification": "unresolved",
+        "selected_ids": [],
+        "reason": "原文支持",
+        "evidence": [],
+        "evidence_requests": [
+          {
+            "question": "最终预算",
+            "discriminates": "最终批复与草案",
+            "tool_name": "work_wiki_search",
+            "arguments": {
+              "query": "预算批复"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": true,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "forged_quote",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算300元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "foreign_source",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "other-user",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "foreign_candidate",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "other"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "unresolved_cannot_accept",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "unresolved",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "missing_issue",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "duplicate_issue",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      },
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "unsupported_supersession",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "version_update",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "requests_only_for_need_evidence",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ],
+        "evidence_requests": [
+          {
+            "question": "最终预算",
+            "discriminates": "最终批复",
+            "tool_name": "work_wiki_search",
+            "arguments": {}
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "empty_request",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "need_evidence",
+        "classification": "unresolved",
+        "selected_ids": [],
+        "reason": "原文支持",
+        "evidence": [],
+        "evidence_requests": [
+          {
+            "question": "",
+            "discriminates": "批复",
+            "tool_name": "work_wiki_search",
+            "arguments": {}
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  },
+  {
+    "name": "explicit_supersession",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元替代旧预算",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "version_update",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元替代旧预算"
+          }
+        ]
+      }
+    ],
+    "valid": true,
+    "resolution": "resolved"
+  },
+  {
+    "name": "partial_resolution",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "scope",
+          "label": "范围",
+          "candidates": [
+            {
+              "id": "scope_a",
+              "text": "试点",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ]
+      },
+      {
+        "issue_id": "scope",
+        "action": "retain",
+        "classification": "unresolved",
+        "selected_ids": [],
+        "reason": "范围未知",
+        "evidence": []
+      }
+    ],
+    "valid": true,
+    "resolution": "partially_resolved"
+  },
+  {
+    "name": "forged_assessment_response",
+    "input": {
+      "kind": "wiki",
+      "issues": [
+        {
+          "id": "budget",
+          "label": "预算",
+          "candidates": [
+            {
+              "id": "a",
+              "text": "预算100元",
+              "evidence_ids": [
+                "source"
+              ]
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "source",
+          "text": "预算100元",
+          "version": "v1"
+        }
+      ]
+    },
+    "decisions": [
+      {
+        "issue_id": "budget",
+        "action": "accept",
+        "classification": "contradiction",
+        "selected_ids": [
+          "a"
+        ],
+        "reason": "原文支持",
+        "evidence": [
+          {
+            "id": "source",
+            "quote": "预算100元"
+          }
+        ],
+        "assessment_responses": [
+          {
+            "id": "assessment",
+            "reason": "反证已处理",
+            "evidence": [
+              {
+                "id": "source",
+                "quote": "伪造反证处理"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "valid": false,
+    "resolution": "unresolved"
+  }
+]

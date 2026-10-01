@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import time
 import unittest
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -69,6 +70,28 @@ class ObserveGateway(HTTPToolGateway):
 
 
 class HTTPToolGatewayTest(unittest.TestCase):
+    @patch.object(HTTPToolGateway, "_post", autospec=True)
+    def test_evidence_reads_and_validation_keep_revision_and_clamp_deadline(self, post: Any) -> None:
+        gateway = HTTPToolGateway("http://api:8080", "service-token", timeout_seconds=10, expected_revision=7)
+        post.return_value = {"versions": {"doc": "v1"}}
+        refs = [{"source_id": "doc", "version": "v1", "chunk_id": "c1", "text": "quote"}]
+        self.assertEqual(gateway.validate_evidence(run_id="run/1", references=refs, deadline_at=time.time() + 1), {"doc": "v1"})
+        scoped, path, payload = post.call_args.args
+        self.assertEqual(path, "/internal/v1/agent/runs/run%2F1/evidence/validate")
+        self.assertEqual(payload, {"references": refs})
+        self.assertEqual(scoped._expected_revision, 7)
+        self.assertGreater(scoped._timeout_seconds, 0)
+        self.assertLessEqual(scoped._timeout_seconds, 1)
+        self.assertEqual(gateway._timeout_seconds, 10)
+        post.return_value = {"status": "completed", "tool_name": "work_wiki_read", "risk_level": "none", "response": "quote"}
+        gateway.read_evidence(run_id="run/1", user_id="ignored", module="work", tool_name="work_wiki_read",
+                              arguments={"page_id": "page"}, idempotency_key="stable-key", deadline_at=time.time() + 1)
+        _, path, payload = post.call_args.args
+        self.assertNotIn("user_id", payload)
+        self.assertEqual(payload["call_key"], "stable-key")
+        self.assertTrue(path.endswith("/tools/prepare"))
+        with self.assertRaises(TimeoutError):
+            gateway.validate_evidence(run_id="run/1", references=refs, deadline_at=time.time() - 1)
     @patch("urllib.request.urlopen")
     def test_http_500_is_a_retryable_gateway_error(self, urlopen: Any) -> None:
         urlopen.side_effect = HTTPError(

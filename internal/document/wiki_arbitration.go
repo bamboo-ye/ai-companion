@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -41,7 +42,13 @@ func (s *Service) arbitrateWiki(ctx context.Context, pages []WikiPage, raw map[s
 		if n >= 3 {
 			client = nil
 		}
-		arbitrateWikiGroup(ctx, batch, raw, client)
+		if os.Getenv("CONTEXT_WIKI_DEBATE_MODE") == "on_conflict" && n < 3 {
+			arbitrateWikiGroup(ctx, batch, raw, client, func(input arbitration.Input) arbitration.Record {
+				return s.debateWiki(ctx, batch, input, client)
+			})
+		} else {
+			arbitrateWikiGroup(ctx, batch, raw, client)
+		}
 		for j, i := range groups[key] {
 			if n >= 3 && batch[j].Arbitration != nil {
 				batch[j].Arbitration.Reason = "arbitration_group_budget"
@@ -51,7 +58,7 @@ func (s *Service) arbitrateWiki(ctx context.Context, pages []WikiPage, raw map[s
 	}
 }
 
-func arbitrateWikiGroup(ctx context.Context, pages []WikiPage, raw map[string][]WikiEvidence, client *semantic.Client) {
+func arbitrateWikiGroup(ctx context.Context, pages []WikiPage, raw map[string][]WikiEvidence, client *semantic.Client, judges ...func(arbitration.Input) arbitration.Record) {
 	input := arbitration.Input{Kind: "wiki", Issues: []arbitration.Issue{}, Evidence: []arbitration.Evidence{}}
 	byPage := map[string][]string{}
 	evidence := map[string]arbitration.Evidence{}
@@ -110,7 +117,12 @@ func arbitrateWikiGroup(ctx context.Context, pages []WikiPage, raw map[string][]
 		input.Evidence = append(input.Evidence, evidence[id])
 	}
 	sort.Slice(input.Evidence, func(i, j int) bool { return input.Evidence[i].ID < input.Evidence[j].ID })
-	record := arbitration.Judge(ctx, client, input)
+	var record arbitration.Record
+	if len(judges) > 0 {
+		record = judges[0](input)
+	} else {
+		record = arbitration.Judge(ctx, client, input)
+	}
 	for i := range pages {
 		ids := map[string]bool{}
 		for _, id := range byPage[pages[i].ID] {
@@ -130,6 +142,12 @@ func arbitrateWikiGroup(ctx context.Context, pages []WikiPage, raw map[string][]
 						refs[id] = true
 					}
 				}
+			}
+		}
+		// Supplemental excerpts stay within this exact source group.
+		if len(record.Rounds) > 0 {
+			for _, ref := range record.Inputs {
+				refs[ref.ID] = true
 			}
 		}
 		for _, ref := range record.Inputs {
@@ -152,6 +170,12 @@ func arbitrateWikiGroup(ctx context.Context, pages []WikiPage, raw map[string][]
 				notes += " [chunk:" + ref.ID + "]"
 			}
 			notes += "\n"
+		}
+		filtered.ResolutionStatus = arbitration.Resolution(filtered.Decisions)
+		if filtered.ResolutionStatus == "resolved" {
+			filtered.Status, filtered.TerminationReason = "resolved", "resolved"
+		} else {
+			filtered.Status = "retained"
 		}
 		pages[i].Arbitration = &filtered
 		pages[i].Body = notes + "\n" + pages[i].Body

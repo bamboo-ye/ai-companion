@@ -18,7 +18,8 @@ os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
 
-from ai_companion_worker.arbitration import make_arbitration_node
+from ai_companion_worker.arbitration import effective_arbitrations, make_arbitration_node
+from ai_companion_worker.debate import configured_debate_mode, copy_evidence_metadata, make_debate_nodes, verify_sources
 from ai_companion_worker.parallel_tasks import (
     READ_TOOLS, make_parallel_nodes, merge_task_results, review_requested, task_route, validate_research_tasks,
 )
@@ -212,6 +213,11 @@ class AgentInput(TypedDict):
 
 
 class AgentState(AgentInput, total=False):
+    debate_mode: str
+    debate_session: dict[str, Any]
+    debate_job: dict[str, Any]
+    debate_results: Annotated[list[dict[str, Any]], merge_task_results]
+    research_candidates: list[dict[str, Any]]
     parallel_plan: dict[str, Any]
     parallel_job: dict[str, Any]
     parallel_results: Annotated[list[dict[str, Any]], merge_task_results]
@@ -3265,6 +3271,7 @@ def _supervise(
         "graph_name": GRAPH_NAME,
         "graph_version": GRAPH_VERSION,
         "observations": [],
+        "debate_mode": configured_debate_mode(),
         "action_index": 0,
         "action_budget": budget_policy.max_actions,
         "pending_task_id": "",
@@ -3376,6 +3383,12 @@ def build_graph(
         return _supervise(state, budget_policy=policy, manifest=manifest)
 
     def model_access_reason(state: AgentState, node: str) -> str:
+        session = state.get("debate_session", {})
+        if session.get("phase") == "completed":
+            try:
+                verify_sources(tools, state["run_id"], copy_evidence_metadata(session), time.time() + 10)
+            except Exception:
+                return "来源或权限已变化，不能继续使用旧证据"
         persisted_manifest = state.get("model_manifest", {})
         persisted_version = model_config_version(persisted_manifest)
         current_version = model_config_version(manifest)
@@ -3410,6 +3423,8 @@ def build_graph(
         outcome = (
             "model_version_mismatch" if reason.startswith("模型配置") else "model_budget_exhausted"
         )
+        if reason.startswith("来源或权限"):
+            outcome = "evidence_access_changed"
         return {
             "outcome": outcome,
             "response": f"任务已安全停止：{reason}。请保留已有结果并发起新的运行。",
@@ -3783,7 +3798,7 @@ def build_graph(
         decision_context["agent_plan"] = dict(state.get("plan", {}))
         decision_context["observations"] = list(state.get("observations", []))
         decision_context["research_results"] = list(state.get("research_results", []))
-        decision_context["arbitrations"] = list(state.get("arbitrations", []))
+        decision_context["arbitrations"] = effective_arbitrations(state.get("arbitrations", []))
         decision_context["action_index"] = state.get("action_index", 0)
         decision_context["task_contract"] = dict(state.get("task_contract", {}))
         decision_context["artifact_validation"] = dict(state.get("artifact_validation", {}))
@@ -4227,7 +4242,7 @@ def build_graph(
         context["model_allowance"] = dict(allocation)
         context["agent_plan"] = dict(state.get("plan", {}))
         context["observations"] = [_document_batch_observation(batch)]
-        context["arbitrations"] = list(state.get("arbitrations", []))
+        context["arbitrations"] = effective_arbitrations(state.get("arbitrations", []))
         context["action_index"] = state.get("action_index", 0)
         context["task_contract"] = dict(state.get("task_contract", {}))
         context["email_validation"] = dict(state.get("email_validation", {}))
@@ -5162,7 +5177,7 @@ def build_graph(
             node=node,
         )
         composition_context["agent_plan"] = dict(state.get("plan", {}))
-        composition_context["arbitrations"] = list(state.get("arbitrations", []))
+        composition_context["arbitrations"] = effective_arbitrations(state.get("arbitrations", []))
         composition_context["research_results"] = list(state.get("research_results", []))
         composition_context["observations"] = (
             [_document_batch_observation(batch)]
@@ -5790,7 +5805,7 @@ def build_graph(
         response_context["agent_plan"] = dict(state.get("plan", {}))
         response_context["observations"] = list(state.get("observations", []))
         response_context["research_results"] = list(state.get("research_results", []))
-        response_context["arbitrations"] = list(state.get("arbitrations", []))
+        response_context["arbitrations"] = effective_arbitrations(state.get("arbitrations", []))
         response_context["task_contract"] = dict(state.get("task_contract", {}))
         try:
             response = responder(
@@ -5951,7 +5966,7 @@ def build_graph(
             node=node,
         )
         revision_context["agent_plan"] = dict(state.get("plan", {}))
-        revision_context["arbitrations"] = list(state.get("arbitrations", []))
+        revision_context["arbitrations"] = effective_arbitrations(state.get("arbitrations", []))
         revision_context["research_results"] = list(state.get("research_results", []))
         revision_context["observations"] = list(state.get("observations", []))
         revision_context["task_contract"] = dict(state.get("task_contract", {}))
@@ -7033,6 +7048,16 @@ def build_graph(
             raise ValueError("final response is required")
         outcome = state.get("outcome", "completed")
         response = state.get("response", "")
+        if state.get("debate_session", {}).get("phase") == "completed":
+            try:
+                verify_sources(tools, state["run_id"], copy_evidence_metadata(state["debate_session"]), time.time() + 10)
+            except Exception:
+                return {
+                    "outcome": "evidence_access_changed",
+                    "response": "来源或权限已变化，已停止使用旧证据，请重新发起核对。",
+                    "node_trace": [*state.get("node_trace", []), _trace_event("finalize", "blocked", details={"reason": "evidence_access_changed"})],
+                    "steps": state.get("steps", 0) + 1,
+                }
         artifact_validation = state.get("artifact_validation", {})
         if (
             artifact_validation.get("applicable") is True
@@ -7065,7 +7090,7 @@ def build_graph(
             outcome = "artifact_missing"
             response = "任务要求的生成文件尚未产出并通过质量门禁，已停止文字结果提前收尾。"
         unresolved_labels: list[str] = []
-        for record in state.get("arbitrations", []):
+        for record in effective_arbitrations(state.get("arbitrations", [])):
             if record.get("kind") != "research":
                 continue
             labels = {i["id"]: i["label"] for i in record["issues"]}
@@ -7089,6 +7114,10 @@ def build_graph(
     builder = StateGraph(AgentState)
 
     parallel_nodes = make_parallel_nodes(
+        tools=tools, decisions=decisions, policy=policy,
+        allowance=with_model_allowance, access_reason=model_access_reason,
+    )
+    debate_nodes = make_debate_nodes(
         tools=tools, decisions=decisions, policy=policy,
         allowance=with_model_allowance, access_reason=model_access_reason,
     )
@@ -7143,9 +7172,28 @@ def build_graph(
     builder.add_conditional_edges("schedule_parallel", parallel_nodes["dispatch_parallel"], ["execute_parallel_read", "execute_parallel_model", "finalize"])
     builder.add_edge("execute_parallel_read", "join_parallel")
     builder.add_edge("execute_parallel_model", "join_parallel")
-    builder.add_conditional_edges("join_parallel", parallel_nodes["after_join_parallel"], {n:n for n in ("finalize", "continue_action", "generate_response", "revise_response", "schedule_parallel", "wait_parallel", "arbitrate_parallel")})
+    builder.add_conditional_edges("join_parallel", parallel_nodes["after_join_parallel"], {n:n for n in ("finalize", "continue_action", "generate_response", "revise_response", "schedule_parallel", "wait_parallel", "arbitrate_parallel", "prepare_debate")})
     builder.add_conditional_edges("arbitrate_parallel", parallel_nodes["after_join_parallel"], {n:n for n in ("finalize", "continue_action", "generate_response", "revise_response")})
     builder.add_conditional_edges("wait_parallel", lambda state: "finalize" if state.get("outcome") else "schedule_parallel", {"finalize":"finalize", "schedule_parallel":"schedule_parallel"})
+
+    for name in ("prepare_debate", "debate_position", "join_debate_positions", "arbitrate_debate",
+                 "prepare_debate_evidence", "read_debate_evidence", "join_debate_evidence",
+                 "wait_debate_evidence", "finish_debate"):
+        register(name, cast(Any, debate_nodes[name]))
+    builder.add_conditional_edges("prepare_debate", debate_nodes["dispatch_debate"], ["debate_position", "finish_debate"])
+    builder.add_edge("debate_position", "join_debate_positions")
+    for name in ("join_debate_positions", "arbitrate_debate"):
+        builder.add_conditional_edges(name, debate_nodes["route_debate"], {n:n for n in (
+            "finish_debate", "arbitrate_debate", "prepare_debate_evidence", "wait_debate_evidence")})
+    builder.add_conditional_edges("prepare_debate_evidence", debate_nodes["dispatch_debate_evidence"], ["read_debate_evidence", "finish_debate"])
+    builder.add_edge("read_debate_evidence", "join_debate_evidence")
+    builder.add_conditional_edges("join_debate_evidence", lambda state: (
+        debate_nodes["dispatch_debate"](state) if state["debate_session"]["phase"] == "positions"
+        else debate_nodes["route_debate"](state)
+    ), ["debate_position", "finish_debate", "wait_debate_evidence"])
+    builder.add_conditional_edges("wait_debate_evidence", debate_nodes["dispatch_debate_evidence"], ["read_debate_evidence", "finish_debate"])
+    builder.add_conditional_edges("finish_debate", parallel_nodes["after_join_parallel"], {n:n for n in (
+        "finalize", "continue_action", "generate_response", "revise_response")})
 
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(

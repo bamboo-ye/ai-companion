@@ -8,58 +8,37 @@ import (
 	"time"
 )
 
-type embeddingEntry struct {
-	vector  []float32
-	expires time.Time
-}
-
 func (s *Service) SetSemanticClient(client *semantic.Client) { s.semantic = client }
-func (s *Service) semanticScores(ctx context.Context, user, query string, items []Memory) map[string]float64 {
-	scores := map[string]float64{}
+func (s *Service) semanticScores(ctx context.Context, user, query string, items []Memory) (map[string]float64, bool) {
+	projections := []semantic.Projection{}
+	for _, item := range items {
+		if item.Status == "active" && !item.ValidFrom.After(s.now()) && (item.ValidTo == nil || item.ValidTo.After(s.now())) {
+			projections = append(projections, s.semantic.SourceProjections(user, "memory", item.ID, KnowledgeRevision(item), item.Content)...)
+		}
+	}
+	scores, pending, err := s.semantic.StoredScores(ctx, query, projections)
+	return scores, pending || err != nil
+}
+func KnowledgeRevision(item Memory) string {
+	return hash(item.NormalizedHash + ":" + item.UpdatedAt.UTC().Format(time.RFC3339Nano))
+}
+func (s *Service) IndexKnowledge(ctx context.Context, user string) error {
 	if !s.semantic.EmbeddingsEnabled() {
-		return scores
+		return nil
 	}
-	vectors, err := s.semantic.Embed(ctx, []string{query})
+	items, err := s.KnowledgeMemories(ctx, user)
 	if err != nil {
-		return scores
-	}
-	missing := []Memory{}
-	texts := []string{}
-	now := s.now()
-	s.cacheMu.Lock()
-	if s.embeddings == nil {
-		s.embeddings = map[string]embeddingEntry{}
+		return err
 	}
 	for _, item := range items {
-		if item.Status != "active" || item.ValidFrom.After(now) || (item.ValidTo != nil && !item.ValidTo.After(now)) {
+		if item.ValidFrom.After(s.now()) || (item.ValidTo != nil && !item.ValidTo.After(s.now())) {
 			continue
 		}
-		key := user + ":" + item.ID + ":" + item.NormalizedHash + ":" + s.semantic.Version()
-		if entry, ok := s.embeddings[key]; ok && entry.expires.After(now) {
-			scores[item.ID] = semantic.Cosine(vectors[0], entry.vector)
-		} else {
-			missing = append(missing, item)
-			texts = append(texts, item.Content)
+		if err = s.semantic.QueueSource(ctx, user, "memory", item.ID, KnowledgeRevision(item), item.Content); err != nil {
+			return err
 		}
 	}
-	s.cacheMu.Unlock()
-	if len(texts) > 0 {
-		embeddings, err := s.semantic.Embed(ctx, texts)
-		if err != nil {
-			return scores
-		}
-		s.cacheMu.Lock()
-		defer s.cacheMu.Unlock()
-		if len(s.embeddings)+len(texts) > 2048 {
-			s.embeddings = map[string]embeddingEntry{}
-		}
-		for i, item := range missing {
-			key := user + ":" + item.ID + ":" + item.NormalizedHash + ":" + s.semantic.Version()
-			s.embeddings[key] = embeddingEntry{embeddings[i], now.Add(15 * time.Minute)}
-			scores[item.ID] = semantic.Cosine(vectors[0], embeddings[i])
-		}
-	}
-	return scores
+	return nil
 }
 
 // Correct keeps the old evidence and validity interval; replacement is atomic.

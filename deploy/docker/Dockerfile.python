@@ -3,7 +3,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY workers/python/pyproject.toml ./
 COPY workers/python/src ./src
-RUN pip install --no-cache-dir .
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y fonts-noto-cjk fonts-wqy-zenhei libreoffice-impress \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir .
 RUN useradd --create-home --uid 10001 app
 USER app
 ENTRYPOINT ["ai-companion-python-worker"]

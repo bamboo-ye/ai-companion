@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-companion:evidence-arbitration-v2",
+  "title": "Canonical evidence arbitration v2 contract (Python adapts evidence arrays to ID maps)",
+  "type": "object",
+  "required": ["input", "decisions"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "required": ["kind", "issues", "evidence"],
+      "properties": {
+        "kind": {"enum": ["research", "review", "wiki", "memory"]},
+        "issues": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/issue"}},
+        "evidence": {"type": "array", "maxItems": 48, "items": {
+          "type": "object", "required": ["id", "text", "version"],
+          "properties": {"id": {"type": "string", "minLength": 1}, "text": {"type": "string"}, "version": {"type": "string"}}
+        }}
+      }
+    },
+    "decisions": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/decision"}},
+    "call_status": {"enum": ["succeeded", "failed", "skipped"]},
+    "resolution_status": {"enum": ["resolved", "partially_resolved", "unresolved"]},
+    "termination_reason": {"type": "string"}
+  },
+  "$defs": {
+    "citation": {
+      "type": "object", "required": ["id", "quote"], "additionalProperties": false,
+      "properties": {"id": {"type": "string", "minLength": 1}, "quote": {"type": "string", "minLength": 1, "maxLength": 1000}}
+    },
+    "issue": {
+      "type": "object", "required": ["id", "label", "candidates"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1}, "label": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "candidates": {"type": "array", "minItems": 1, "items": {
+          "type": "object", "required": ["id", "evidence_ids"],
+          "properties": {"id": {"type": "string", "minLength": 1}, "text": {"type": "string"}, "evidence_ids": {"type": "array", "items": {"type": "string"}}}
+        }}
+      }
+    },
+    "request": {
+      "type": "object", "required": ["question", "discriminates", "tool_name", "arguments"], "additionalProperties": false,
+      "properties": {
+        "question": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "discriminates": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "tool_name": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "arguments": {"type": "object"}
+      }
+    },
+    "decision": {
+      "type": "object", "required": ["issue_id", "action", "selected_ids", "reason", "evidence"],
+      "properties": {
+        "issue_id": {"type": "string", "minLength": 1},
+        "action": {"enum": ["accept", "reject", "merge", "retain", "need_evidence"]},
+        "classification": {"enum": ["equivalent", "scope_difference", "version_update", "contradiction", "unresolved"]},
+        "selected_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "instruction": {"type": "string", "maxLength": 1000},
+        "evidence": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/citation"}},
+        "evidence_requests": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/request"}},
+        "assessment_responses": {"type": "array", "maxItems": 144, "items": {
+          "type": "object", "required": ["id", "reason", "evidence"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+            "evidence": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"$ref": "#/$defs/citation"}}
+          }
+        }}
+      }
+    }
+  }
+}

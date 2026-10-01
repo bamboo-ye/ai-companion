@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-const maxOfficeWorkerOutput = 40 << 20
+// A presentation result includes its design assets, native PPTX, PDF and previews.
+// Each file is separately constrained by the skill's 32 MiB output-file budget.
+const maxOfficeWorkerOutput = 128 << 20
 
 type OfficeWorker interface {
 	Execute(context.Context, string, map[string]any) (ToolResult, error)
@@ -159,6 +161,17 @@ func officeWorkerHandler(worker OfficeWorker, operation string) Handler {
 	return HandlerFunc(func(ctx context.Context, input map[string]any) (ToolResult, error) {
 		if worker == nil {
 			return ToolResult{}, errors.New("office worker is unavailable")
+		}
+		if operation == "pptx_generate" || operation == "pptx_outline" {
+			// Preserve the caller's immutable task input; historical v1 can opt out.
+			if _, exists := input["design_version"]; !exists {
+				copyInput := make(map[string]any, len(input)+1)
+				for key, value := range input {
+					copyInput[key] = value
+				}
+				copyInput["design_version"] = "2"
+				input = copyInput
+			}
 		}
 		return worker.Execute(ctx, operation, input)
 	})

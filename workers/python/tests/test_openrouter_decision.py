@@ -251,16 +251,25 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
             message="生成带表格和配图的 PPT",
             context={
                 "tools": definitions,
-                "task_contract": {
-                    "artifact_types": ["pptx"],
-                    "presentation_capabilities": ["narrative", "table", "visual"],
-                },
                 "artifact_validation": {},
             },
         )
         self.assertEqual(decision.tool_name, "work_generate_pptx")
         exposed = [item["function"]["name"] for item in port.requests[0]["tools"]]
         self.assertEqual(exposed, ["work_generate_pptx"])
+
+    def test_explicit_presentation_contract_goes_to_composer_without_router_call(self) -> None:
+        port = StubOpenRouter([])
+        decision = port.decide(module="work", message="生成8页完整演示，其中一页为图解", context={
+            "tools": [{"name": "work_generate_pptx", "description": "制作PPT", "compose_arguments": True,
+                       "parameters": {"type": "object", "properties": {}}}],
+            "task_contract": {"artifact_types": ["pptx", "pdf"], "source_required": False},
+            "artifact_validation": {},
+        })
+        self.assertEqual(decision.tool_name, "work_generate_pptx")
+        self.assertTrue(decision.requires_argument_composition)
+        self.assertEqual(decision.tool_arguments, {})
+        self.assertEqual(port.requests, [])
 
     def test_model_visible_presentation_schema_is_capability_scoped(self) -> None:
         schema = {
@@ -2327,11 +2336,7 @@ class OpenRouterDecisionPortTest(unittest.TestCase):
         )
         self.assertEqual(second.tool_name, "work_generate_pptx")
         self.assertTrue(second.requires_argument_composition)
-        self.assertEqual(
-            port.requests[1]["tool_choice"]["function"]["name"],
-            "work_generate_pptx",
-        )
-        self.assertEqual(len(port.requests[1]["tools"]), 1)
+        self.assertEqual(len(port.requests), 1)
 
     def test_goal_assessment_marks_completed_email_draft_terminal(self) -> None:
         port = StubOpenRouter(

@@ -898,6 +898,16 @@ class TaskQualityTests(unittest.TestCase):
             {item["code"] for item in report["violations"]},
         )
 
+    def test_presentation_png_preview_does_not_block_native_delivery(self) -> None:
+        report = validate_artifact_observation(
+            {"status": "succeeded", "skill_name": "office.pptx_generate",
+             "files": [{"name": "overview.pptx"}, {"name": "overview.pdf"}, {"name": "overview.png"}, {"name": "overview.deck.json"}],
+             "output": {"quality_report": {"passed": True, "violations": []}}},
+            {"artifact_types": ["pptx", "pdf"]},
+        )
+        self.assertTrue(report["passed"], report)
+        self.assertEqual(report["produced_artifact_types"], ["pptx", "pdf", "png", "json"])
+
     def test_generic_artifact_gate_accepts_safe_markdown_file(self) -> None:
         report = validate_artifact_observation(
             {

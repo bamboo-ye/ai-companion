@@ -2,7 +2,10 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { confirmationPrompt, executionResultNotice, visibleChatText, productKnowledgeSegments } from "./chat-content";
+import { EvidenceReviewCard } from "./evidence-review-card";
+import { evidenceReviewRunID, parseEvidenceReview, restoreEvidenceReview, type EvidenceReview } from "./evidence-review";
 import { isActiveRun, listSkillRuns } from "./skill-run-client";
+import { PresentationDownload } from "./presentation-download";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 type Message = { id: string; role: "user" | "assistant"; sequence: number; bubble: number; content: string; status: string; reply_to_id?: string };
@@ -11,24 +14,53 @@ type PendingDocument = { id: string; name: string; media_type: string; size_byte
 type GeneratedFileLink = { runID: string; fileID: string; name: string };
 type LedgerExportLink = { exportID: string; name: string };
 type AgentInterrupt = { type: string; summary: string; tool_name?: string; arguments?: Record<string,unknown> };
-type AgentRunOutput = { interrupts?: AgentInterrupt[]; tool_result?: { response?: string } };
+type AgentRunOutput = { evidence_review?: EvidenceReview | null; interrupts?: AgentInterrupt[]; tool_result?: { response?: string } };
 type AgentRun = { id: string; status: string; revision: number; output?: AgentRunOutput; error_message?: string };
 
 export function ChatPanel({ token, character, onClose }: { token: string; character: { id: string; name: string; module: "companion" | "life" | "work" }; onClose: () => void }) {
+  const [evidenceReview, setEvidenceReview] = useState<{runID: string; review: EvidenceReview} | null>(null);
+  const reviewEpoch = useRef(0);
   const [conversationID, setConversationID] = useState(""); const [messages, setMessages] = useState<Message[]>([]); const [jobID, setJobID] = useState(""); const [agentRunID, setAgentRunID] = useState(""); const [status, setStatus] = useState(""); const [error, setError] = useState(""); const [toolNotice, setToolNotice] = useState(""); const [pendingDocuments, setPendingDocuments] = useState<PendingDocument[]>([]); const [uploading, setUploading] = useState(false); const bottomRef = useRef<HTMLDivElement>(null); const handledConfirmationsRef = useRef(new Set<string>()); const handledAgentResolutionsRef = useRef(new Set<string>()); const handledRetryDeliveriesRef = useRef(new Set<string>());
   // The initial recovery passes its resolved conversation explicitly; rerun only when the authenticated character changes.
+  useEffect(() => {
+    let active = true;
+    const epoch = ++reviewEpoch.current;
+    void ensureConversation(token, character.id).then(async (id) => {
+      if (!active) return;
+      setConversationID(id);
+      setEvidenceReview(null);
+      const items = await loadMessages(token,id);
+      if (!active) return;
+      setMessages(items);
+      const activeRun = await loadActiveAgentRun(token,id);
+      if (!active) return;
+      if (activeRun) {
+        setAgentRunID(activeRun.id);
+        void consumeAgentRun(activeRun.id,id);
+      } else {
+        // Restoring a summary must not block history or overwrite a newer send.
+        const restored = await restoreEvidenceReview(items, id, async (runID) => {
+          const response = await fetch(`${apiBase}/v1/agent-runs/${runID}/evidence-review`, {headers: {Authorization: `Bearer ${token}`}});
+          return response.ok ? response.json() : null;
+        }).catch(() => null);
+        if (active && epoch === reviewEpoch.current) setEvidenceReview(restored);
+      }
+    }).catch((cause: Error) => { if (active) setError(cause.message); });
+    // Invalidate the latest request, including sends started after this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { active = false; ++reviewEpoch.current; };
+  // Polling captures the resolved conversation explicitly; only identity changes restart recovery.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { let active = true; void ensureConversation(token, character.id).then(async (id) => { if (!active) return; setConversationID(id); const items = await loadMessages(token,id); if(!active)return;setMessages(items);const activeRun=await loadActiveAgentRun(token,id);if(active&&activeRun){setAgentRunID(activeRun.id);void consumeAgentRun(activeRun.id,id)} }).catch((cause:Error)=>setError(cause.message)); return()=>{active=false}; },[token,character.id]);
+  },[token,character.id]);
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[messages,status]);
   useEffect(()=>{if(character.module!=="work"||!conversationID)return;let active=true;handledRetryDeliveriesRef.current.clear();const sync=async()=>{try{const items=await listSkillRuns(token,{limit:20,conversationID});if(!active)return;const pendingDeliveries=items.filter(run=>run.attempt>1&&!isActiveRun(run)).map(run=>`${run.id}:${run.attempt}:${run.status}`).filter(key=>!handledRetryDeliveriesRef.current.has(key));if(pendingDeliveries.length>0){const latest=await loadMessages(token,conversationID);if(active){pendingDeliveries.forEach(key=>handledRetryDeliveriesRef.current.add(key));setMessages(current=>mergeMessages(current,latest))}}}catch{}};void sync();const timer=window.setInterval(()=>void sync(),2000);const refresh=()=>void sync();window.addEventListener("ai-companion-skill-runs-updated",refresh);return()=>{active=false;window.clearInterval(timer);window.removeEventListener("ai-companion-skill-runs-updated",refresh)}},[token,character.module,conversationID]);
 
-  async function send(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form=event.currentTarget;const data=new FormData(form);const content=String(data.get("content")??"").trim();if((!content&&pendingDocuments.length===0)||!conversationID||jobID||agentRunID||uploading)return;setError("");setToolNotice("");setStatus("正在回应…");
+  async function send(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form=event.currentTarget;const data=new FormData(form);const content=String(data.get("content")??"").trim();if((!content&&pendingDocuments.length===0)||!conversationID||jobID||agentRunID||uploading)return;setError("");setToolNotice("");++reviewEpoch.current;setEvidenceReview(null);setStatus("正在回应…");
     try{const response=await fetch(`${apiBase}/v1/conversations/${conversationID}/messages`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({content,document_ids:pendingDocuments.map(item=>item.id)})});const payload=await response.json() as {message?:Message|string;job?:{id:string};agent_run?:AgentRun};if(response.status===409&&payload.agent_run){setAgentRunID(payload.agent_run.id);await consumeAgentRun(payload.agent_run.id);return}if(!response.ok||!payload.message||typeof payload.message==="string")throw new Error(typeof payload.message==="string"?payload.message:"发送失败");const userMessage=payload.message;form.reset();setPendingDocuments([]);setMessages(current=>mergeMessage(current,userMessage));if(payload.agent_run){setAgentRunID(payload.agent_run.id);await consumeAgentRun(payload.agent_run.id)}else if(payload.job){setJobID(payload.job.id);await consumeEvents(payload.job.id)}else{throw new Error("服务端未返回可执行任务")}}
     catch(cause){setError(cause instanceof Error?cause.message:"发送失败");setStatus("生成失败，可重试");} }
 
   async function uploadDocuments(files:FileList|null){if(character.module!=="work"||!files?.length)return;const remaining=Math.max(0,3-pendingDocuments.length);if(remaining===0){setError("单条消息最多发送 3 个文件");return}setUploading(true);setError("");try{const uploaded:PendingDocument[]=[];for(const file of Array.from(files).slice(0,remaining)){const body=new FormData();body.append("file",file);const response=await fetch(`${apiBase}/v1/documents`,{method:"POST",headers:{Authorization:`Bearer ${token}`},body});const payload=await response.json() as {document?:PendingDocument;message?:string};if(!response.ok||!payload.document)throw new Error(payload.message??`无法上传 ${file.name}`);uploaded.push(payload.document)}setPendingDocuments(current=>[...current,...uploaded])}catch(cause){setError(cause instanceof Error?cause.message:"文件上传失败")}finally{setUploading(false)}}
 
-  async function downloadGeneratedFile(file:GeneratedFileLink){const response=await fetch(`${apiBase}/v1/skill-runs/${file.runID}/files/${file.fileID}`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok){setError("文件下载失败");return}const blob=await response.blob();const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=file.name;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url)}
   async function downloadLedgerExport(file:LedgerExportLink){const response=await fetch(`${apiBase}/v1/ledger/exports/${file.exportID}/file`,{headers:{Authorization:`Bearer ${token}`}});if(!response.ok){setError("账单文件下载失败");return}const blob=await response.blob();const url=URL.createObjectURL(blob);const anchor=document.createElement("a");anchor.href=url;anchor.download=file.name;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url)}
   async function confirmTool(payload:ToolConfirmationEvent){const confirmation=payload.confirmation;if(!confirmation||handledConfirmationsRef.current.has(confirmation.candidate_id))return;if(!["ledger","reminder","today_plan","reminder_reschedule","today_plan_schedule","task_complete"].includes(confirmation.kind))return;handledConfirmationsRef.current.add(confirmation.candidate_id);const approved=window.confirm(confirmationPrompt(confirmation.summary));if(!approved){setToolNotice("已取消，本次更新未写入。");return}
     try{let response:Response;
@@ -54,10 +86,10 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
     }catch{failures++;try{const current=await loadGenerationJob(token,id);if(await applyTerminalStatus(id,current.status)){break}}catch{}if(failures>=5)throw new Error("与服务的连接中断，请稍后重试");setStatus("连接暂时中断，正在自动恢复…");await delay(Math.min(400*failures,1600))}}
   }
 
-  async function consumeAgentRun(id:string,conversationOverride=""){let failures=0;const targetConversationID=conversationOverride||conversationID;
-    while(true){try{const response=await fetch(`${apiBase}/v1/agent-runs/${id}`,{headers:{Authorization:`Bearer ${token}`}});const run=await response.json() as AgentRun&{message?:string};if(!response.ok)throw new Error(run.message??"无法读取 Agent 状态");failures=0;
+  async function consumeAgentRun(id:string,conversationOverride=""){let failures=0;const targetConversationID=conversationOverride||conversationID;const epoch=++reviewEpoch.current;
+    while(true){try{const response=await fetch(`${apiBase}/v1/agent-runs/${id}`,{headers:{Authorization:`Bearer ${token}`}});const run=await response.json() as AgentRun&{message?:string};if(epoch!==reviewEpoch.current)return;if(!response.ok)throw new Error(run.message??"无法读取 Agent 状态");failures=0;const review=parseEvidenceReview(run.output?.evidence_review);setEvidenceReview(review?{runID:id,review}:null);
       if(run.status==="waiting_approval"){const interrupt=run.output?.interrupts?.[0];if(!interrupt)throw new Error("确认信息不完整，请稍后重试");const resolutionKey=`${id}:${run.revision}`;if(!handledAgentResolutionsRef.current.has(resolutionKey)){handledAgentResolutionsRef.current.add(resolutionKey);const approved=window.confirm(confirmationPrompt(interrupt.summary));const resolved=await fetch(`${apiBase}/v1/agent-runs/${id}/resolve`,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":resolutionKey,Authorization:`Bearer ${token}`},body:JSON.stringify({approved})});if(!resolved.ok){handledAgentResolutionsRef.current.delete(resolutionKey);const body=await resolved.json().catch(()=>({message:"提交确认失败"})) as {message?:string};throw new Error(body.message??"提交确认失败")}setToolNotice(approved?"已确认，正在执行更新…":"已取消，本次更新不会写入。")}setStatus("正在恢复任务…")}
-      else if(run.status==="completed"){const latest=await loadMessages(token,targetConversationID);setMessages(current=>mergeMessages(current,latest));setStatus("");setAgentRunID("");setToolNotice(executionResultNotice(run.output?.tool_result?.response));return}
+      else if(run.status==="completed"){const latest=await loadMessages(token,targetConversationID);if(epoch!==reviewEpoch.current)return;setMessages(current=>mergeMessages(current,latest));setStatus("");setAgentRunID("");setToolNotice(executionResultNotice(run.output?.tool_result?.response));return}
       else if(run.status==="cancelled"){const latest=await loadMessages(token,targetConversationID);setMessages(current=>mergeMessages(current,latest));setStatus("已停止生成");setAgentRunID("");setToolNotice("操作已取消，原对话已保留。");return}
       else if(run.status==="timed_out"){const latest=await loadMessages(token,targetConversationID);setMessages(current=>mergeMessages(current,latest));setError("这次处理超时，原对话已保留，可在对应消息下重试。");setStatus("");setAgentRunID("");return}
       else if(run.status==="failed"){const latest=await loadMessages(token,targetConversationID);setMessages(current=>mergeMessages(current,latest));setError("这次处理没有完成，原对话已保留，可在对应消息下重试。");setStatus("");setAgentRunID("");return}
@@ -68,11 +100,12 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
 
   async function stop(){if(agentRunID){const response=await fetch(`${apiBase}/v1/agent-runs/${agentRunID}/cancel`,{method:"POST",headers:{"Idempotency-Key":`${agentRunID}:cancel`,Authorization:`Bearer ${token}`}});if(!response.ok){const body=await response.json().catch(()=>({message:"停止失败"})) as {message?:string};setError(body.message??"停止失败");return}setStatus("正在停止…");return}if(!jobID)return;await fetch(`${apiBase}/v1/generation-jobs/${jobID}/cancel`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});setStatus("正在停止…")}
   async function retry(id=jobID){if(!id)return;setError("");setToolNotice("");const response=await fetch(`${apiBase}/v1/generation-jobs/${id}/retry`,{method:"POST",headers:{Authorization:`Bearer ${token}`}});const payload=await response.json() as {id?:string;message?:string};if(!response.ok||!payload.id){setError(payload.message??"重试失败");return};setJobID(payload.id);setStatus("正在重试…");await consumeEvents(payload.id)}
-  async function retryAgentRun(id:string){if(!id||jobID||agentRunID)return;setError("");setToolNotice("");setStatus("正在重试…");const response=await fetch(`${apiBase}/v1/agent-runs/${id}/retry`,{method:"POST",headers:{"Idempotency-Key":`${id}:retry`,Authorization:`Bearer ${token}`}});const payload=await response.json() as {agent_run?:AgentRun;message?:string};if(!response.ok||!payload.agent_run){setStatus("");setError(payload.message??"重试失败");return}setAgentRunID(payload.agent_run.id);await consumeAgentRun(payload.agent_run.id)}
+  async function retryAgentRun(id:string){if(!id||jobID||agentRunID)return;++reviewEpoch.current;setEvidenceReview(null);setError("");setToolNotice("");setStatus("正在重试…");const response=await fetch(`${apiBase}/v1/agent-runs/${id}/retry`,{method:"POST",headers:{"Idempotency-Key":`${id}:retry`,Authorization:`Bearer ${token}`}});const payload=await response.json() as {agent_run?:AgentRun;message?:string};if(!response.ok||!payload.agent_run){setStatus("");setError(payload.message??"重试失败");return}setAgentRunID(payload.agent_run.id);await consumeAgentRun(payload.agent_run.id)}
 
   const latestAssistantByReply=new Map<string,string>();
   for(const item of messages){if(item.role==="assistant"&&item.reply_to_id)latestAssistantByReply.set(item.reply_to_id,item.id)}
 
+  const latestFileMessageID = [...messages].reverse().find(item => item.content.includes("<!--ai-generated-file:"))?.id;
   return (
     <section className="chatPanel" aria-label={`与${character.name}聊天`}>
       <header>
@@ -91,13 +124,15 @@ export function ChatPanel({ token, character, onClose }: { token: string; charac
             <small>{item.role==="user"?"你":character.name}</small>
             {visibleChatText(item.content)&&<p>{productKnowledgeSegments(item.content).map((segment,index)=>segment.href?<a key={index} href={segment.href} target="_blank" rel="noopener noreferrer">{segment.text}</a>:segment.text)}</p>}
             {attached.length>0&&<div className="messageFiles">{attached.map(file=><span key={file}>📎 {file}</span>)}</div>}
-            {files.length>0&&<div className="messageFiles">{files.map(file=><button key={file.fileID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadGeneratedFile(file)}>⬇ {file.name}</button>)}</div>}
+            {files.length>0&&<div className="messageFiles">{files.map(file=><PresentationDownload key={file.fileID} token={token} runID={file.runID} file={{id:file.fileID,name:file.name}} label={file.name} autoPrepare={item.id===latestFileMessageID}/>)}</div>}
             {ledgerFiles.length>0&&<div className="messageFiles">{ledgerFiles.map(file=><button key={file.exportID} type="button" aria-label={`下载 ${file.name}`} onClick={()=>void downloadLedgerExport(file)}>⬇ {file.name}</button>)}</div>}
+            {evidenceReview&&evidenceReviewRunID(item)===evidenceReview.runID&&<EvidenceReviewCard review={evidenceReview.review} historical/>}
             {canRetry&&failure&&<div className="messageFiles"><button type="button" disabled={Boolean(jobID||agentRunID)} onClick={()=>void(failure.runtime==="agent-run"?retryAgentRun(failure.id):retry(failure.id))}>重试</button></div>}
           </div>
         })}
         {status&&<p className="typingState">{status}</p>}<div ref={bottomRef}/>
       </div>
+      {evidenceReview&&!messages.some(item=>evidenceReviewRunID(item)===evidenceReview.runID)&&<EvidenceReviewCard review={evidenceReview.review}/>}
       {error&&<p className="formMessage" role="alert">{error}</p>}
       {toolNotice&&<p className="formMessage" role="status">{toolNotice}</p>}
       <form className="composer" onSubmit={send}>

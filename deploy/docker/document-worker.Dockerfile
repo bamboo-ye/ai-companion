@@ -22,7 +22,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY workers/python/pyproject.toml ./workers/python/pyproject.toml
 COPY workers/python/src ./workers/python/src
-RUN pip install --no-cache-dir ./workers/python
+COPY web/public/icons/logo.png /app/.assets/presentation-logo.png
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y fonts-noto-cjk fonts-wqy-zenhei libreoffice-impress \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir ./workers/python
 COPY --from=build /out/document-worker /document-worker
 RUN useradd --create-home --uid 10001 app && mkdir -p /data/files && chown -R app:app /data
 USER app

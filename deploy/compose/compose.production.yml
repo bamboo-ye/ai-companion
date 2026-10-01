@@ -41,7 +41,7 @@ services:
     image: caddy:2.11.4-alpine
     command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
     environment:
-      PUBLIC_HOST: ${PUBLIC_HOST:-or.windcry1.com}
+      PUBLIC_HOST: ${PUBLIC_HOST:-kentucky-permitted-thumbnail-grams.trycloudflare.com}
     ports:
       - "80:80"
       - "443:443"

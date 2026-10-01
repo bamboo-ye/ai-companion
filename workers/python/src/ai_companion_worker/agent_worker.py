@@ -32,6 +32,7 @@ from ai_companion_worker.agent_runtime import (
     interrupt_payloads,
 )
 from ai_companion_worker.declarative_agent import build_declarative_graph
+from ai_companion_worker.debate_summary import debate_summary
 from ai_companion_worker.langfuse_observability import (
     LangfuseSettings,
     LangfuseTelemetry,
@@ -836,6 +837,7 @@ def _governance_output(result: Mapping[str, Any]) -> dict[str, Any]:
             )
     return {
         "parallel_plan": _json_value(result.get("parallel_plan")),
+        "evidence_review": debate_summary(result),
         "research_results": _json_value(result.get("research_results")),
         "specialist_review": _json_value(result.get("specialist_review")),
         "arbitrations": _json_value(result.get("arbitrations")),

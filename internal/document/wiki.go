@@ -89,7 +89,6 @@ type wikiCacheEntry struct {
 type wikiRuntime struct {
 	mu                                                sync.Mutex
 	cache                                             map[string]wikiCacheEntry
-	vectors                                           map[string]wikiVector
 	hits, misses, searches, reads, compiles, failures atomic.Int64
 }
 type WikiMetrics struct {
@@ -123,9 +122,9 @@ func (s *Service) wikiDocuments(ctx context.Context, user, workspace string) ([]
 		return nil, fmt.Errorf("%w: wiki disabled", ErrValidation)
 	}
 	if workspace != "" {
-		return s.store.ListWorkspaceDocuments(ctx, workspace, 10000)
+		return s.KnowledgeDocuments(ctx, user, workspace)
 	}
-	return s.store.ListDocuments(ctx, user, 10000)
+	return s.KnowledgeDocuments(ctx, user, "")
 }
 
 // Workspace membership must be established by the HTTP/Agent boundary. All
@@ -196,8 +195,9 @@ func (s *Service) ReadWiki(ctx context.Context, user, workspace, pageID string) 
 }
 
 type WikiSearchHit struct {
-	Page  WikiPage `json:"page"`
-	Score float64  `json:"score"`
+	Revision string   `json:"source_revision"`
+	Page     WikiPage `json:"page"`
+	Score    float64  `json:"score"`
 }
 type WikiSearchResult struct {
 	Hits     []WikiSearchHit `json:"hits"`
@@ -233,7 +233,7 @@ func (s *Service) SearchWiki(ctx context.Context, user, workspace, query string,
 		versions = append(versions, pageVersion{p.ID, p.Version, p.Sources, p.Stale})
 	}
 	fingerprint, _ := json.Marshal(versions)
-	key := fmt.Sprintf("%s:%s:%s:%d:%d:%x", user, workspace, query, limit, budget, sha256.Sum256(fingerprint))
+	key := fmt.Sprintf("%s:%s:%s:%d:%d:%s:%x", user, workspace, query, limit, budget, s.semantic.ProjectionSpec(), sha256.Sum256(fingerprint))
 	w := s.wikiRuntime
 	w.mu.Lock()
 	cached, ok := w.cache[key]
@@ -252,7 +252,7 @@ func (s *Service) SearchWiki(ctx context.Context, user, workspace, query string,
 		}
 		score := float64(tokenOverlap(query, p.Title))*3 + float64(tokenOverlap(query, p.Body))
 		if score > 0 {
-			candidates = append(candidates, WikiSearchHit{p, score})
+			candidates = append(candidates, WikiSearchHit{Page: p, Score: score})
 		}
 	}
 	// Dense recall admits multilingual/paraphrased evidence before optional rerank.
@@ -260,14 +260,15 @@ func (s *Service) SearchWiki(ctx context.Context, user, workspace, query string,
 	if s.semantic.EmbeddingsEnabled() && len(pages) > 0 {
 		densePages := []WikiPage{}
 		for _, p := range pages {
-			if !p.Stale && len(densePages) < 200 {
+			if !p.Stale {
 				densePages = append(densePages, p)
 			}
 		}
 		scores, e := s.wikiDenseScores(ctx, query, densePages)
 		if e != nil {
 			degraded = true
-		} else {
+		}
+		if len(scores) > 0 {
 			byID := map[string]int{}
 			for i, h := range candidates {
 				byID[h.Page.ID] = i
@@ -280,7 +281,7 @@ func (s *Service) SearchWiki(ctx context.Context, user, workspace, query string,
 				if j, ok := byID[p.ID]; ok {
 					candidates[j].Score += score * 4
 				} else {
-					candidates = append(candidates, WikiSearchHit{p, score * 4})
+					candidates = append(candidates, WikiSearchHit{Page: p, Score: score * 4})
 				}
 			}
 		}
@@ -306,6 +307,7 @@ func (s *Service) SearchWiki(ctx context.Context, user, workspace, query string,
 	}
 	res := WikiSearchResult{Hits: []WikiSearchHit{}, Degraded: degraded}
 	for _, h := range candidates {
+		h.Revision = WikiRevision(h.Page)
 		h.Page.Body = truncateRunes(h.Page.Body, 500)
 		h.Page.Evidence = nil
 		encoded, _ := json.Marshal(h)

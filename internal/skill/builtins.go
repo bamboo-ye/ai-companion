@@ -86,6 +86,13 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 	}
 	presentationInput := map[string]any{
+		"project_name":      map[string]any{"type": "string", "maxLength": 100},
+		"style_prompt":      map[string]any{"type": "string", "maxLength": 2000},
+		"design_version":    map[string]any{"type": "string", "enum": []string{"1", "2"}},
+		"theme_id":          map[string]any{"type": "string", "enum": []string{"business", "technology", "editorial", "companion"}},
+		"presentation_mode": map[string]any{"type": "string", "enum": []string{"present", "read", "teach"}},
+		"animation":         map[string]any{"type": "string", "enum": []string{"none", "subtle", "explain", "showcase"}},
+		"deck_spec":         map[string]any{"type": "object"}, "brand": map[string]any{"type": "object"},
 		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
 		"style": map[string]any{"type": "string"}, "brief": map[string]any{"type": "string"},
 		"slide_count": map[string]any{"type": "integer"}, "filename": map[string]any{"type": "string"},
@@ -96,6 +103,9 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		"visual_mode":      map[string]any{"type": "string", "enum": []string{"auto", "source_only", "none"}},
 	}
 	presentationOutput := map[string]any{
+		"design_version": map[string]any{"type": "string"}, "deck_spec": map[string]any{"type": "object"},
+		"scenes": map[string]any{"type": "array"}, "catalog": map[string]any{"type": "object"},
+		"render_report": map[string]any{"type": "object"}, "rendered_previews": map[string]any{"type": "array"}, "warnings": map[string]any{"type": "array"},
 		"title": map[string]any{"type": "string"}, "audience": map[string]any{"type": "string"},
 		"style": map[string]any{"type": "string"}, "slide_count": map[string]any{"type": "integer"},
 		"requested_slide_count": map[string]any{"type": "integer"}, "outline": map[string]any{"type": "array"},
@@ -106,10 +116,10 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 	definitions := []Definition{
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_outline", Version: "1.3.0", DisplayName: "PPTX 大纲", Category: "office",
-				Description: "根据受众、页数、风格和简报预览逐页大纲，不创建文件。", RiskLevel: "none", Enabled: true,
-				ToolName: "presentation.outline", TimeoutMS: 30_000, MaxSteps: 8, MaxInputBytes: 2 << 20, ExecutionMode: "worker",
-				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
+				Name: "office.pptx_outline", Version: "2.0.0", DisplayName: "PPT 设计预览", Category: "office",
+				Description: "根据内容或设计稿计算主题、逐页版式和编辑预览，检查文字与数据容量。", RiskLevel: "none", Enabled: true,
+				ToolName: "presentation.outline", TimeoutMS: 120_000, MaxSteps: 8, MaxInputBytes: 30 << 20, MaxCostMicros: 25_000, ExecutionMode: "worker",
+				InputSchema:    objectSchema([]string{"title", "audience", "style", "slide_count"}, presentationInput),
 				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "visual_report", "model_usage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},
@@ -131,10 +141,10 @@ func RegisterOfficeSkills(registry *Registry, worker OfficeWorker) error {
 		},
 		{
 			Manifest: Manifest{
-				Name: "office.pptx_generate", Version: "1.5.0", DisplayName: "PPTX 多模态生成", Category: "office",
-				Description: "根据受众、页数、风格和简报生成演示文稿；优先复用原文件图片，必要时生成配图并在失败时安全降级。", RiskLevel: "none", Enabled: true,
-				ToolName: "file.generate_pptx", TimeoutMS: 300_000, MaxSteps: 12, MaxInputBytes: 30 << 20, MaxOutputFileBytes: 32 << 20, MaxCostMicros: 250_000, ExecutionMode: "worker",
-				InputSchema:    objectSchema([]string{"title", "audience", "style", "brief", "slide_count"}, presentationInput),
+				Name: "office.pptx_generate", Version: "2.0.0", DisplayName: "PPT 制作工作台", Category: "office",
+				Description: "生成可编辑 PPTX、设计稿和 PDF；支持主题、原生图表表格、图片及分步动画，并实际渲染检查。", RiskLevel: "none", Enabled: true,
+				ToolName: "file.generate_pptx", TimeoutMS: 300_000, MaxSteps: 12, MaxInputBytes: 30 << 20, MaxOutputFileBytes: 32 << 20, MaxCostMicros: 275_000, ExecutionMode: "worker",
+				InputSchema:    objectSchema([]string{"title", "audience", "style", "slide_count"}, presentationInput),
 				OutputSchema:   objectSchema([]string{"title", "audience", "style", "slide_count", "outline", "source_coverage", "visual_report", "model_usage", "quality_report", "source_overwritten"}, presentationOutput),
 				RepairPolicies: filenameRepairPolicies(".pptx"),
 			},

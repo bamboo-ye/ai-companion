@@ -16,6 +16,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/document"
 	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
+	"github.com/windcry1/ai-companion/internal/knowledgebridge"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
 	"github.com/windcry1/ai-companion/internal/opslog"
@@ -92,8 +93,15 @@ func main() {
 		skillRunner.SetMaxConcurrency(cfg.SkillWorkerConcurrency)
 		skillRunner.SetResourceConcurrency(cfg.SkillParseConcurrency, cfg.SkillRenderConcurrency)
 		documentIngestor := document.NewIngestor(store, blobs, parser, index, workerID)
+		documentIngestor.SetDeferredIndex(true)
 		documentCleaner := document.NewCleaner(store, blobs, index, workerID)
 		knowledgeClient := semantic.New(cfg.Knowledge)
+		if cfg.QdrantURL != "" {
+			knowledgeClient.SetProjectionIndex(semantic.NewQdrantProjectionIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, knowledgeClient.Dimensions()))
+		}
+		if p, ok := any(store).(semantic.ProjectionStoreProvider); ok {
+			knowledgeClient.SetProjectionStore(p.KnowledgeProjectionStore())
+		}
 		memoryService := memory.NewService(store)
 		memoryService.SetSemanticClient(knowledgeClient)
 		provider := conversation.Provider(conversation.DevelopmentProvider{})
@@ -128,7 +136,9 @@ func main() {
 		documentService.SetVectorIndex(index)
 		documentService.SetKnowledge(knowledgeClient, cfg.Knowledge.WikiEnabled)
 		plannerService := planner.NewService(store)
-		conversationService.SetToolExecutor(chattool.New(ledgerService, plannerService, documentService, skillService, memoryService))
+		chatTools := chattool.New(ledgerService, plannerService, documentService, skillService, memoryService)
+		chatTools.SetKnowledge(knowledgebridge.New(documentService, memoryService, knowledgeClient, nil))
+		conversationService.SetToolExecutor(chatTools)
 		emailSender := email.Sender(email.NoopSender{})
 		if cfg.SMTPAddr != "" && cfg.SMTPFrom != "" {
 			emailSender = email.SMTPSender{Addr: cfg.SMTPAddr, Host: cfg.SMTPHost, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.SMTPFrom, UseTLS: cfg.SMTPUseTLS}
@@ -179,6 +189,12 @@ func main() {
 			}
 		})
 		runnerCount := 7
+		if owners, ok := any(store).(knowledgebridge.Owners); ok {
+			runnerCount++
+			go runNamed("knowledge projections", func() error {
+				return knowledgebridge.RunProjections(runCtx, owners, documentService, memoryService, knowledgeClient, func(err error) { logger.Error("knowledge projection failed", "error", err) })
+			})
+		}
 		go runNamed("wiki compiler", func() error { return documentService.RunWikiCompiler(runCtx, reconcileInterval) })
 		if cfg.SkillWorkerEnabled {
 			runnerCount++

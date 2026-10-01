@@ -9,7 +9,7 @@
             {
               "match": [
                 {
-                  "host": ["or.windcry1.com"]
+                  "host": ["kentucky-permitted-thumbnail-grams.trycloudflare.com"]
                 }
               ],
               "handle": [
@@ -96,7 +96,7 @@
           "tls_connection_policies": [
             {
               "match": {
-                "sni": ["or.windcry1.com"]
+                "sni": ["kentucky-permitted-thumbnail-grams.trycloudflare.com"]
               },
               "certificate_selection": {
                 "any_tag": ["origin-cert"]

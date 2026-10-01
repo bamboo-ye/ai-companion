@@ -808,7 +808,7 @@ func splitNonEmpty(value string) []string {
 }
 
 func loadKnowledge(environment string) (semantic.Config, error) {
-	c := semantic.Config{BaseURL: value("CONTEXT_MODEL_BASE_URL", ""), APIKey: value("CONTEXT_MODEL_API_KEY", ""), EmbeddingModel: value("CONTEXT_EMBEDDING_MODEL", ""), RerankModel: value("CONTEXT_RERANK_MODEL", ""), SummaryModel: value("CONTEXT_SUMMARY_MODEL", ""), IndexMode: value("CONTEXT_INDEX_MODE", "legacy")}
+	c := semantic.Config{EmbeddingRevision: value("CONTEXT_EMBEDDING_REVISION", ""), QueryInstruction: value("CONTEXT_QUERY_INSTRUCTION", ""), PreprocessingVersion: value("CONTEXT_PREPROCESSING_VERSION", "source-title-section-v2"), BaseURL: value("CONTEXT_MODEL_BASE_URL", ""), APIKey: value("CONTEXT_MODEL_API_KEY", ""), EmbeddingModel: value("CONTEXT_EMBEDDING_MODEL", ""), RerankModel: value("CONTEXT_RERANK_MODEL", ""), SummaryModel: value("CONTEXT_SUMMARY_MODEL", ""), IndexMode: value("CONTEXT_INDEX_MODE", "legacy")}
 	var err error
 	for _, setting := range []struct {
 		key               string

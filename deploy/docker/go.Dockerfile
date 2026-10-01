@@ -30,8 +30,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY workers/python/pyproject.toml ./workers/python/pyproject.toml
 COPY workers/python/src ./workers/python/src
+COPY web/public/icons/logo.png /app/.assets/presentation-logo.png
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y fonts-wqy-zenhei poppler-utils \
+    && apt-get install --no-install-recommends -y fonts-wqy-zenhei fonts-noto-cjk libreoffice-impress poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir "langgraph==1.2.9" ./workers/python \
     && useradd --create-home --uid 10001 app \

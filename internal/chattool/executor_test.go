@@ -1065,7 +1065,7 @@ func TestWorkToolsAreExposedToModelAndTextTranslationUsesStructuredArguments(t *
 		skill.NewService(skill.NewMemoryStore(), skill.NewMemoryFileStore(), registry),
 	)
 	tools := executor.ModelTools(conversation.ToolRequest{Module: "work", Text: "任意自然语言"})
-	if len(tools) != 18 {
+	if len(tools) != 20 {
 		t.Fatalf("work model tools=%#v", tools)
 	}
 	names := map[string]bool{}

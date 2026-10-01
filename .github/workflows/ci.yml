@@ -9,6 +9,49 @@ permissions:
   contents: read
 
 jobs:
+  knowledge-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.3-alpine
+        env:
+          POSTGRES_PASSWORD: knowledge-test
+          POSTGRES_DB: knowledge_test
+        ports: ["15436:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d knowledge_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8.4.10
+        env:
+          MYSQL_ROOT_PASSWORD: knowledge-test
+          MYSQL_DATABASE: knowledge_test
+        ports: ["13316:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pknowledge-test"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      qdrant:
+        image: qdrant/qdrant:v1.18.0
+        ports: ["16336:6333"]
+    env:
+      POSTGRES_TEST_DSN: postgres://postgres:knowledge-test@127.0.0.1:15436/knowledge_test?sslmode=disable
+      MYSQL_TEST_DSN: root:knowledge-test@tcp(127.0.0.1:13316)/knowledge_test?parseTime=true
+      QDRANT_TEST_URL: http://127.0.0.1:16336
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.8"
+          cache: true
+      - name: Migrate isolated PostgreSQL
+        run: DATABASE_DRIVER=postgres POSTGRES_DSN="$POSTGRES_TEST_DSN" go run ./cmd/migrate
+      - name: Migrate isolated MySQL
+        run: DATABASE_DRIVER=mysql MYSQL_DSN="$MYSQL_TEST_DSN" go run ./cmd/migrate
+      - name: Verify durable knowledge contracts
+        run: go test -race ./internal/knowledge... ./internal/semantic ./internal/document ./internal/memory ./internal/chattool ./internal/httpserver
+      - name: Verify both persistence adapters
+        run: go test ./internal/persistence/postgresstore ./internal/persistence/mysqlstore -run TestKnowledgeDurable -count=1 -v
+
   go:
     runs-on: ubuntu-latest
     steps:
@@ -69,6 +112,10 @@ jobs:
           workers/python/src/ai_companion_worker/agent_governance.py
           workers/python/src/ai_companion_worker/parallel_tasks.py
           workers/python/src/ai_companion_worker/arbitration.py
+          workers/python/src/ai_companion_worker/debate.py
+          workers/python/src/ai_companion_worker/debate_summary.py
+          workers/python/src/ai_companion_worker/evaluation/debate_gate.py
+          workers/python/src/ai_companion_worker/evaluation/debate_scenarios.py
           workers/python/src/ai_companion_worker/model_concurrency.py
           workers/python/src/ai_companion_worker/agent_runtime.py
           workers/python/src/ai_companion_worker/openrouter_decision.py

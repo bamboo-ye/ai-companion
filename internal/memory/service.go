@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -59,11 +58,9 @@ type Store interface {
 	ClearMemories(context.Context, string, time.Time) error
 }
 type Service struct {
-	semantic   *semantic.Client
-	cacheMu    sync.Mutex
-	embeddings map[string]embeddingEntry
-	store      Store
-	now        func() time.Time
+	semantic *semantic.Client
+	store    Store
+	now      func() time.Time
 }
 
 func NewService(store Store) *Service { return &Service{store: store, now: time.Now} }
@@ -113,7 +110,7 @@ func (s *Service) Create(ctx context.Context, userID, content string) (Memory, e
 	return saved, err
 }
 func (s *Service) List(ctx context.Context, userID string) ([]Memory, error) {
-	items, err := s.store.ListMemories(ctx, userID, 500)
+	items, err := s.KnowledgeMemories(ctx, userID)
 	active := map[string]Memory{}
 	for _, item := range items {
 		active[item.ID] = item
@@ -121,6 +118,15 @@ func (s *Service) List(ctx context.Context, userID string) ([]Memory, error) {
 	for i := range items {
 		items[i].Arbitration = visibleArbitrationIn(items[i], active)
 	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Pinned != items[j].Pinned {
+			return items[i].Pinned
+		}
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 	return items, err
 }
 func (s *Service) Update(ctx context.Context, userID, memoryID string, input UpdateInput) (Memory, error) {
@@ -177,11 +183,17 @@ func (s *Service) Recall(ctx context.Context, userID, query string, limit int) (
 
 // RecallContext preserves provenance for both chat and Agent context builders.
 func (s *Service) RecallContext(ctx context.Context, userID, query string, limit int) ([]contextengine.Item, error) {
-	items, err := s.store.ListMemories(ctx, userID, 500)
+	items, _, err := s.RecallKnowledge(ctx, userID, query, limit)
+	return items, err
+}
+
+// RecallKnowledge also reports partial indexing and query-model failures.
+func (s *Service) RecallKnowledge(ctx context.Context, userID, query string, limit int) ([]contextengine.Item, bool, error) {
+	items, err := s.KnowledgeMemories(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	semanticScores := s.semanticScores(ctx, userID, query, items)
+	semanticScores, degraded := s.semanticScores(ctx, userID, query, items)
 	// Flag both sides, even when ranking returns only the older memory.
 	disputed := map[string]string{}
 	active := map[string]Memory{}
@@ -246,14 +258,14 @@ func (s *Service) RecallContext(ctx context.Context, userID, query string, limit
 		item := match.item
 		item.Content += disputed[item.ID]
 		result = append(result, contextengine.Item{Content: item.Content, EstimatedTokens: contextengine.EstimateTokens(item.Content), Source: contextengine.Source{
-			Kind: "memory", ID: item.ID, ConversationID: item.SourceConversationID,
+			Kind: "memory", ID: item.ID, Version: KnowledgeRevision(item), ConversationID: item.SourceConversationID,
 			MessageID: item.SourceMessageID, UpdatedAt: &item.UpdatedAt,
 		}})
 		if len(result) >= limit {
 			break
 		}
 	}
-	return result, nil
+	return result, degraded, nil
 }
 
 func memoryHalfLifeDays(memoryType string) float64 {

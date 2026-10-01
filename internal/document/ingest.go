@@ -82,13 +82,17 @@ func (NoopVectorIndex) SearchDocuments(context.Context, string, []string, int) (
 func (NoopVectorIndex) DeleteDocument(context.Context, string, string) error { return nil }
 
 type Ingestor struct {
-	store    IngestStore
-	blobs    BlobStore
-	parser   Parser
-	index    VectorIndex
-	workerID string
-	now      func() time.Time
+	deferredIndex bool
+	store         IngestStore
+	blobs         BlobStore
+	parser        Parser
+	index         VectorIndex
+	workerID      string
+	now           func() time.Time
 }
+
+// Durable workers reconcile ready sources into versioned projection jobs.
+func (i *Ingestor) SetDeferredIndex(enabled bool) { i.deferredIndex = enabled }
 
 func NewIngestor(store IngestStore, blobs BlobStore, parser Parser, index VectorIndex, workerID string) *Ingestor {
 	return &Ingestor{store: store, blobs: blobs, parser: parser, index: index, workerID: workerID, now: time.Now}
@@ -132,14 +136,17 @@ func (i *Ingestor) process(ctx context.Context, job IngestJob) (bool, error) {
 		return fail(fmt.Errorf("parse_document: %w", err))
 	}
 	prepareResult(job.Document.ID, &result)
+	if err = i.store.SaveParsedDocument(ctx, job, result, i.now().UTC()); err != nil {
+		return fail(fmt.Errorf("save_chunks: %w", err))
+	}
+	if i.deferredIndex {
+		return true, i.store.CompleteIngestJob(ctx, job.ID, i.now().UTC())
+	}
 	if err = i.index.Ensure(ctx); err != nil {
 		return fail(fmt.Errorf("ensure_index: %w", err))
 	}
 	if err = i.index.Upsert(ctx, job.Document, result.Chunks); err != nil {
 		return fail(fmt.Errorf("index_chunks: %w", err))
-	}
-	if err = i.store.SaveParsedDocument(ctx, job, result, i.now().UTC()); err != nil {
-		return fail(fmt.Errorf("save_chunks: %w", err))
 	}
 	if err = i.store.CompleteIngestJob(ctx, job.ID, i.now().UTC()); err != nil {
 		return true, err

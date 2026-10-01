@@ -189,6 +189,19 @@ func (g *ToolGateway) Definitions(ctx context.Context, runID string, expectedRev
 	return result, nil
 }
 
+// EvidenceUser validates the same lease/revision fence as tool reads. The HTTP
+// boundary uses this persisted owner, never a caller-supplied user ID.
+func (g *ToolGateway) EvidenceUser(ctx context.Context, runID string, expectedRevision int) (string, error) {
+	run, _, err := g.loadRequest(ctx, runID, expectedRevision)
+	if err != nil {
+		return "", err
+	}
+	if run.Module != "work" {
+		return "", ErrToolDenied
+	}
+	return run.UserID, nil
+}
+
 func (g *ToolGateway) Commit(ctx context.Context, runID string, input ToolCommitInput) (ToolOutcome, error) {
 	run, _, err := g.loadRequest(ctx, runID, input.ExpectedRevision)
 	if err != nil {
@@ -505,6 +518,18 @@ func publicSkillRun(item skill.Run) map[string]any {
 	if len(item.Output) > 0 {
 		var output any
 		if json.Unmarshal(item.Output, &output) == nil {
+			if item.SkillName == "office.pptx_generate" || item.SkillName == "office.pptx_outline" {
+				if presentation, ok := output.(map[string]any); ok {
+					// The authenticated workbench reads the original output. Models
+					// need content and quality evidence, never base64 render previews.
+					delete(presentation, "rendered_previews")
+					delete(presentation, "scenes")
+					delete(presentation, "catalog")
+					if deck, ok := presentation["deck_spec"].(map[string]any); ok {
+						delete(deck, "assets")
+					}
+				}
+			}
 			result["output"] = output
 		}
 	}

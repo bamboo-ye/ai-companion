@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { MemoryClarificationCard, MemoryCorrectionEditor, type MemoryClarification } from "./memory-clarification";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -12,6 +13,7 @@ type Memory = {
   sensitivity: string;
   source_message_id?: string;
   updated_at: string;
+  arbitration?: { clarifications?: MemoryClarification[] };
 };
 
 export function MemoryPanel({ token, onClose }: { token: string; onClose: () => void }) {
@@ -53,6 +55,13 @@ export function MemoryPanel({ token, onClose }: { token: string; onClose: () => 
   }
 
   async function patch(id: string, body: Record<string, unknown>) {
+    if (typeof body.content === "string") {
+      body = {...body, content: body.content.trim()};
+      if (String(body.content).length < 2 || String(body.content).length > 2000) {
+        setMessage("记忆内容需要 2 至 2000 个字符");
+        return;
+      }
+    }
     try {
       const response = await fetch(`${apiBase}/v1/memories/${id}${body.content ? "/corrections" : ""}`, {
         method: body.content ? "POST" : "PATCH",
@@ -122,12 +131,10 @@ export function MemoryPanel({ token, onClose }: { token: string; onClose: () => 
               {item.source_message_id && <span>来自聊天</span>}
             </div>
             {editing === item.id ? (
-              <div className="memoryEdit">
-                <input aria-label="编辑记忆内容" value={draft} onChange={(event) => setDraft(event.target.value)} />
-                <button type="button" onClick={() => void patch(item.id, { content: draft })}>保存</button>
-                <button type="button" onClick={() => setEditing("")}>取消</button>
-              </div>
+              <MemoryCorrectionEditor value={draft} onChange={setDraft} onSave={content => patch(item.id, {content})} onCancel={() => setEditing("")}/>
             ) : <p>{item.content}</p>}
+            {item.arbitration?.clarifications?.map((question) => <MemoryClarificationCard key={question.issue_id} question={question} candidates={items}
+              onCorrect={(related) => { setEditing(related.id); setDraft(related.content); setMessage("请明确补充这条记录的时间、情境或正确内容。"); }}/>) }
             <div className="memoryActions">
               <button type="button" onClick={() => void patch(item.id, { pinned: !item.pinned })}>
                 {item.pinned ? "取消固定" : "固定"}

@@ -154,6 +154,10 @@ def _edit_docx(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _generate_pptx(payload: dict[str, Any], *, include_file: bool) -> dict[str, Any]:
+    if payload.get("design_version") == "2" or "deck_spec" in payload or payload.get("project_name") or payload.get("style_prompt") or payload.get('slide_count') == 1 or re.search(r"(?m)^###\s+", str(payload.get('brief', ''))):
+        from ai_companion_worker.presentation_studio import generate
+
+        return generate(payload, include_file=include_file)
     title = normalize_presentation_title(_required_text(payload, "title", 200))
     audience = _required_text(payload, "audience", 200)
     style = _required_text(payload, "style", 100)
@@ -2523,8 +2527,16 @@ def _presentation_quality_report(
     filename: Any,
     brief: str,
     requested_slide_count: int,
+    validated_design: bool = False,
 ) -> dict[str, Any]:
     violations: list[dict[str, Any]] = list(layout_violations)
+    # A restored/built-in design already has validated page objects. Inspect its
+    # visible content, rather than requiring the obsolete Markdown input again.
+    if validated_design:
+        brief = "\n".join(
+            str(slide.get("title", "")) + "\n" + "\n".join(str(v) for v in slide.get("bullets", []))
+            for slide in outline
+        )
     violations.extend(
         presentation_exhaustive_scope_violations(
             {
@@ -2545,16 +2557,18 @@ def _presentation_quality_report(
             task_contract,
         )
     )
+    audience_violations = presentation_audience_content_violations(
+        {
+            "title": outline[0].get("title") if outline else "",
+            "brief": brief,
+            "slide_count": requested_slide_count,
+            "table": table,
+        },
+        task_contract,
+    )
     violations.extend(
-        presentation_audience_content_violations(
-            {
-                "title": outline[0].get("title") if outline else "",
-                "brief": brief,
-                "slide_count": requested_slide_count,
-                "table": table,
-            },
-            task_contract,
-        )
+        v for v in audience_violations
+        if not validated_design or v["code"] == "presentation_audience_meta_content"
     )
     presentation_capabilities = task_contract.get("presentation_capabilities")
     table_required = (

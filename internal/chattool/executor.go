@@ -15,6 +15,8 @@ import (
 	"github.com/windcry1/ai-companion/internal/chatattachment"
 	"github.com/windcry1/ai-companion/internal/conversation"
 	"github.com/windcry1/ai-companion/internal/document"
+	"github.com/windcry1/ai-companion/internal/knowledge"
+	"github.com/windcry1/ai-companion/internal/knowledgebridge"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
 	"github.com/windcry1/ai-companion/internal/planner"
@@ -35,6 +37,7 @@ type Executor struct {
 	documents *document.Service
 	skills    *skill.Service
 	memories  *memory.Service
+	knowledge *knowledge.Service
 	now       func() time.Time
 }
 
@@ -43,6 +46,7 @@ func New(ledgerService *ledger.Service, plannerService *planner.Service, documen
 	if len(memoryServices) > 0 {
 		executor.memories = memoryServices[0]
 	}
+	executor.knowledge = knowledgebridge.New(documentService, executor.memories, nil, nil)
 	return executor
 }
 
@@ -56,7 +60,7 @@ func (e *Executor) ModelTools(request conversation.ToolRequest) []conversation.M
 		return e.withMemoryModelTool(append(definitions, productKnowledgeTools()...))
 	}
 	if request.Module == "work" {
-		return e.withMemoryModelTool(append(append(workModelTools(len(chatattachment.DocumentIDs(request.Text))), wikiModelTools()...), productKnowledgeTools()...))
+		return e.withMemoryModelTool(append(append(append(workModelTools(len(chatattachment.DocumentIDs(request.Text))), knowledgeModelTools()...), wikiModelTools()...), productKnowledgeTools()...))
 	}
 	if request.Module != "life" {
 		return nil
@@ -203,8 +207,11 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			"title":           stringField("封面可见标题，不得包含 .pptx 文件扩展名"),
 			"audience":        stringField("目标受众"),
 			"style":           stringField("视觉与表达风格"),
-			"brief":           map[string]any{"type": "string", "description": "最终面向受众的正文。非表格演示只能按内容页依次写为：## 简短标题，随后至少两行 - 事实或结论；不得写页数规划、制作说明、文件名、覆盖率、抽取过程、引用说明、备注或后续询问。标题不超过28字符、要点不超过100字符、章节数必须等于 slide_count 减2。表格演示可填写一句内容目的", "maxLength": 10000},
-			"slide_count":     map[string]any{"type": "integer", "description": "页数，3 到 60；完整性任务按数据量自动扩页", "minimum": 3, "maximum": 60},
+			"style_prompt":    map[string]any{"type": "string", "maxLength": 2000, "description": "用户在对话里描述的用途、听众、配色、字体、图解和动画要求。忠实提取并传入，LLM将生成自定义设计；不要只映射到既定主题。"},
+			"project_name":    map[string]any{"type": "string", "maxLength": 100, "description": "默认填空字符串。用户要求使用内置伴AI产品知识时填伴AI，brief为空，完整介绍通常8页；明确要求单页图时slide_count=1。其他项目必须为空，内容写入brief。"},
+			"revision_of":     map[string]any{"type": "string", "enum": []string{"", "latest"}, "description": "新任务必须填空字符串。仅用户明确要求修改本对话已生成PPT的风格时填latest，brief为空，style_prompt传新要求；保留原稿事实，不跳转工作台。"},
+			"brief":           map[string]any{"type": "string", "description": "最终面向受众的正文：## 页面标题，随后 - 事实或结论。默认生成完整多页演示，每节至少两条要点，##章节数=slide_count减2。某页需要架构图时，在该##页内以2–10个###模块归组，每模块1–4条简短事实，这些模块共同组成一页。只有用户明确要单页图时slide_count=1，##改表示模块。图解只是整稿的一种页面，其他页按资料表达背景、证据、对比、流程、计划与结论。不得写制作计划或虚构数据。", "maxLength": 10000},
+			"slide_count":     map[string]any{"type": "integer", "description": "整套演示总页数，1 到 60，包含封面与结尾。默认按完整演示安排；只有明确要求单页图时为1。完整性任务按数据量自动扩页", "minimum": 1, "maximum": 60},
 			"filename":        filenameField(".pptx"),
 			"task_contract":   map[string]any{"type": "object", "description": "Harness 注入的可信任务契约"},
 			"source_coverage": map[string]any{"type": "object", "description": "Harness 注入的可信来源覆盖率"},
@@ -321,7 +328,7 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 			RepairPolicies:   filenameRepairs(".pptx"),
 		},
 		{
-			Name: "work_generate_pptx", Description: "创建 PPT/PPTX 的唯一主入口。根据 Harness 锁定的能力计划编排正文、结构化表格和视觉子能力，最后统一生成并校验文件；模型不得自行传入或改变能力计划。",
+			Name: "work_generate_pptx", Description: "在工作助手对话中直接生成PPTX、PDF和可编辑设计稿。支持从伴AI项目名生成一页能力图，按style_prompt用LLM设计风格，也可通过revision_of=latest继续改稿。根据 Harness 锁定的能力计划编排正文、结构化表格和视觉子能力，最后统一生成并校验文件；模型不得自行传入或改变能力计划。",
 			ComposeArguments: true,
 			Parameters:       object([]string{"title", "audience", "style", "brief", "slide_count"}, presentationFields()),
 			RepairPolicies:   filenameRepairs(".pptx"),
@@ -342,6 +349,9 @@ func workModelTools(attachmentCount int) []conversation.ModelToolDefinition {
 }
 
 func (e *Executor) ExecuteModelTool(ctx context.Context, request conversation.ToolRequest, call conversation.ModelToolCall) (conversation.ToolResult, error) {
+	if call.Name == "work_knowledge_search" || call.Name == "work_knowledge_read" {
+		return e.executeKnowledge(ctx, request, call)
+	}
 	if call.Name == "product_knowledge_search" || call.Name == "product_knowledge_read" {
 		return e.executeProductKnowledge(ctx, request, call)
 	}
@@ -453,7 +463,7 @@ func (e *Executor) executeWorkModelTool(ctx context.Context, request conversatio
 	case "work_create_markdown_document":
 		return e.runSkillWithInput(ctx, request, "office.markdown_document", call.Arguments)
 	case "work_create_pptx_outline":
-		return e.runSkillWithInput(ctx, request, "office.pptx_outline", call.Arguments)
+		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, "narrative", "office.pptx_outline")
 	case "work_generate_pptx":
 		return e.runPresentationSkillWithSources(ctx, request, call.Arguments, presentationModeFromArguments(call.Arguments))
 	case "work_generate_table_pptx":
@@ -1755,20 +1765,60 @@ func (e *Executor) runSkillWithInput(ctx context.Context, request conversation.T
 	return handled(skillName, skillRunChatResponse(run, "工作工具执行失败，可以直接在聊天窗口或历史任务中重试。"), run), nil
 }
 
-func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request conversation.ToolRequest, arguments map[string]any, mode string) (conversation.ToolResult, error) {
+func (e *Executor) runPresentationSkillWithSources(ctx context.Context, request conversation.ToolRequest, arguments map[string]any, mode string, target ...string) (conversation.ToolResult, error) {
 	input := make(map[string]any, len(arguments)+2)
 	for key, value := range arguments {
 		// Source bytes cross a trust boundary here. Never accept source documents
 		// composed by the model or supplied through a forged tool invocation.
-		if key != "source_documents" && key != "visual_mode" {
+		if key != "source_documents" && key != "visual_mode" && key != "deck_spec" && key != "revision_of" {
 			input[key] = value
+		}
+	}
+	if arguments["revision_of"] == "latest" {
+		if brief, _ := arguments["brief"].(string); strings.TrimSpace(brief) != "" {
+			return conversation.ToolResult{}, fmt.Errorf("%w: 风格续改的brief应为空；生成新内容时revision_of应为空", skill.ErrValidation)
+		}
+		if strings.TrimSpace(request.ConversationID) == "" {
+			return conversation.ToolResult{}, fmt.Errorf("%w: PPT改稿需要当前对话", skill.ErrValidation)
+		}
+		runs, err := e.skills.ListForConversation(ctx, request.UserID, request.ConversationID, 50)
+		if err != nil {
+			return conversation.ToolResult{}, err
+		}
+		found := false
+		for _, previous := range runs {
+			if previous.Status != "succeeded" || previous.SkillName != "office.pptx_generate" || len(previous.Files) == 0 {
+				continue
+			}
+			var output struct {
+				Deck map[string]any `json:"deck_spec"`
+			}
+			if json.Unmarshal(previous.Output, &output) != nil || output.Deck == nil {
+				continue
+			}
+			input["deck_spec"] = output.Deck
+			input["title"], input["audience"] = output.Deck["title"], output.Deck["audience"]
+			if slides, ok := output.Deck["slides"].([]any); ok {
+				input["slide_count"] = float64(len(slides))
+			}
+			delete(input, "project_name")
+			delete(input, "filename")
+			found = true
+			break
+		}
+		if !found {
+			return conversation.ToolResult{}, fmt.Errorf("%w: 当前对话还没有可修改的PPT；新任务应清空revision_of并提供brief", skill.ErrValidation)
 		}
 	}
 	structured := mode == "structured_table" || mode == "composed"
 	visual := mode == "illustrated" || mode == "composed"
 	runPresentationTableSubtool(input, structured)
 	e.runPresentationVisualSubtool(ctx, request, input, visual)
-	return e.runSkillWithInput(ctx, request, "office.pptx_generate", input)
+	skillName := "office.pptx_generate"
+	if len(target) > 0 {
+		skillName = target[0]
+	}
+	return e.runSkillWithInput(ctx, request, skillName, input)
 }
 
 func runPresentationTableSubtool(input map[string]any, enabled bool) {

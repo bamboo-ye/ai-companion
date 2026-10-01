@@ -216,14 +216,28 @@ func currentOperator(r *http.Request) operatorAuth {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	return decodeJSONLimit(w, r, target, 1<<20)
+}
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		var sizeError *http.MaxBytesError
+		if errors.As(err, &sizeError) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiError{Code: "request_too_large", Message: "请求超过当前任务的文件与内容容量限制"})
+			return false
+		}
 		writeJSON(w, http.StatusBadRequest, apiError{Code: "invalid_request", Message: "请求 JSON 无效"})
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		var sizeError *http.MaxBytesError
+		if errors.As(err, &sizeError) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, apiError{Code: "request_too_large", Message: "请求超过当前任务的文件与内容容量限制"})
+			return false
+		}
 		writeJSON(w, http.StatusBadRequest, apiError{Code: "invalid_request", Message: "请求只能包含一个 JSON 对象"})
 		return false
 	}

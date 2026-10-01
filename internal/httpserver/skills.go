@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,15 +40,17 @@ func (s *Server) updateSkillSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startSkillRun(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Input map[string]any `json:"input"`
-	}
-	if !decodeJSON(w, r, &input) {
-		return
-	}
 	manifest, err := s.skills.ManifestForUser(r.Context(), currentAuth(r).User.ID, r.PathValue("skill_name"))
 	if err != nil {
 		writeSkillError(w, err)
+		return
+	}
+	var input struct {
+		Input map[string]any `json:"input"`
+	}
+	// Match the skill's budget, allowing a small envelope around the input.
+	// The runtime still enforces the exact serialized input limit.
+	if !decodeJSONLimit(w, r, &input, int64(manifest.MaxInputBytes)+(64<<10)) {
 		return
 	}
 	if err = s.userSafety.CheckSkillRisk(r.Context(), currentAuth(r).User.ID, manifest.Name, manifest.RiskLevel); err != nil {
@@ -129,7 +132,7 @@ func (s *Server) downloadSkillFile(w http.ResponseWriter, r *http.Request) {
 	name := strings.ReplaceAll(strings.ReplaceAll(file.Name, "\"", ""), "\r", "")
 	name = strings.ReplaceAll(name, "\n", "")
 	w.Header().Set("Content-Type", file.MediaType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)

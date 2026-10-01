@@ -1,0 +1,7 @@
+{
+  "minimum_cases": 100,
+  "wrong_accept_margin": 0.01,
+  "minimum_resolution_gain": 0.05,
+  "maximum_cost_ratio": 2,
+  "maximum_p95_latency_ms": 90000
+}

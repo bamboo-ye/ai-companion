@@ -294,7 +294,7 @@ eval-agent-retry: ## Evaluate bounded retry scheduling and recovery logs
 
 eval-agent-arbitration: ## Verify evidence arbitration, bounded repair and checkpoint recovery
 	mkdir -p artifacts/agent-eval
-	PYTHONPATH=workers/python/src $(PYTHON) -m pytest workers/python/tests/test_arbitration.py -q --junitxml=artifacts/agent-eval/arbitration.xml
+	PYTHONPATH=workers/python/src $(PYTHON) -m pytest workers/python/tests/test_arbitration.py workers/python/tests/test_debate.py workers/python/tests/test_debate_delivery.py workers/python/tests/test_debate_gate.py -q --junitxml=artifacts/agent-eval/arbitration.xml
 
 eval-agent: eval-agent-contract eval-agent-replay eval-agent-performance eval-agent-retry eval-agent-arbitration ## Run all offline Agent quality, performance and retry gates
 

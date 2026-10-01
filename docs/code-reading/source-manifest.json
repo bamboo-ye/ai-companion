@@ -1,0 +1,203 @@
+{
+  "baseline": "324d432",
+  "date": "2026-09-23",
+  "sourceLines": 2974,
+  "annotations": 837,
+  "symbolSections": 76,
+  "functionTypeDeclarations": 94,
+  "variableEntries": 482,
+  "sources": [
+    {
+      "file": "cmd/api/main.go",
+      "sha256": "bd3bcac1a9154c0794b19f8bacb6d29092364317a597c3fb1c982c373615a585"
+    },
+    {
+      "file": "internal/identity/service.go",
+      "sha256": "828e7fe8b2aa755a8c01ddbc47c8653565a9e04e4793278f9428ed47fcbd7c90"
+    },
+    {
+      "file": "internal/identity/password.go",
+      "sha256": "023bfa23613746f2a9e8c35ef7d463b81a1cdda0ba1d3f8a47c79a84140638eb"
+    },
+    {
+      "file": "internal/identity/token.go",
+      "sha256": "c03bf92b52ae71a7b37ae4848da202a10dba768e7dd55dda5f932a89e685cdbd"
+    },
+    {
+      "file": "internal/httpserver/auth.go",
+      "sha256": "bc4a7884ec3ffd03f4c2c72ed992dd30cd4dcfebe56c9941284ff6b5fc4f011b"
+    },
+    {
+      "file": "internal/character/service.go",
+      "sha256": "905ef326e778cefeea55921deed78577652bcc7868c75a7cb1f5b07d1e9f7cf1"
+    },
+    {
+      "file": "web/app/chat-panel.tsx",
+      "sha256": "b09ec45c0199cd3d95059927e42ede0d57a994b259a1290d1fe1ba1d390898fa"
+    },
+    {
+      "file": "internal/httpserver/conversations.go",
+      "sha256": "5d35eaf2d41509c17770a462acac95d92d230bd06423e5decd9f519c76d779bb"
+    },
+    {
+      "file": "internal/agent/chat.go",
+      "sha256": "b7116287b90a9ecc095a305b15173d77a6b9d5645ee46f6c0f8121aaf0f24b08"
+    },
+    {
+      "file": "internal/persistence/postgresstore/agent_chat.go",
+      "sha256": "b58880112a9985ce6a47bbe77812c0a838856176664b5e60b6a732493e48977f"
+    },
+    {
+      "file": "internal/persistence/postgresstore/agent.go",
+      "sha256": "9d666952ca2eae62561d6afb9895371a649ff68213c9bd090c5abec0008cee54"
+    },
+    {
+      "file": "internal/agent/tool_gateway.go",
+      "sha256": "41140ec02fd124c711e5eaf3355f0168d3954a9ff8cdd54084a8eb6cc1c91887"
+    },
+    {
+      "file": "workers/python/src/ai_companion_worker/agent_runtime.py",
+      "sha256": "daa67e2f14ab43c7e7dea6d7d7b83482288376a8b8a6704a8338296a0f7f8a45"
+    },
+    {
+      "file": "internal/httpserver/agent_runs.go",
+      "sha256": "a0c4c42a8ff3d5dedbd32fada36496a7b559e84d71d8e947bad7b3b596b9ea04"
+    },
+    {
+      "file": "internal/agent/worker.go",
+      "sha256": "45b0b45a05579bbe8f2efdf19a9083114f40d768917add621dd84ff35b355c8d"
+    },
+    {
+      "file": "internal/conversation/service.go",
+      "sha256": "bb6a3e8a0dd8ecc0b1d217ff8bc9ba518f20a9e45bf20dc1ecd6846fa326438a"
+    },
+    {
+      "file": "internal/conversation/context.go",
+      "sha256": "6974ca820f9cba7e4c89d46ac4eb13a9fe1e5ed58b78646b0ac5c28fdf43485f"
+    },
+    {
+      "file": "internal/conversation/context_snapshot.go",
+      "sha256": "bb9705038ce38cae5384ac2989c7e80d429a7aab82eeac7eb02ca28cd3da0d20"
+    },
+    {
+      "file": "internal/memory/service.go",
+      "sha256": "809bf90f4a1a7c6baf5963bcb2aa26dd46a18752af998acd4486d7be11ff82df"
+    },
+    {
+      "file": "internal/memory/semantic.go",
+      "sha256": "c6f67db4bdac2b00e96fe63463b3d4183d17786ec3e27ace6788160c0fd04ddb"
+    },
+    {
+      "file": "internal/persistence/postgresstore/memory.go",
+      "sha256": "d7201028d6ce47572b42f6ac208d4c8997ad963aa968b1fb0ff766194c45e8cf"
+    },
+    {
+      "file": "internal/contextengine/context.go",
+      "sha256": "3c293b579a6a37375f639309c44e1c0e6518aa235dc3cf2351af69ecaf32cc8c"
+    },
+    {
+      "file": "workers/python/src/ai_companion_worker/conversation_context.py",
+      "sha256": "1587d5e10a42b90212916d6515a0a160c4fe1a6b7ef8e4787ca7f74295af8a62"
+    },
+    {
+      "file": "internal/productknowledge/context.go",
+      "sha256": "0559ea4eec82c8ff5ef24b2e26be397c89d3ad0470c0984da3c4f5f5bb447232"
+    },
+    {
+      "file": "internal/document/service.go",
+      "sha256": "51ef2484a7aadd03bc911ea07014b725fab69cea55490e18e808a62c389d604b"
+    },
+    {
+      "file": "internal/document/ingest.go",
+      "sha256": "6aea98aac4e033b8a8f8ace7fb83c1be4b6f72e2fdeedb1d4558ef635dd58857"
+    },
+    {
+      "file": "workers/python/src/ai_companion_worker/document_parser.py",
+      "sha256": "1c962c5e8ae6710462dc425e7c9fe992bcee2c61b8caed46bea890d7407794d4"
+    },
+    {
+      "file": "internal/document/retrieval.go",
+      "sha256": "230051bb5fd216fbb2ee415a8527995bf9903d66d73a4433d6074a376b3e32f4"
+    },
+    {
+      "file": "internal/document/context.go",
+      "sha256": "e97e40ebca120c3ddf2866f7ef5b7f1fecb2962a025a944db26e801fb32df536"
+    },
+    {
+      "file": "internal/document/wiki_compiler.go",
+      "sha256": "e4230e457292831dad9c6929ff8bd072fad88bc2a66bd95e324d811d4729e5fc"
+    },
+    {
+      "file": "internal/document/wiki.go",
+      "sha256": "49d71f0bc19de6ff5b65da0fd63103c97e6dfe287a586ee2307e111afb042198"
+    },
+    {
+      "file": "internal/ledger/parser.go",
+      "sha256": "8805b8a8a2fb69491e5a86474243b17bdacbc8586c4a10c7714741910a896940"
+    },
+    {
+      "file": "internal/ledger/service.go",
+      "sha256": "af09001883783c5566565b0d3d0851d8faa6e5a445cbfa16f1daafa07b7f9006"
+    },
+    {
+      "file": "internal/planner/service.go",
+      "sha256": "17b24ea87d02c67e02260deb482f3d5e662e2598ad549a796f96005a46999e6a"
+    },
+    {
+      "file": "internal/skill/service.go",
+      "sha256": "5b76e8280fe7f5e81d0c5d734fa88baf4997c3019c74f51ac1750e78df1137d9"
+    },
+    {
+      "file": "internal/skill/runner.go",
+      "sha256": "db06fba8929a9550db1f756732848e0ba270889179c7b13cb2badd1da48ecaee"
+    },
+    {
+      "file": "internal/team/service.go",
+      "sha256": "ed5cfc4cf37c5517a34225850c033b1ca155c5208ffcd131b541fd32f54ea827"
+    },
+    {
+      "file": "internal/email/service.go",
+      "sha256": "55dfd9a19fd83288562ad084832cb2a731cffed29636ed64cb3fd468fb07aeac"
+    },
+    {
+      "file": "internal/adminpasskey/service.go",
+      "sha256": "20db1966617a5684694dab10f27f9646733f65d43e38a04174cf9233e7a75137"
+    },
+    {
+      "file": "internal/billing/quota.go",
+      "sha256": "b8b8e6defb1d4b8ef194f5fcbec9101ddafa7554d864ed7ae002f6686d82a851"
+    },
+    {
+      "file": "internal/billing/service.go",
+      "sha256": "d9753e9fd6e404fdf7af976f4e3815eb148a115628a7bd92b56bd92513549d9b"
+    },
+    {
+      "file": "internal/eventbus/relay.go",
+      "sha256": "c86d9261f0c1f7b00b465690cb3e42e40e84a761b5350584685ebed9c498c137"
+    },
+    {
+      "file": "internal/eventbus/consumer.go",
+      "sha256": "7399a6ec6ec944b70cb5c7ed05267a88ee97580ab611c2269506d191e152b357"
+    },
+    {
+      "file": "internal/reliability/controller.go",
+      "sha256": "1a1f3c6496ae28bea54ab658a27ebe8135d2c846ed77d389b54436904953bd21"
+    },
+    {
+      "file": "internal/controlplane/service.go",
+      "sha256": "ff5ab4f27a76070c6988b680fa9aa29e46bc87c465261ce85a1878da47e0aa13"
+    },
+    {
+      "file": "internal/agent/python_executor.go",
+      "sha256": "52a5803570345334a09fa56ac4526177e19c100d96c44262716b547988e659cc"
+    },
+    {
+      "file": "workers/python/src/ai_companion_worker/agent_worker.py",
+      "sha256": "8ffc96bbc4f92d17c8b4be3cbcb101bf80bf072dc06b3948bc930cbcf1861b48"
+    },
+    {
+      "file": "workers/python/src/ai_companion_worker/openrouter_decision.py",
+      "sha256": "158c6a166153fc3bb7e403fc52b8dee8ffeea2b5350bc67928d5d437fddf5193"
+    }
+  ]
+}

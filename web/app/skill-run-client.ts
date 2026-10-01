@@ -47,12 +47,13 @@ export async function downloadSkillFile(token: string, run: SkillRun, file: Gene
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // WebKit starts the download asynchronously after the click handler returns.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export function skillName(name: string) { return ({
   "office.translate": "翻译", "office.email_draft": "邮件草稿", "office.markdown_document": "Markdown 文档",
-  "office.docx_edit": "DOCX 副本编辑", "office.pptx_outline": "PPTX 大纲", "office.pptx_generate": "PPTX 生成",
+  "office.docx_edit": "DOCX 副本编辑", "office.pptx_outline": "PPT 设计预览", "office.pptx_generate": "PPT 制作工作台",
   "office.tabular_profile": "CSV/XLSX 分析", "office.document_extract": "附件正文提取", "office.pdf_translate": "PDF 多模态翻译",
 } as Record<string, string>)[name] ?? name; }
 

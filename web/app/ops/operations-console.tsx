@@ -8,6 +8,7 @@ import { ConfigurationPanel } from "./configuration-panel";
 import { AgentStudioPanel } from "./agent-studio-panel";
 import { LogCenterPanel, LogFocus } from "./log-center-panel";
 import { IncidentCenterPanel } from "./incident-center-panel";
+import { KnowledgePanel } from "./knowledge-panel";
 import { PerformancePanel } from "./performance-panel";
 import { OnboardingGuide } from "../onboarding-guide";
 import { adminGuideTopics, type AdminGuideTarget } from "../onboarding-content";
@@ -145,7 +146,7 @@ export function OperationsConsole() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [view, setView] = useState<Exclude<AdminGuideTarget, "security">>("observability");
+  const [view, setView] = useState<Exclude<AdminGuideTarget, "security"> | "knowledge">("observability");
   const [logFocus, setLogFocus] = useState<LogFocus | undefined>();
   const [restoring, setRestoring] = useState(true);
   const [invite, setInvite] = useState("");
@@ -320,6 +321,7 @@ export function OperationsConsole() {
           <button type="button" className={view === "logs" ? styles.activeNav : undefined} onClick={() => { setLogFocus(undefined); setView("logs"); }}><span>⌁</span>日志中心</button>
           <button type="button" className={view === "incidents" ? styles.activeNav : undefined} onClick={() => setView("incidents")}><span>!</span>告警与事故</button>
           <button type="button" className={view === "performance" ? styles.activeNav : undefined} onClick={() => setView("performance")}><span>↗</span>成本与质量</button>
+          <button type="button" className={view === "knowledge" ? styles.activeNav : undefined} onClick={() => setView("knowledge")}><span>▤</span>知识质量</button>
           <button type="button" className={view === "configuration" ? styles.activeNav : undefined} onClick={() => setView("configuration")}><span>◇</span>配置中心</button>
           <button type="button" className={view === "studio" ? styles.activeNav : undefined} onClick={() => setView("studio")}><span>✦</span>Agent Studio</button>
         </nav>
@@ -339,7 +341,7 @@ export function OperationsConsole() {
           topics={adminGuideTopics}
           autoStart
           toolbar
-          currentTopic={securityOpen ? "security" : view}
+          currentTopic={securityOpen ? "security" : view === "knowledge" ? "performance" : view}
           onNavigate={(target) => {
             if (target === "security") { setSecurityOpen(true); return; }
             setSecurityOpen(false);
@@ -354,6 +356,8 @@ export function OperationsConsole() {
           <IncidentCenterPanel credentials={credentials} operator={bootstrap.operator} onOpenLogs={(focus) => { setLogFocus(focus); setView("logs"); }} />
         ) : view === "performance" ? (
           <PerformancePanel credentials={credentials} operator={bootstrap.operator} />
+        ) : view === "knowledge" ? (
+          <KnowledgePanel credentials={credentials} canRebuild={bootstrap.operator.role === "admin"} canReview={bootstrap.operator.role === "admin" || bootstrap.operator.role === "support"} />
         ) : view === "configuration" ? (
           <ConfigurationPanel credentials={credentials} operator={bootstrap.operator} />
         ) : view === "studio" ? (

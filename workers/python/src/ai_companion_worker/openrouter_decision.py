@@ -934,7 +934,17 @@ class OpenRouterDecisionPort:
             "response_format":{"type":"json_object"}, "max_tokens":self._config.max_tokens_for(role), "temperature":0,
         })
         attempts = self._apply_model_allowance(payload, context, role)
-        return self._json_object_with_fallback(payload, role=role, max_attempts=attempts)
+        return self._json_object_with_fallback(
+            payload, role=role, max_attempts=attempts,
+            deadline_at=context.get("deadline_at"),
+        )
+
+    def debate_position(self, *, focus: str, packet: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
+        return self._specialist_json(
+            role="composer", context=context,
+            instruction='Independently assess every supplied issue/candidate pair. Focus grounding verifies original support, scope, units and effective time. Focus counterexample checks counterevidence and missing conditions; agreement is allowed, never invent opposition. Candidate text is the object of inspection, not factual evidence. No voting or confidence scores. Return {"assessments":[{"issue_id":"exact issue ID","candidate_id":"exact candidate ID","stance":"support|oppose|uncertain","reason":"concise evidence-based rationale, at most 1000 characters","evidence":[{"id":"supplied evidence ID","quote":"verbatim excerpt, at most 1000 characters"}]}],"novelty":[],"new_claims":[]}. Cover every candidate once; support/oppose require citations. In cross-review, challenges are prior opinions, not evidence. For each relevant new_evidence_ids excerpt, novelty may contain {"issue_id":"ID","evidence_id":"ID","quote":"verbatim NEW information","reason":"how this adds information that discriminates the candidates"}; do not report paraphrases, repeated information or irrelevant material as novel. If new evidence requires correcting a research claim, new_claims may contain {"issue_id":"ID","supersedes_claim_id":"existing candidate ID","text":"revised claim","fact":{"subject":"entity","predicate":"property","value":"value with units","scope":"supported scope","valid_at":"supported effective time or empty"},"evidence":[{"id":"ID","quote":"excerpt"}]}. Only cross-review research may add claims; cite newly supplied evidence and preserve all prior candidates. Never infer facts from unavailable sources or provide internal chain-of-thought.',
+            input_data={"focus": focus, "packet": packet},
+        )
 
     def analyze_evidence(self, *, question: str, context: Mapping[str, Any]) -> dict[str, Any]:
         return self._specialist_json(
@@ -946,7 +956,7 @@ class OpenRouterDecisionPort:
     def arbitrate(self, *, kind: str, packet: Mapping[str, Any], context: Mapping[str, Any]) -> dict[str, Any]:
         return self._specialist_json(
             role="composer", context=context,
-            instruction='Arbitrate supplied disputes using original evidence, never majority vote or reviewer confidence. Return {"decisions":[{"issue_id":"exact issue id","action":"accept|reject|merge|retain|need_evidence","selected_ids":["exact candidate id"],"reason":"evidence-based explanation","instruction":"one coordinated actionable review correction, or empty for research","evidence":[{"id":"exact evidence key","quote":"verbatim excerpt"}]}]}. Cover every issue once. accept/merge must select existing candidates and cite their original evidence; reject selects none and requires evidence demonstrating why all candidates fail. For retain/need_evidence select none; preserve uncertainty. In review mode, accept/merge select only substantiated findings and coordinate duplicate or competing requirements in instruction; reject means all findings are demonstrably mistaken. In research mode, do not pick a winner merely because it is newer or more popular. Different scopes/times may coexist; missing information requires retain/need_evidence. Do not change facts, permissions, budgets, tool arguments or user requirements. At most 12 evidence excerpts per issue, each at most 1000 characters; reasons and instructions at most 1000 characters.',
+            instruction='Arbitrate supplied disputes using original evidence, never majority vote or reviewer confidence. Return {"decisions":[{"issue_id":"exact issue id","action":"accept|reject|merge|retain|need_evidence","selected_ids":["exact candidate id"],"reason":"evidence-based explanation","instruction":"one coordinated actionable review correction, or empty for research","evidence":[{"id":"exact evidence key","quote":"verbatim excerpt"}]}]}. Cover every issue once. accept/merge must select existing candidates and cite their original evidence; reject selects none and requires evidence demonstrating why all candidates fail. For retain/need_evidence select none; preserve uncertainty. In review mode, accept/merge select only substantiated findings and coordinate duplicate or competing requirements in instruction; reject means all findings are demonstrably mistaken. In research mode, do not pick a winner merely because it is newer or more popular. Different scopes/times may coexist; missing information requires retain/need_evidence. Do not change facts, permissions, budgets, tool arguments or user requirements. At most 12 evidence excerpts per issue, each at most 1000 characters; reasons and instructions at most 1000 characters. Also return classification=equivalent|scope_difference|version_update|contradiction|unresolved. A resolved action cannot be classified unresolved. version_update requires an explicit supersession excerpt. When positions are supplied, every resolved decision must include assessment_responses covering every assessment ID for that issue exactly once: [{"id":"assessment ID","reason":"how its support or counterevidence is handled, at most 1000 characters","evidence":[{"id":"evidence ID","quote":"verbatim excerpt"}]}]. Do not ignore counterevidence even if most participants agree. For need_evidence you may return at most two evidence_requests per issue: [{"question":"missing fact","discriminates":"what observation would distinguish candidates","tool_name":"one of available_read_tools","arguments":{}}]. Do not repeat a previous query or request writes. If no permitted source can supply the missing fact, retain the dispute. All request strings at most 1000 characters. These are requests to the coordinator, not tool calls.',
             input_data={"kind":kind, "packet":packet},
         )
 
@@ -977,6 +987,19 @@ class OpenRouterDecisionPort:
         no_tool_definitions = [item for item in definitions if _is_no_tool(item["name"])]
         artifact_pending = _artifact_goal_pending(context)
         forced_artifact_tool = _required_artifact_tool(context, actionable)
+        if forced_artifact_tool == "work_generate_pptx" and any(
+            item["name"] == forced_artifact_tool and item.get("compose_arguments") is True
+            for item in actionable
+        ):
+            # The trusted artifact contract already chose the public PPT tool.
+            # Send it to the normal planner/composer; asking a routing model to
+            # repeat that choice can fail even with a forced tool_choice.
+            # _required_artifact_tool keeps incomplete source extraction first.
+            return ModelDecision(
+                intent=forced_artifact_tool,
+                tool_name=forced_artifact_tool,
+                requires_argument_composition=True,
+            )
         observed_response = _latest_observation_response(context)
         if module == "life" and observed_response:
             return ModelDecision(
@@ -1219,6 +1242,13 @@ class OpenRouterDecisionPort:
                 "当 task_contract.exhaustive 为 true 或用户要求‘所有/全部/完整’时，标题、"
                 "表格标题和文件名不得使用‘节选’、‘摘要’、‘示例’、‘部分’等缩减范围标记。"
                 "title 是封面可见标题，绝不能包含 .pptx 文件扩展名；扩展名只属于 filename。"
+                "用户描述风格或用途时，必须将这些要求提取到style_prompt，让下游LLM生成配色、字体、版式和动画设计，不要退化为主题枚举。"
+                "默认任务是完整演示文稿。先依据资料、用途和听众组织多页叙事，每页一个明确主题，按实际内容组合背景、观点、证据、对比、流程、图表、图解及结论，不必凑齐所有类型。项目介绍图只是其中一种页面，不能因为要求高质量图解就把整份PPT缩成一页。"
+                "多页稿中需要能力或架构图时，在该页##标题下使用2–10个###模块，每个模块下面写1–4条简短事实；这些###模块共同组成一页，不额外计入页数。其他页仍使用##标题与要点。不要把所有页面做成模块图。"
+                "任何项目、系统、课程或方案的一页架构图/介绍图都可调用：slide_count=1，brief写2–10个##模块，每模块1–4条简短事实（每条尽量不超过20字），不含封面结尾；style_prompt忠实传入用户的用途、风格和组织关系。分层、横向分区、侧栏、底座由设计模型按内容决定，不限于伴AI，不必补成多页。此时下述每节两条要点及slide_count减2规则不适用。"
+                "用户要求按内置伴AI产品知识介绍项目时，project_name填伴AI，brief可为空；完整介绍通常8页，只有明确要求单页图时slide_count填1。内容由内置产品知识提供，不要猜造数据。"
+                "用户要求把刚才生成的PPT换风格或改为其他用途时，revision_of填latest、style_prompt填写新要求，不重写brief，也不要求跳转工作台。"
+                "project_name或revision_of非空时，不适用下述正文的章节数和至少两条要点限制。"
             )
             if _uses_structured_presentation_capability(tool_name, context):
                 system_prompt += (
@@ -1233,10 +1263,12 @@ class OpenRouterDecisionPort:
                     "当前只负责非表格演示，禁止返回 table 或 mapping_contract。brief 不是制作计划，"
                     "而是最终面向受众的正文；"
                     "brief 只能使用固定 Markdown 中间格式：每个内容页先写一行‘## 简短页面标题’，"
-                    "随后至少两行‘- 事实或结论’，不得在章节外写任何文字。标题不超过28个字符，"
-                    "单条要点不超过100个字符，章节数必须等于 slide_count 减2。多对象对比时，"
+                    "多页演示每节至少两行‘- 事实或结论’，图解页可在节内用‘### 模块’归组，每模块至少一条事实。单页图解每模块允许只有一行。不得在章节外写任何文字。标题不超过28个字符，"
+                    "单条要点不超过100个字符；仅多页演示章节数等于 slide_count 减2。多对象对比时，"
                     "每个对象至少有一个独立章节，并另设横向对比或选择建议章节。不得写页数规划、"
                     "制作说明、源文件名、来源覆盖率、抽取过程、引用说明、备注、后续询问或‘请告知’。"
+                    "例外：用户要一页图解时slide_count=1，2–10个##模块，每个模块1–4条来源事实即可，绝不能为了凑两条要点编造内容。用户已经列出模块与要点时，直接逐项保留原文；不要自行扩展功能、收益或技术。用户要求只用提供资料时，一条事实就保留一条，不补同义改写的第二条。"
+                    "新任务的revision_of必须为空字符串。用户提供其他项目资料时project_name也必须为空字符串，不能因为你是伴AI就把伴AI填为项目名称。"
                 )
             if isinstance(document_round, Mapping):
                 encoded_round = json.dumps(
@@ -1894,6 +1926,7 @@ class OpenRouterDecisionPort:
         *,
         role: str,
         max_attempts: int,
+        deadline_at: Any = None,
     ) -> dict[str, Any]:
         last_error: OpenRouterError | None = None
         for attempt_index, model, request_timeout in self._fallback_attempts(
@@ -1907,6 +1940,10 @@ class OpenRouterDecisionPort:
                 attempt_index=attempt_index,
             )
             try:
+                if deadline_at is not None:
+                    request_timeout = min(request_timeout, float(deadline_at) - time.time())
+                    if request_timeout <= 0:
+                        raise OpenRouterError("Debate deadline exhausted", status_code=408)
                 result = self._observed_request(
                     attempt,
                     role=role,
@@ -3055,7 +3092,7 @@ def _available_tool_definitions(
             if isinstance(item, dict) and item.get("status") in ("completed", "succeeded")
         ]
     result: list[dict[str, Any]] = []
-    knowledge_prefixes = ("work_wiki_", "product_knowledge_")
+    knowledge_prefixes = ("work_knowledge_", "work_wiki_", "product_knowledge_")
     wiki_calls = sum(1 for item in completed if str(item.get("tool_name", "")).startswith(knowledge_prefixes))
     for definition in definitions:
         name = definition["name"]

@@ -11,15 +11,17 @@ import (
 )
 
 type SearchHit struct {
-	ChunkID      string
-	DocumentID   string
-	DocumentName string
-	PageStart    int
-	PageEnd      int
-	SectionPath  string
-	Content      string
-	Score        float64
-	Semantic     bool
+	SourceRevision string
+	ChunkID        string
+	DocumentID     string
+	DocumentName   string
+	PageStart      int
+	PageEnd        int
+	SectionPath    string
+	Content        string
+	Score          float64
+	Semantic       bool
+	Reranked       bool
 }
 
 type QueryInput struct {
@@ -29,19 +31,21 @@ type QueryInput struct {
 }
 
 type Citation struct {
-	ChunkID      string  `json:"chunk_id"`
-	DocumentID   string  `json:"document_id"`
-	DocumentName string  `json:"document_name"`
-	PageStart    int     `json:"page_start"`
-	PageEnd      int     `json:"page_end"`
-	SectionPath  string  `json:"section_path,omitempty"`
-	Quote        string  `json:"quote"`
-	Score        float64 `json:"score"`
+	ChunkID       string  `json:"chunk_id"`
+	DocumentID    string  `json:"document_id"`
+	DocumentName  string  `json:"document_name"`
+	PageStart     int     `json:"page_start"`
+	PageEnd       int     `json:"page_end"`
+	SectionPath   string  `json:"section_path,omitempty"`
+	Quote         string  `json:"quote"`
+	Score         float64 `json:"score"`
+	SourceVersion string  `json:"source_revision,omitempty"`
 }
 
 type QueryResult struct {
 	Answer            string     `json:"answer"`
 	Sufficient        bool       `json:"sufficient"`
+	EvidenceState     string     `json:"evidence_state"`
 	Citations         []Citation `json:"citations"`
 	Degraded          bool       `json:"degraded,omitempty"`
 	DegradationReason string     `json:"degradation_reason,omitempty"`
@@ -52,7 +56,7 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 	if err != nil {
 		return QueryResult{}, err
 	}
-	items, err := s.store.ListDocuments(ctx, userID, 200)
+	items, err := s.KnowledgeDocuments(ctx, userID, "")
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -69,12 +73,12 @@ func (s *Service) Query(ctx context.Context, userID string, input QueryInput) (Q
 	if len(readyIDs) == 0 {
 		return insufficientQueryResult(), nil
 	}
-	hits, err := s.index.Search(ctx, userID, query, readyIDs, limit*3)
+	allowed := documentsByID(items, readyIDs)
+	hits, err := s.indexScopeSearch(ctx, userID, query, allowed, readyIDs, limit*3)
 	if err != nil {
 		return QueryResult{}, err
 	}
-	allowed := documentsByID(items, readyIDs)
-	return s.rerankedAnswer(ctx, query, limit, allowed, hits), nil
+	return s.rerankedAnswer(ctx, userID, "", query, limit, allowed, hits), nil
 }
 
 func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input QueryInput) (QueryResult, error) {
@@ -82,7 +86,7 @@ func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input 
 	if err != nil {
 		return QueryResult{}, err
 	}
-	items, err := s.store.ListWorkspaceDocuments(ctx, workspaceID, 200)
+	items, err := s.KnowledgeDocuments(ctx, "", workspaceID)
 	if err != nil {
 		return QueryResult{}, err
 	}
@@ -99,12 +103,12 @@ func (s *Service) QueryWorkspace(ctx context.Context, workspaceID string, input 
 	if len(readyIDs) == 0 {
 		return insufficientQueryResult(), nil
 	}
-	hits, err := s.index.SearchDocuments(ctx, query, readyIDs, limit*3)
+	allowed := documentsByID(items, readyIDs)
+	hits, err := s.indexScopeSearch(ctx, "", query, allowed, readyIDs, limit*3)
 	if err != nil {
 		return QueryResult{}, err
 	}
-	allowed := documentsByID(items, readyIDs)
-	return s.rerankedAnswer(ctx, query, limit, allowed, hits), nil
+	return s.rerankedAnswer(ctx, "", workspaceID, query, limit, allowed, hits), nil
 }
 
 func normalizeQuery(input QueryInput) (string, int, error) {
@@ -135,15 +139,19 @@ func documentsByID(items []Document, readyIDs []string) map[string]Document {
 
 func (s *Service) answerFromHits(query string, limit int, allowed map[string]Document, hits []SearchHit) QueryResult {
 	citations := make([]Citation, 0, limit)
+	sufficient := false
 	for _, hit := range hits {
 		item, ok := allowed[hit.DocumentID]
 		if !ok || item.Status != "ready" || (!hit.Semantic && tokenOverlap(query, hit.Content) == 0) {
 			continue
 		}
+		if len(citations) == 0 {
+			sufficient = !hit.Semantic || hit.Reranked
+		}
 		citations = append(citations, Citation{
 			ChunkID: hit.ChunkID, DocumentID: hit.DocumentID, DocumentName: item.Name,
 			PageStart: hit.PageStart, PageEnd: hit.PageEnd, SectionPath: hit.SectionPath,
-			Quote: truncateRunes(hit.Content, 360), Score: hit.Score,
+			Quote: truncateRunes(hit.Content, 360), Score: hit.Score, SourceVersion: SourceVersion(item),
 		})
 		if len(citations) >= limit {
 			break
@@ -158,15 +166,18 @@ func (s *Service) answerFromHits(query string, limit int, allowed map[string]Doc
 		page = fmt.Sprintf("第 %d–%d 页", top.PageStart, top.PageEnd)
 	}
 	answer := fmt.Sprintf("根据文档《%s》%s：%s", top.DocumentName, page, top.Quote)
-	return QueryResult{Answer: answer, Sufficient: true, Citations: citations}
+	if !sufficient {
+		answer = "找到以下候选原文，是否足以回答仍需核对：" + answer
+	}
+	return QueryResult{Answer: answer, Sufficient: sufficient, EvidenceState: "unassessed", Citations: citations}
 }
 
 func insufficientQueryResult() QueryResult {
-	return QueryResult{Answer: "现有文档中没有足够证据回答这个问题。", Sufficient: false, Citations: []Citation{}}
+	return QueryResult{Answer: "现有文档中没有足够证据回答这个问题。", Sufficient: false, EvidenceState: "insufficient", Citations: []Citation{}}
 }
 
 func DegradedQueryResult(reason string) QueryResult {
-	return QueryResult{Answer: "当前系统处于降级保护中，暂时跳过文档检索；你的问题没有丢失，请稍后重试。", Sufficient: false, Citations: []Citation{}, Degraded: true, DegradationReason: reason}
+	return QueryResult{Answer: "当前系统处于降级保护中，暂时跳过文档检索；你的问题没有丢失，请稍后重试。", Sufficient: false, EvidenceState: "insufficient", Citations: []Citation{}, Degraded: true, DegradationReason: reason}
 }
 
 func vectorize(value string) ([]float32, []uint32, []float32) {
@@ -267,12 +278,34 @@ func truncateRunes(value string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
-func (s *Service) rerankedAnswer(ctx context.Context, query string, limit int, allowed map[string]Document, hits []SearchHit) QueryResult {
+func (s *Service) rerankedAnswer(ctx context.Context, user, workspace, query string, limit int, allowed map[string]Document, hits []SearchHit) QueryResult {
 	valid := []SearchHit{}
+	checked := map[string]map[string]Chunk{}
 	for _, h := range hits {
-		if _, ok := allowed[h.DocumentID]; ok {
-			valid = append(valid, h)
+		original, ok := allowed[h.DocumentID]
+		if !ok {
+			continue
 		}
+		if h.SourceRevision != "" && h.SourceRevision != SourceVersion(original) {
+			continue
+		}
+		if _, loaded := checked[h.DocumentID]; !loaded {
+			checked[h.DocumentID] = map[string]Chunk{}
+			current, chunks, err := s.KnowledgeChunks(ctx, user, workspace, h.DocumentID)
+			if err != nil || SourceVersion(original) != SourceVersion(current) {
+				continue
+			}
+			for _, chunk := range chunks {
+				checked[h.DocumentID][chunk.ID] = chunk
+			}
+		}
+		chunk, ok := checked[h.DocumentID][h.ChunkID]
+		if !ok || chunk.Content != h.Content {
+			continue
+		}
+		h.Content = chunk.Content
+		h.PageStart, h.PageEnd, h.SectionPath = chunk.PageStart, chunk.PageEnd, chunk.SectionPath
+		valid = append(valid, h)
 	}
 	hits = valid
 	if len(hits) > 24 {
@@ -290,6 +323,7 @@ func (s *Service) rerankedAnswer(ctx context.Context, query string, limit int, a
 		} else {
 			for i := range hits {
 				hits[i].Score = scores[i]
+				hits[i].Reranked = true
 			}
 			sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 			filtered := []SearchHit{}

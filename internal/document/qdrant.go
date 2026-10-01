@@ -16,11 +16,12 @@ import (
 )
 
 type QdrantIndex struct {
-	baseURL    string
-	collection string
-	apiKey     string
-	client     *http.Client
-	semantic   *semantic.Client
+	baseURL     string
+	collection  string
+	apiKey      string
+	client      *http.Client
+	semantic    *semantic.Client
+	managedRoot string
 }
 
 func NewQdrantIndex(baseURL, collection, apiKey string, timeout time.Duration) *QdrantIndex {
@@ -40,7 +41,7 @@ func (q *QdrantIndex) Ensure(ctx context.Context) error {
 		return err
 	}
 	if status == http.StatusOK {
-		return nil
+		return q.ensurePayloadIndexes(ctx)
 	}
 	if status != http.StatusNotFound {
 		return fmt.Errorf("qdrant collection check status %d", status)
@@ -62,6 +63,19 @@ func (q *QdrantIndex) Ensure(ctx context.Context) error {
 	if status != http.StatusOK && status != http.StatusConflict {
 		return fmt.Errorf("create qdrant collection status %d: %s", status, response)
 	}
+	return q.ensurePayloadIndexes(ctx)
+}
+
+func (q *QdrantIndex) ensurePayloadIndexes(ctx context.Context) error {
+	for _, field := range []string{"user_id", "document_id", "source_revision"} {
+		status, _, err := q.do(ctx, http.MethodPut, "/collections/"+url.PathEscape(q.collection)+"/index?wait=true", map[string]any{"field_name": field, "field_schema": "keyword"})
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK && status != http.StatusConflict {
+			return fmt.Errorf("create document payload index status %d", status)
+		}
+	}
 	return nil
 }
 
@@ -71,7 +85,7 @@ func (q *QdrantIndex) Upsert(ctx context.Context, item Document, chunks []Chunk)
 	if q.semantic.EmbeddingsEnabled() {
 		texts := []string{}
 		for _, chunk := range chunks {
-			texts = append(texts, chunk.Content)
+			texts = append(texts, strings.TrimSpace(item.Name+"\n"+chunk.SectionPath+"\n"+chunk.Content))
 		}
 		var err error
 		embeddings, err = q.semantic.Embed(ctx, texts)
@@ -80,13 +94,18 @@ func (q *QdrantIndex) Upsert(ctx context.Context, item Document, chunks []Chunk)
 		}
 	}
 	for i, chunk := range chunks {
+		pointID, sourceRevision := chunk.PointID, ""
+		if item.Status == "ready" {
+			sourceRevision = SourceVersion(item)
+			pointID = deterministicUUID(chunk.PointID + ":" + sourceRevision)
+		}
 		dense, indices, values := vectorize(chunk.Content)
 		if embeddings != nil {
 			dense = embeddings[i]
 			chunk.EmbeddingVersion = q.semantic.Version()
 		}
 		points = append(points, map[string]any{
-			"id": chunk.PointID,
+			"id": pointID,
 			"vector": map[string]any{
 				"dense":  dense,
 				"sparse": map[string]any{"indices": indices, "values": values},
@@ -97,6 +116,7 @@ func (q *QdrantIndex) Upsert(ctx context.Context, item Document, chunks []Chunk)
 				"page_start": chunk.PageStart, "page_end": chunk.PageEnd,
 				"section_path": chunk.SectionPath, "content": chunk.Content,
 				"parser_version": chunk.ParserVersion, "embedding_version": chunk.EmbeddingVersion,
+				"source_revision": sourceRevision,
 			},
 		})
 	}
@@ -130,7 +150,7 @@ func (q *QdrantIndex) SearchDocuments(ctx context.Context, query string, documen
 func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter map[string]any, limit int) ([]SearchHit, error) {
 	dense, indices, values := vectorize(query)
 	if q.semantic.EmbeddingsEnabled() {
-		vectors, err := q.semantic.Embed(ctx, []string{query})
+		vectors, err := q.semantic.EmbedQuery(ctx, query)
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +191,7 @@ func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter
 					PageEnd      int    `json:"page_end"`
 					SectionPath  string `json:"section_path"`
 					Content      string `json:"content"`
+					Revision     string `json:"source_revision"`
 				} `json:"payload"`
 			} `json:"points"`
 		} `json:"result"`
@@ -185,12 +206,16 @@ func (q *QdrantIndex) searchWithFilter(ctx context.Context, query string, filter
 			DocumentName: point.Payload.DocumentName, PageStart: point.Payload.PageStart,
 			PageEnd: point.Payload.PageEnd, SectionPath: point.Payload.SectionPath,
 			Content: point.Payload.Content, Score: point.Score, Semantic: q.semantic.EmbeddingsEnabled(),
+			SourceRevision: point.Payload.Revision,
 		})
 	}
 	return hits, nil
 }
 
 func (q *QdrantIndex) DeleteDocument(ctx context.Context, userID, documentID string) error {
+	if q.managedRoot != "" {
+		return q.deleteManagedDocument(ctx, userID, documentID)
+	}
 	filter := map[string]any{"must": []any{
 		map[string]any{"key": "user_id", "match": map[string]any{"value": userID}},
 		map[string]any{"key": "document_id", "match": map[string]any{"value": documentID}},

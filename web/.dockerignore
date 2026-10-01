@@ -20,6 +20,7 @@ credentials*.json
 **/credentials*.json
 **/*service-account*.json
 .next
+.next-*
 out
 .turbo
 *.tsbuildinfo

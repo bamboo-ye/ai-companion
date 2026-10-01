@@ -27,6 +27,7 @@ _ARTIFACT_SUFFIX_TYPES = {
     ".pdf": "pdf",
     ".json": "json",
     ".csv": "csv",
+    ".png": "png",
 }
 
 _REQUESTED_FIELD_ALIASES = {
@@ -629,6 +630,11 @@ def presentation_audience_content_violations(
         or isinstance(arguments.get("table"), Mapping)
     ):
         return []
+    from ai_companion_worker.presentation_projects import is_companion
+    if (is_companion(arguments.get("project_name")) and not arguments.get("brief")) or arguments.get("revision_of") == "latest":
+        # Built-in facts / the authenticated previous deck are resolved by the
+        # tool boundary; these are not a free-form narrative brief.
+        return []
     brief = str(arguments.get("brief") or "").strip()
     violations: list[dict[str, Any]] = []
     if _PRESENTATION_AUDIENCE_META.search(brief):
@@ -648,12 +654,18 @@ def presentation_audience_content_violations(
             continue
         heading = _PRESENTATION_BRIEF_HEADING.fullmatch(line)
         if heading:
-            current = {"heading": heading.group(1).strip(), "bullets": [], "line": index}
+            current = {"heading": heading.group(1).strip(), "bullets": [], "modules": [], "line": index}
             sections.append(current)
+            continue
+        module = re.fullmatch(r"###\s+(.+?)\s*", line)
+        if module and current is not None:
+            current["modules"].append({"heading": module.group(1), "line": index, "bullets": []})
             continue
         bullet = _PRESENTATION_BRIEF_BULLET.fullmatch(line)
         if bullet and current is not None:
             current["bullets"].append((index, bullet.group(1).strip()))
+            if current["modules"]:
+                current["modules"][-1]["bullets"].append(index)
             continue
         invalid_lines.append(index)
 
@@ -673,14 +685,19 @@ def presentation_audience_content_violations(
         violations.append(
             {
                 "code": "presentation_brief_structure_invalid",
-                "message": "非表格演示的 brief 必须只由“## 页面标题”和其后的“- 要点”组成，且章节数等于 slide_count 减 2",
+                "message": "演示正文使用“## 页面标题”和“- 要点”；图解页可用“### 模块”组织要点，内容页数等于 slide_count 减 2",
                 "invalid_lines": invalid_lines[:20],
                 "section_count": len(sections),
                 "expected_section_count": expected_sections,
             }
         )
 
-    long_headings = [section["line"] for section in sections if len(str(section["heading"])) > 28]
+    long_headings = [entry["line"] for section in sections for entry in [section, *section["modules"]] if len(str(entry["heading"])) > 28]
+    invalid_modules = [section["line"] for section in sections if section["modules"] and
+                       (not 2 <= len(section["modules"]) <= 10 or any(not m["bullets"] for m in section["modules"]) or
+                        len(section["bullets"]) != sum(len(m["bullets"]) for m in section["modules"]))]
+    if invalid_modules:
+        violations.append({"code": "presentation_diagram_modules_invalid", "message": "图解页需要2–10个模块，每个模块有事实说明，所有要点须放在模块中", "affected_lines": invalid_modules})
     if long_headings:
         violations.append(
             {
@@ -689,7 +706,8 @@ def presentation_audience_content_violations(
                 "affected_lines": long_headings[:20],
             }
         )
-    missing_bullets = [section["line"] for section in sections if len(section["bullets"]) < 2]
+    min_bullets = 1 if requested_slide_count == 1 else 2
+    missing_bullets = [section["line"] for section in sections if len(section["bullets"]) < min_bullets]
     if missing_bullets:
         violations.append(
             {
@@ -746,6 +764,9 @@ def compile_task_contract(
     )
     visible = re.sub(r"<!--ai-document:[^>]+-->", "", normalized)
     lowered = visible.casefold()
+    # Material introduced by the user is content to preserve, not a declaration
+    # of output fields (e.g. a project mentioning a venue is not a venue table).
+    requirements = re.split(r"(?:资料|材料|内容)(?:如下)?[：:]\s*\n", lowered, maxsplit=1)[0]
     artifact_types = _artifact_types(normalized)
 
     exhaustive = bool(
@@ -764,7 +785,7 @@ def compile_task_contract(
         ("venue", r"(?:地点|教室|场地|\bvenue\b|\blocation\b)"),
     )
     for field, pattern in field_patterns:
-        if re.search(pattern, lowered):
+        if re.search(pattern, requirements):
             requested_fields.append(field)
 
     hard_requirements = ["grounded_in_trusted_observations"]
@@ -794,12 +815,12 @@ def compile_task_contract(
             "pptx" in artifact_types
             and re.search(
                 r"(?:表格|表形式|列表展示|按.{0,10}字段.{0,10}(?:整理|展示)|\b(?:tabular|table)\b)",
-                lowered,
+                requirements,
             )
         ),
         "visual_requested": bool(
             "pptx" in artifact_types
-            and re.search(r"(?:配图|插图|图文|来源图片|原文件.{0,8}图片|visuals?|images?)", lowered)
+            and re.search(r"(?:配图|插图|图文|来源图片|原文件.{0,8}图片|visuals?|images?)", requirements)
         ),
         "intent_source": "fallback_rules",
         "output_language": "zh-CN" if re.search(r"(?:中文|汉语|chinese)", lowered) else "",
@@ -825,7 +846,8 @@ def apply_planned_task_intent(
         return contract
     requested = contract.get("requested_fields")
     fallback_capabilities = ["narrative"]
-    if (isinstance(requested, list) and requested) or contract.get("table_requested") is True:
+    field_intent = bool(re.search(r"字段|(?:时间|日期|地点|名称|代码)列", str(contract.get("objective", ""))))
+    if (isinstance(requested, list) and (len(requested) >= 2 or (requested and field_intent))) or contract.get("table_requested") is True:
         fallback_capabilities.append("table")
     if contract.get("visual_requested") is True:
         fallback_capabilities.append("visual")

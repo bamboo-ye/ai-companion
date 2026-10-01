@@ -24,6 +24,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/identity"
 	"github.com/windcry1/ai-companion/internal/incident"
+	"github.com/windcry1/ai-companion/internal/knowledge"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/mcpclient"
 	"github.com/windcry1/ai-companion/internal/memory"
@@ -43,6 +44,8 @@ import (
 )
 
 type Server struct {
+	knowledge            *knowledge.Service
+	knowledgeClient      *semantic.Client
 	httpServer           *http.Server
 	ready                atomic.Bool
 	identity             *identity.Service
@@ -170,6 +173,12 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	conversationService.SetMemoryContext(memoryService)
 	conversationService.SetContextBudgets(cfg.ContextRecentTokenBudget, cfg.ContextSummaryTokenBudget)
 	knowledgeClient := semantic.New(cfg.Knowledge)
+	if cfg.QdrantURL != "" {
+		knowledgeClient.SetProjectionIndex(semantic.NewQdrantProjectionIndex(cfg.QdrantURL, cfg.QdrantCollection, cfg.QdrantAPIKey, knowledgeClient.Dimensions()))
+	}
+	if p, ok := memoryStore.(semantic.ProjectionStoreProvider); ok {
+		knowledgeClient.SetProjectionStore(p.KnowledgeProjectionStore())
+	}
 	memoryService.SetSemanticClient(knowledgeClient)
 	conversationService.SetSemanticClient(knowledgeClient)
 	documentService.SetKnowledge(knowledgeClient, cfg.Knowledge.WikiEnabled)
@@ -263,6 +272,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.HandleFunc("GET /metrics", server.prometheusMetrics)
 	mux.Handle("GET /internal/v1/agent/runs/{run_id}/tools", server.requireAgentService(http.HandlerFunc(server.listAgentTools)))
 	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tools/prepare", server.requireAgentService(http.HandlerFunc(server.prepareAgentTool)))
+	mux.Handle("POST /internal/v1/agent/runs/{run_id}/evidence/validate", server.requireAgentService(http.HandlerFunc(server.validateAgentEvidence)))
 	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tools/commit", server.requireAgentService(http.HandlerFunc(server.commitAgentTool)))
 	mux.Handle("GET /internal/v1/agent/runs/{run_id}/tasks/{task_id}", server.requireAgentService(http.HandlerFunc(server.observeAgentTask)))
 	mux.Handle("POST /internal/v1/agent/runs/{run_id}/tasks/{task_id}/retry", server.requireAgentService(http.HandlerFunc(server.retryAgentTask)))
@@ -290,6 +300,7 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("POST /v1/conversations/{conversation_id}/messages", server.requireAuth(http.HandlerFunc(server.sendMessage)))
 	mux.Handle("GET /v1/generation-jobs/{job_id}", server.requireAuth(http.HandlerFunc(server.getGenerationJob)))
 	mux.Handle("GET /v1/agent-runs/{run_id}", server.requireAuth(http.HandlerFunc(server.getAgentRun)))
+	mux.Handle("GET /v1/agent-runs/{run_id}/evidence-review", server.requireAuth(http.HandlerFunc(server.getAgentEvidenceReview)))
 	mux.Handle("POST /v1/agent-runs/{run_id}/resolve", server.requireAuth(http.HandlerFunc(server.resolveAgentRun)))
 	mux.Handle("POST /v1/agent-runs/{run_id}/retry", server.requireAuth(http.HandlerFunc(server.retryAgentRun)))
 	mux.Handle("POST /v1/agent-runs/{run_id}/cancel", server.requireAuth(http.HandlerFunc(server.cancelAgentRun)))
@@ -376,6 +387,21 @@ func NewWithM4Dependencies(cfg config.Config, logger *slog.Logger, identityStore
 	mux.Handle("GET /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.listWorkspaceInvitations)))
 	mux.Handle("POST /v1/workspaces/{workspace_id}/invitations", server.requireAuth(http.HandlerFunc(server.createWorkspaceInvitation)))
 	mux.Handle("POST /v1/workspace-invitations/{invitation_id}/accept", server.requireAuth(http.HandlerFunc(server.acceptWorkspaceInvitation)))
+	server.configureKnowledge(knowledgeClient)
+	chatTools.SetKnowledge(server.knowledge)
+	if p, ok := memoryStore.(knowledge.FeedbackStoreProvider); ok {
+		server.knowledge.SetFeedbackStore(p.KnowledgeFeedbackStore())
+	}
+	mux.Handle("POST /v1/knowledge/feedback", server.requireAuth(http.HandlerFunc(server.feedbackKnowledge)))
+	mux.Handle("POST /v1/knowledge/search", server.requireAuth(http.HandlerFunc(server.searchKnowledge)))
+	mux.Handle("POST /v1/knowledge/read", server.requireAuth(http.HandlerFunc(server.readKnowledge)))
+	mux.Handle("POST /v1/knowledge/validate", server.requireAuth(http.HandlerFunc(server.validateKnowledge)))
+	mux.Handle("POST /v1/knowledge/trace", server.requireAuth(http.HandlerFunc(server.traceKnowledge)))
+	mux.Handle("GET /v1/ops/knowledge/feedback", server.requireOperator(http.HandlerFunc(server.pendingKnowledgeFeedback)))
+	mux.Handle("POST /v1/ops/knowledge/feedback/{feedback_id}/resolve", server.requireOperator(http.HandlerFunc(server.resolveKnowledgeFeedback)))
+	mux.Handle("GET /v1/ops/knowledge/metrics", server.requireOperator(http.HandlerFunc(server.knowledgeMetrics)))
+	mux.Handle("POST /v1/ops/knowledge/retry", server.requireOperator(http.HandlerFunc(server.retryKnowledge)))
+	mux.Handle("POST /v1/ops/knowledge/rebuild", server.requireOperator(http.HandlerFunc(server.rebuildKnowledge)))
 	mux.Handle("POST /v1/ops/context/backfill", server.requireOperator(http.HandlerFunc(server.backfillContext)))
 	mux.Handle("GET /v1/ops/context/metrics", server.requireOperator(http.HandlerFunc(server.contextMetrics)))
 	mux.Handle("GET /v1/ops/outbox/dead-letter", server.requireOperator(http.HandlerFunc(server.listDeadLetterOutboxEvents)))

@@ -114,8 +114,9 @@ def test_research_arbitration_selects_only_supported_existing_claims() -> None:
     assert len(decisions.arbitration_calls) == 1
     assert result["budget_usage"]["model_calls_by_node"]["arbitrate_parallel"] == 1
     assert decisions.response_context["arbitrations"][0]["decisions"][0]["selected_ids"] == [
-        "claim_0_0"
+        decisions.arbitration_calls[0]["issues"][0]["candidates"][0]["id"]
     ]
+    assert [len(a["claims"]) for a in result["research_candidates"]] == [1, 1]
 
 
 @pytest.mark.parametrize("mode", ["uncertain", "failure", "foreign"])

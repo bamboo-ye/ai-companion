@@ -19,21 +19,26 @@ import (
 )
 
 type Config struct {
-	BaseURL         string
-	APIKey          string
-	EmbeddingModel  string
-	Dimensions      int
-	RerankModel     string
-	SummaryModel    string
-	Timeout         time.Duration
-	IndexMode       string // legacy, shadow, or semantic; separate collections permit rollback.
-	WikiEnabled     bool
-	Concurrency     int
-	WikiConcurrency int
-	WikiMaxBatches  int
+	BaseURL              string
+	APIKey               string
+	EmbeddingModel       string
+	EmbeddingRevision    string
+	QueryInstruction     string
+	PreprocessingVersion string
+	Dimensions           int
+	RerankModel          string
+	SummaryModel         string
+	Timeout              time.Duration
+	IndexMode            string // legacy, shadow, or semantic; separate collections permit rollback.
+	WikiEnabled          bool
+	Concurrency          int
+	WikiConcurrency      int
+	WikiMaxBatches       int
 }
 type Client struct {
 	config                  Config
+	projections             ProjectionStore
+	projectionIndex         ProjectionIndex
 	http                    *http.Client
 	slots                   chan struct{}
 	calls, failures, tokens atomic.Int64
@@ -60,7 +65,7 @@ func New(c Config) *Client {
 	if c.WikiMaxBatches < 1 {
 		c.WikiMaxBatches = 64
 	}
-	return &Client{config: c, http: &http.Client{Timeout: c.Timeout, Transport: modelquota.Transport{}}, slots: make(chan struct{}, c.Concurrency)}
+	return &Client{config: c, projections: NewMemoryProjectionStore(), http: &http.Client{Timeout: c.Timeout, Transport: modelquota.Transport{}}, slots: make(chan struct{}, c.Concurrency)}
 }
 func (c *Client) WikiLimits() (int, int)  { return c.config.WikiConcurrency, c.config.WikiMaxBatches }
 func (c *Client) SummaryIdentity() string { return c.config.BaseURL + ":" + c.config.SummaryModel }
@@ -69,7 +74,7 @@ func (c *Client) SummariesEnabled() bool  { return c != nil && c.config.SummaryM
 func (c *Client) RerankEnabled() bool     { return c != nil && c.config.RerankModel != "" }
 func (c *Client) Dimensions() int         { return c.config.Dimensions }
 func (c *Client) Version() string {
-	return fmt.Sprintf("%s:%d", c.config.EmbeddingModel, c.config.Dimensions)
+	return c.IndexSpec().ID()
 }
 func (c *Client) Metrics() Metrics {
 	return Metrics{c.calls.Load(), c.failures.Load(), c.tokens.Load()}

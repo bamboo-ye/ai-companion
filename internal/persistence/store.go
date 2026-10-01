@@ -14,6 +14,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/email"
 	"github.com/windcry1/ai-companion/internal/eventbus"
 	"github.com/windcry1/ai-companion/internal/identity"
+	"github.com/windcry1/ai-companion/internal/knowledge"
 	"github.com/windcry1/ai-companion/internal/ledger"
 	"github.com/windcry1/ai-companion/internal/memory"
 	"github.com/windcry1/ai-companion/internal/opsauth"
@@ -22,6 +23,7 @@ import (
 	"github.com/windcry1/ai-companion/internal/planner"
 	"github.com/windcry1/ai-companion/internal/reliability"
 	"github.com/windcry1/ai-companion/internal/safety"
+	"github.com/windcry1/ai-companion/internal/semantic"
 	"github.com/windcry1/ai-companion/internal/skill"
 	"github.com/windcry1/ai-companion/internal/team"
 )
@@ -48,10 +50,13 @@ type ApplicationStore interface {
 	safety.Store
 	opsauth.Store
 	adminpasskey.StoreProvider
+	semantic.ProjectionStoreProvider
+	knowledge.FeedbackStoreProvider
 	eventbus.Store
 	eventbus.OperationsStore
 
 	EnqueueDueNotifications(context.Context, time.Time, int) (int, error)
+	ListKnowledgeOwners(context.Context, string, int) ([]string, error)
 	DeliverNextNotification(context.Context, time.Time) (bool, error)
 	DeliverNotification(context.Context, string, time.Time) error
 	ReliabilitySample(context.Context, time.Time) (reliability.Sample, error)

@@ -56,6 +56,20 @@ func (s *Service) annotateMemory(ctx context.Context, item *Memory) error {
 		input.Issues = append(input.Issues, arbitration.Issue{ID: old.ID, Label: "新旧记忆关系", Candidates: []arbitration.Candidate{{ID: old.ID, Text: old.Content, EvidenceIDs: []string{old.ID}}, {ID: item.ID, Text: item.Content, EvidenceIDs: []string{item.ID}}}})
 	}
 	record := arbitration.Judge(ctx, s.semantic, input)
+	for _, decision := range record.Decisions {
+		if decision.Action == "retain" || decision.Action == "need_evidence" || decision.Classification == "contradiction" || decision.Classification == "version_update" {
+			for _, issue := range input.Issues {
+				if issue.ID != decision.IssueID {
+					continue
+				}
+				ids := []string{}
+				for _, c := range issue.Candidates {
+					ids = append(ids, c.ID)
+				}
+				record.Clarifications = append(record.Clarifications, arbitration.Clarification{IssueID: issue.ID, CandidateIDs: ids, Question: "这两条记录分别适用于什么时间或情境？如果其中一条已不适用，请明确纠正。"})
+			}
+		}
+	}
 	item.Arbitration = &record
 	return nil
 }

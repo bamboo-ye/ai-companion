@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,6 +89,11 @@ func TestSkillRuntimeAPIConfirmationIdempotencyAndDownload(t *testing.T) {
 	if download.Code != http.StatusOK || download.Body.String() != "# 验收文档\n\n确认后才能创建。\n" {
 		t.Fatalf("download=%d %q", download.Code, download.Body.String())
 	}
+	disposition := download.Header().Get("Content-Disposition")
+	mediaType, parameters, err := mime.ParseMediaType(disposition)
+	if err != nil || mediaType != "attachment" || parameters["filename"] != "验收文档.md" || !strings.Contains(disposition, "filename*=utf-8''") {
+		t.Fatalf("download filename=%q parsed=%v err=%v", disposition, parameters, err)
+	}
 }
 
 func TestSkillRunCanCancelRetryAndEnforcesOwnership(t *testing.T) {
@@ -112,6 +118,29 @@ func TestSkillRunCanCancelRetryAndEnforcesOwnership(t *testing.T) {
 	forbidden := performJSON(t, server, http.MethodGet, "/v1/skill-runs/"+payload.Run.ID, other, nil)
 	if forbidden.Code != http.StatusNotFound {
 		t.Fatalf("cross-user get=%d %s", forbidden.Code, forbidden.Body.String())
+	}
+}
+
+func TestSkillRequestBodyUsesManifestBudget(t *testing.T) {
+	server := New(config.Config{HTTPAddr: ":0", ServiceName: "test", Environment: "test", AuthTokenSecret: "skill-large-input-test-with-enough-entropy", SkillWorkerEnabled: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	token := registerSkillUser(t, server, "large-presentation@example.test", "large-presentation")
+	for _, name := range []string{"office.pptx_outline", "office.pptx_generate"} {
+		t.Run(name, func(t *testing.T) {
+			input := map[string]any{"title": "图片设计稿", "audience": "验收", "style": "简洁", "brief": "图片容量验收", "slide_count": 3,
+				"deck_spec": map[string]any{"assets": map[string]any{"image": map[string]any{"data_base64": strings.Repeat("a", 3<<20)}}}}
+			response := performSkillRequest(t, server, http.MethodPost, "/v1/skills/"+name+"/runs", token, "large-"+name, map[string]any{"input": input})
+			if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"queued"`) {
+				t.Fatalf("large design=%d %.200s", response.Code, response.Body.String())
+			}
+		})
+	}
+	oversized := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.pptx_outline/runs", token, "too-large", map[string]any{"input": map[string]any{"brief": strings.Repeat("a", 31<<20)}})
+	if oversized.Code != http.StatusRequestEntityTooLarge || !strings.Contains(oversized.Body.String(), `"request_too_large"`) {
+		t.Fatalf("oversized=%d %.200s", oversized.Code, oversized.Body.String())
+	}
+	smallSkill := performSkillRequest(t, server, http.MethodPost, "/v1/skills/office.translate/runs", token, "small-budget", map[string]any{"input": map[string]any{"text": strings.Repeat("a", 2<<20), "target_language": "English"}})
+	if smallSkill.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("small skill budget widened: %d", smallSkill.Code)
 	}
 }
 
