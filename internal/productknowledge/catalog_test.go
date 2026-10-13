@@ -56,6 +56,7 @@ func TestProductHelpRetrieval(t *testing.T) {
 		{"怎么把资料上传到知识库", "builtin-user-documents"},
 		{"怎么纠正你记住的偏好", "builtin-user-memories"},
 		{"如何生成PPT演示文稿", "builtin-user-presentations"},
+		{"如何翻译 PDF 附件并下载译文", "builtin-user-pdf-translation"},
 		{"如何在知识中心统一搜索并反馈来源", "builtin-user-knowledge-search"},
 		{"PPT 如何续改整稿风格并恢复设计稿", "builtin-user-presentation-style"},
 		{"如何查看资料核验的结果和停止原因", "builtin-user-evidence-review"},

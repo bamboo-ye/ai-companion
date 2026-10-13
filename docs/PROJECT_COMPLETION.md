@@ -1,6 +1,6 @@
 # Project Completion Status
 
-Implementation review: 2026-10-01, against `c7f24b0` (Presentation Studio, unified knowledge engineering and bounded evidence debate), with the documentation and onboarding corrections in this working tree.
+Implementation review: 2026-10-14, against `42694a4` (the October 13 documentation integration), with the guide corrections below. Core feature implementation remains based on `c7f24b0`; this review found no intervening feature commit.
 
 Start with the [beginner guide](GETTING_STARTED.md) for setup and first-use steps.
 
@@ -23,7 +23,7 @@ every milestone acceptance exercise or certify the deployed environment.
 |---|---|---|
 | Accounts, profile and conversations | [`internal/identity`](../internal/identity/), [`companion-client.tsx`](../web/app/companion-client.tsx), [`profile-panel.tsx`](../web/app/profile-panel.tsx), [`chat-panel.tsx`](../web/app/chat-panel.tsx) | Registration/login, three character modules, password change, streaming/retry/cancel; real model behavior requires a configured provider |
 | Memory and personal Wiki | [`internal/memory`](../internal/memory/), [`internal/document`](../internal/document/), [`wiki-panel.tsx`](../web/app/wiki-panel.tsx) | Memory management, document upload/query, Wiki search/edit/export/feedback; default upload limit 20 MiB, parsing/indexing needs the Worker |
-| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides (25/22 chapters) and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
+| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides (26/22 chapters) and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
 | Life and office workflows | [`life-panel.tsx`](../web/app/life-panel.tsx), [`work-panel.tsx`](../web/app/work-panel.tsx), [`task-history-panel.tsx`](../web/app/task-history-panel.tsx), [`internal/skill`](../internal/skill/) | Ledger, reminders, plans, generated files and task confirmation; DOCX/table forms have a separate 700 KiB limit |
 | Presentation Studio | [`presentation-studio.tsx`](../web/app/presentation-studio.tsx), [implementation guide](PRESENTATION_STUDIO.md) | Workbench templates, whole-deck planning, mixed layouts, editing, rehearsal, saved versions and editable PPTX/design export; PDF/export previews require LibreOffice and Chinese fonts; third-party PPTX import and OCR unsupported |
 | Unified knowledge and quality operations | [`internal/knowledge`](../internal/knowledge/), [`internal/knowledgebridge`](../internal/knowledgebridge/), [user guide](KNOWLEDGE_CENTER.md), [implementation record](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) | Knowledge Center search/read/feedback across four source types, version and permission checks, durable indexing/projections; operations quality queue, role-gated retry/rebuild/review; real-corpus and scale acceptance still pending |
@@ -43,6 +43,19 @@ The separate Agent run budget still controls each run's model/token/cost ceiling
 The current graph is `ai-companion-supervisor@3.72.0`. Skill execution uses bounded execution/parse/render pools; Go/Python requests share provider permits on one host. Wiki synthesis processes all chunks in bounded parallel batches, caches successful shards and reports incomplete semantic coverage while retaining original pages. Wiki and memory arbitration annotate source relationships without removing original evidence or silently replacing memories. The Web Wiki reader shows body notes and conflict notices; the memory panel now shows related records and a clarification/correction form when a valid clarification exists. It does not expose the full internal arbitration trace.
 
 Upgrades require PostgreSQL `000044_wiki_shards`, `000045_memory_arbitration` and `000046_knowledge_projections` (MySQL `000033`, `000034` and `000035`) in addition to earlier migrations. Complete old-graph Runs or explicitly restart them before switching graph versions. Public-file protections and dependency changes are recorded in the dated [security review](SECURITY_REVIEW.md); that historical scan is not a fresh vulnerability assessment of this revision.
+
+## October 14 documentation findings
+
+The working tree was clean at the start of this review. The previous guide updates are now committed in `42694a4`; there is no new product feature to announce since `c7f24b0`. This pass checked the documented steps against the UI and service implementations and corrected these gaps:
+
+| Finding | Current implementation and corrected guidance |
+|---|---|
+| PDF translation appeared to have a workbench form | Start it through a PDF attachment in Work chat; the workbench form only previews text translation. The PDF worker limits sources to 20 MiB, 100 pages and 400,000 extractable characters; no scanned-document OCR is provided |
+| PPT recovery instructions did not identify the controls or scope | Use Restore local draft, Restore saved version, or import a saved `.deck.json`. Recovery still requests a backend preview. The saved-version selector inspects the latest 30 Skill tasks and shows at most 12 design outputs |
+| Wiki history implied old revisions always remain readable | `WikiHistory` revalidates every dependency's accessibility, readiness and version; stale or deleted sources can hide old revisions. Export important content before relying on online history |
+| Task history sounded like a complete archive | The Web panel loads the latest 100 Skill tasks and filters that set, with no older-page control; original conversations and downloaded copies are alternative places to locate earlier files |
+
+Source checks: [`work-panel.tsx`](../web/app/work-panel.tsx), [`task-history-panel.tsx`](../web/app/task-history-panel.tsx), [`presentation-studio.tsx`](../web/app/presentation-studio.tsx), [`presentation-download.tsx`](../web/app/presentation-download.tsx), [`WikiHistory`](../internal/document/wiki.go), [`PDF translation`](../workers/python/src/ai_companion_worker/office_tools.py). The new PDF chapter preserves all existing guide IDs and reading progress.
 
 ## Completed milestones
 
@@ -106,6 +119,20 @@ separately. Rebuild embedded documentation with
 `go test ./internal/productknowledge` after any source-document changes.
 Database-specific integration tests skip when their dedicated test DSNs are
 absent; passing the ordinary test command is not proof that those tests ran.
+
+### Verification performed for the 2026-10-14 review
+
+| Check | Result |
+|---|---|
+| Go `go test ./...` | All packages passed; includes embedded-source consistency, PDF help retrieval, document/Wiki and office-task contracts |
+| Python Worker regression | Full suite: 847 passed, 14 skipped, 142 subtests passed; 5 existing SWIG deprecation warnings. The earlier focused office/PPT run passed 221 tests with 8 opt-in native rendering tests skipped |
+| Release gates | `make release-check` was blocked by the host's unaccepted Xcode license; its commands were executed directly and passed, including replay/runtime/performance/retry evaluation, observability validation, OpenAPI/Compose validation and release-evidence validator self-tests |
+| Web lint, types, tests and production build | `pnpm check` passed, all 42 tests passed, Next.js production build succeeded in an isolated output directory |
+| Browser guide verification | Local production preview shows 26 user chapters; PDF translation, local-draft recovery and Wiki history searches display the corrected chapters. Existing chapter IDs remain unchanged; admin content remains at 22 chapters |
+| Embedded product knowledge | 166 pages from 12 sources after the README reorganization; generator freshness check and Go retrieval tests passed |
+| Documentation | Reviewed local links and whitespace; updated the implementation baseline and distinguished current checks from historical feature acceptance |
+
+These pre-release checks do not repeat authenticated business operations, real-model translation, native Office rendering, production migrations or deployment. Dedicated database/Qdrant integration test variables were not configured; ordinary Go test success does not prove those external-service tests ran. Earlier feature acceptance remains recorded below with its original date.
 
 ### Verification performed for the 2026-10-01 review
 
