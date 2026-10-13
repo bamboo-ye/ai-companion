@@ -53,7 +53,7 @@ Durable compilation jobs create a page for every source chunk and a source page 
 
 Multi-source pages require access to **every** dependency. Reads, searches and history access recheck source existence, readiness and version, so deletion, unsharing or reparsing prevents stale evidence from being returned as current knowledge. Cache fingerprints include accessible page and source versions, invalidating both hits and misses.
 
-Markdown edits use optimistic version checks; automatic compilation preserves manual edits until an explicit rebuild releases that protection. Agents search, paginate and follow links on demand, sharing an eight-successful-call lookup budget with built-in product knowledge. Keyword retrieval remains available when optional embeddings or reranking fail; `legacy`, `shadow` and `semantic` index modes support measured rollout with model/dimension-specific collections.
+Markdown edits use optimistic version checks; automatic compilation preserves manual edits until an explicit rebuild releases that protection. Agents search, paginate and follow links on demand, sharing an eight-successful-call lookup budget with built-in product knowledge. Keyword retrieval remains available when optional embeddings or reranking fail; `legacy`, `shadow` and `semantic` index modes support measured rollout with versioned index specifications covering the model, revision, dimensions, provider, query instruction and preprocessing.
 
 Sources: [Wiki service](../internal/document/wiki.go), [compiler](../internal/document/wiki_compiler.go), [context and Wiki guide](CONTEXT_MANAGEMENT.md).
 
@@ -86,6 +86,26 @@ Sources: [Passkey service](../internal/adminpasskey/service.go), [quota rules](.
 OpenTelemetry connects HTTP, transactional Outbox, asynchronous dispatch and Agent execution. Prometheus exposes bounded-label metrics; Alloy/Loki collect redacted logs with a PostgreSQL query fallback. Optional Langfuse traces correlate model calls, node timings, usage, configuration versions and quality scores; content capture is disabled by default.
 
 Agent Studio provides graph/node debugging, immutable Prompt versions, evaluation, canary rollout and rollback. Release checks cover duplicate delivery, timeout, recovery and quality contracts, producing JSON/JUnit evidence. Configuration changes and operational decisions retain versions and audit trails. See the [operations design](ADMIN_OBSERVABILITY_AGENT_STUDIO_DESIGN.md) and [runbooks](runbooks/).
+
+### 9. Unified knowledge and durable projections
+
+The user Knowledge Center searches documents, Wiki pages, personal memories and built-in guides through `knowledge-evidence-v1`, with paginated reading, versioned citations, dependency tracing and feedback. Team queries recheck membership and exclude personal memories. Search hits are not automatically verified facts.
+
+The Worker commits parsed source text before indexing. Wiki and memory vectors are persistent, version-bound projections; SQL tracks ready keys and durable jobs, while Qdrant performs filtered grouped ANN retrieval. Leases, retries, authority checks and reconciliation support recovery. Missing embeddings or indexes retain lexical retrieval and expose degradation. Operators can review feedback and retry failed jobs; index rebuild is admin-only. Apply PostgreSQL migration `000046` or MySQL `000035`, including all earlier migrations. Historical-time queries, graph reasoning, visual retrieval and large-scale quality claims remain outside current acceptance.
+
+See the [Knowledge Center guide](KNOWLEDGE_CENTER.md) and [implementation and verification record](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md).
+
+### 10. Whole-deck presentation editing and export
+
+Presentation Studio stores editable pages, sources and notes in `presentation-design-v2`. Templates, mixed page layouts, charts, tables, slide insertion, undo, locking, rehearsal, local drafts and saved task versions form one editing workflow. Optional model planning reads the entire deck and assigns a consistent style plus per-page purpose and animation; subsequent requests redesign existing content.
+
+PPTX retains native editable objects. LibreOffice renders the final file for PDF, export previews, missing-glyph and boundary checks. Without a renderer, PPTX/design export remains available but is explicitly unverified and has no PDF. This rendering gate is separate from chat content review. Text PDFs, Markdown, TXT and saved design JSON can be imported; scanned-document OCR and arbitrary PPTX master imports are unsupported. See [Presentation Studio](PRESENTATION_STUDIO.md).
+
+### 11. Bounded evidence debate, disabled by default
+
+Graph `ai-companion-supervisor@3.72.0` uses arbitration protocol v2. When explicitly configured, concrete research/review disputes can use isolated first-round checks, read-only evidence supplementation and at most one cross-review round. Each Run permits one session, two rounds, six additional model calls and two additional reads, within the overall budget and deadline. Wiki has a separate switch; memory keeps single-pass arbitration and explicit user correction.
+
+Chat exposes a bounded evidence-review summary; historical summaries describe delivery-time checks. Memory clarification links related records to the correction form. Shared models/sources do not establish statistical independence, and agreement does not prove truth. Real-provider comparative evaluation and production rollout remain pending. See [arbitration and evaluation gates](ARBITRATION.md).
 
 ## Engineering challenges and solutions
 

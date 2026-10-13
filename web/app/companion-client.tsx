@@ -483,7 +483,7 @@ export function CompanionStart() {
               topics={userGuideTopics}
               autoStart
               toolbar
-              currentTopic={screen === "dashboard" ? (activeModule === "companion" ? "characters" : activeModule) : screen}
+              currentTopic={screen === "dashboard" ? (activeModule === "companion" ? "characters" : activeModule) : screen === "knowledge" && !knowledgePageID ? "knowledge-search" : screen}
               onNavigate={navigateFromGuide}
             />
             {screen === "dashboard" && <button className="primaryAction" type="button" onClick={() => setShowCharacterForm(true)}>＋ 添加角色</button>}

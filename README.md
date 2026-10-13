@@ -29,15 +29,16 @@ AI Companion is a self-hostable personal AI workspace. Continue a meaningful con
 | --- | --- | --- |
 | Talk things through and pick up where you left off | **Companion** | Custom characters, multi-turn conversations, inspectable and correctable memory |
 | Organize daily plans and spending | **Life assistant** | Today's plan, reminders, ledger records and summaries, Excel export |
-| Turn ideas and source material into deliverables | **Work partner** | Multi-attachment research, requested review, knowledge Wiki, PPTX generation, PDF translation, DOCX copy editing, CSV/XLSX analysis |
+| Turn ideas and source material into deliverables | **Work partner** | Multi-attachment research, unified knowledge search, requested review, editable PPT Studio and conversational revisions, PDF translation, DOCX copy editing, CSV/XLSX analysis |
 
 All three experiences share context, knowledge and governed tools. A separate admin console manages models, Agents, permissions, quotas and execution records.
 
 ## Why AI Companion
 
 - **Conversations with continuity.** Recent messages, sourced summaries and correctable memories retain useful preferences and constraints across sessions.
-- **Knowledge with evidence, disagreements included.** Search, read and edit your Wiki, then follow citations to the source. Detectable conflicts in research, Wiki pages and memory are checked against evidence; uncertainty remains explicit when evidence is insufficient.
+- **Knowledge with evidence, disagreements included.** Search documents, Wiki pages, personal memory and product guides in one knowledge center, read specific versions, follow sources and submit feedback. A search hit is not automatically a verified fact.
 - **Results beyond the chat.** Ledger entries appear in the ledger, reminders in the reminder list, and office tasks return files you can use.
+- **Deliverables you can keep refining.** Plan a full presentation, edit individual pages, rehearse and export. Continue in the same conversation to change its style while retaining content and page order.
 - **Collaboration for complex work.** Read attachments independently, schedule research by dependency, and request parallel source/expression review. Simple conversations retain their short path.
 - **A plan for long-running work.** Complete source intake, bounded parallel batches and deterministic merging handle material beyond one model window, with targeted recovery.
 - **Control over execution.** Host the app and data services yourself, configure models, allowlist tools and set global/user quotas. Parallel calls share provider permits; the server enforces authorization and required approvals.
@@ -75,6 +76,7 @@ These are example requests to try after connecting a real model, not actions alr
 | Life assistant | “I spent CNY 18 on lunch today. Record it as a dining expense.” | Review and confirm the candidate, then open the ledger |
 | Life assistant | “Remind me tomorrow at 3 p.m. to prepare the project demo.” | Verify the date, time and timezone, then open reminders |
 | Work partner | “Create an illustrated PPT introducing AI Companion, with a table of its main features.” | Check the completion message and file entry in the conversation |
+| Work partner | Provide source material: “Make an eight-page training deck: goals, structure, then process. Use a layered diagram only for the structure page and retain the source facts.” | Check the full-deck plan, page designs and exports in PPT Studio; starting from a template is also supported |
 | Work partner | Upload 2–3 sources: “Compare the proposals' costs, risks and implementation requirements in a table with sources. Fact-check the numbers and list unresolved disagreements.” | Verify citations, scope and disagreements; review defaults to on-request, subject to deployment settings and Run budgets |
 
 <details>
@@ -91,7 +93,7 @@ These are example requests to try after connecting a real model, not actions alr
 
 ## Product in action
 
-The following real UI and conversation captures come from a local environment with sanitized demo accounts and sample data. They show request, execution and result verification—not actions performed on the current reader's account. The new parallelism and arbitration mechanisms have separate implementation and test references below; these existing captures do not validate them.
+The following real UI and conversation captures come from a local environment with sanitized demo accounts and sample data. The new Work partner examples reuse local acceptance records from **2026-09-29 through 2026-10-01**, not newly generated tasks. They show request, execution and result verification—not actions performed on the current reader's account or proof that a remote server runs the same version.
 
 ### Companion: from listening to practical guidance
 
@@ -138,7 +140,56 @@ Then verify its title, time and channel in the reminder list:
 
 </details>
 
-### Work partner: one request, an office deliverable
+### Work partner: from sources to editable presentations
+
+The Work partner now combines **conversational generation with a PPT Studio**. Supply the source material, audience and purpose, or start with a ready-made template. Inspect the full-deck plan, refine pages, rehearse and export an editable result.
+
+| What you are doing | Implemented interaction | What you can inspect |
+| --- | --- | --- |
+| Organizing material into a presentation | Read the full source, coordinate colors and fonts, and assign a purpose, layout and animation to each page | Full-deck structure and pacing, page previews, and diagrams mixed with lists, processes and comparisons |
+| Starting quickly and refining details | 4 themes, 23 selectable layouts, 3 seven-page templates and an 18-entry page library | Page editing, insertion, duplication, ordering and locking; 30-step undo/redo and local draft recovery |
+| Revising in the same conversation | Load the current user's latest successfully exported design in the current conversation, then adjust style and purpose | Retained content, titles, page IDs and order, with revised files returned to the chat |
+| Checking and delivering the result | Content/layout checks, Office rendering of the final PPTX, and downloads | Editable PPTX, fixed-layout PDF and restorable `.deck.json`; standalone diagrams can also return PNG |
+
+#### Conversational revision: eight pages, a new style, the same facts
+
+The local acceptance run first generated an eight-page community reading activity proposal, then sent this exact request in **the same conversation**:
+
+> 保持刚才8页PPT的全部内容、标题和页序不变，改成适合会前阅读的黑白简约风格，关闭所有动画，活动构成仍保留为其中一页可编辑图解。直接给我修改后的PPTX和PDF。
+
+The request keeps all eight pages, titles, content and ordering, changes to a black-and-white pre-reading style, removes animations and retains the editable diagram. The capture shows the previous delivery, the revision request and the new PPTX / PDF / design-file entries—not a task-history list:
+
+![Work partner revision: preserve eight pages and their order, switch to a black-and-white reading style and return three files](docs/images/readme/work-studio-chat-revision.png)
+
+Acceptance records compare the original and revised designs: **8 pages → 8 pages, content and order retained, all animations removed**. Browser downloads of the original PPTX and revised PDF matched their server-side SHA-256 hashes. This verifies the specified sample, not first-attempt success for arbitrary inputs. See the [PPT Studio acceptance record](docs/PRESENTATION_STUDIO.md).
+
+#### Full-deck planning: see the purpose behind each page
+
+A separate eight-page volunteer training sample for a community reading activity uses warm white, deep blue and ochre across goals, structure, process, comparisons and plans. Only page three uses a layered diagram; other pages keep their own appropriate layouts. The capture below shows the first six of eight planned pages, with purpose, layout and animation notes—not a slide-by-slide gallery of the whole PPT.
+
+![PPT Studio full-deck plan: the first six pages of an eight-page training deck, with mixed layouts and pacing notes](docs/images/readme/work-studio-storyboard.png)
+
+<details>
+<summary>See the creation workflow: template → page editor → layout checks and export</summary>
+
+These three captures come from different local acceptance samples. They demonstrate the respective operations, not one continuous task.
+
+**Start from a template.** Filter quarterly reviews, project proposals or course explanations by purpose, preview the pages and create an independent design. Replace placeholders with your own material.
+
+![PPT template library: choose by purpose, preview the pages and use a template](docs/images/readme/work-studio-templates.png)
+
+**Refine with a live preview.** Select a page on the left, preview it in the center and edit its title, text and layout on the right. Change themes and animations, save versions and rehearse. Exported text, charts and tables remain editable PPTX objects.
+
+![PPT Studio editor: themes, animations, page preview and editing controls](docs/images/readme/work-studio-editor.png)
+
+**Check before delivery.** The passed layout-check status corresponds to LibreOffice rendering of the final PPTX. Download PPTX, PDF and the design file below it. PDF preserves the visual result; animation compatibility still needs checking in the target presentation app.
+
+![PPT Studio export: passed layout check and PPTX, PDF and design-file downloads](docs/images/readme/work-studio-export.png)
+
+</details>
+
+<details>
+<summary>Earlier demo: introduce AI Companion with illustrations and a feature table</summary>
 
 The exact prompt sent in this demo was:
 
@@ -149,6 +200,8 @@ It asks for an illustrated presentation introducing AI Companion, with a table o
 <p align="center">
   <img src="docs/images/readme/work-ppt-conversation.jpg" width="600" alt="Actual Work partner conversation: illustrated PPT request, successful completion and file entry">
 </p>
+
+</details>
 
 <details>
 <summary>See the workbench: versioned Skills, intent routing and MCP controls</summary>
@@ -161,16 +214,18 @@ The workbench offers attachment extraction, DOCX copy editing, PDF translation, 
 
 ## Technical highlights
 
-The project's current focus is **context engineering, controlled multi-Agent collaboration, Agentic RAG and evidence arbitration**. Beyond processing more material, the design addresses provenance, conflicting claims, recovery and cost control. The following reflects repository implementation checked on **2026-09-25**, not the deployed version of any particular server.
+The project's current focus is **editable content generation, context engineering, controlled multi-Agent collaboration, Agentic RAG and evidence arbitration**. Beyond processing more material, it addresses continued editing, provenance, conflicting claims, recovery and cost control. The following reflects implementation at `c7f24b0`, checked on **2026-10-01**, not the deployed version of any particular server.
 
 | Focus | Implementation | Practical value |
 | --- | --- | --- |
+| **Editable presentation generation** | `presentation-design-v2` unifies content, sources and geometry; full-deck planning, mixed layouts, conversational revisions, native Office objects and final-file render checks | Turns a one-off file into a design that can be refined, rehearsed and delivered in multiple formats |
 | **Complete large-file processing** | Ordered extraction rounds, stable Source IR entity IDs, token/character bounds, coverage gates, deterministic merging and targeted retries | Maintains a complete source-processing path beyond one model window |
 | **Bounded multi-Agent collaboration** | Parallel Runs, process pools and Composer branches; independent reads of 2–3 attachments, dependency-aware research with 2–6 tasks, requested source/expression review | Makes complex work recoverable and overlaps independent steps |
 | **Cross-language concurrency control** | Separate Skill execution, parsing and rendering caps; Go/Python provider permits coordinated by shared-directory file locks | Controls aggregate demand, not just each individual pool |
 | **Shared context and memory** | Versioned Go/Python snapshots, sourced summaries, memory correction chains, per-role budgets and full-request window checks | Keeps chat and tool execution consistent and correctable |
 | **Parallel knowledge compilation and on-demand retrieval** | Complete source pages plus bounded semantic batches; ordered topic/entity/decision merges, 24-hour shard-candidate caching, Agent-driven search, reading and citation following | Combines source-level traceability with readable summaries and reusable successful work |
-| **Evidence arbitration** | A structured protocol for review, research, Wiki and memory; candidate ownership, citation and literal-quote validation | Lets models propose judgments while deterministic checks enforce evidence and authority boundaries |
+| **Unified knowledge engineering** | Search, read, cite and give feedback across four source types; version-bound durable indexing, ready-key filters, permission rechecks and lexical fallback | Distinguishes readable originals, indexed retrieval and verified conclusions, keeping stale indexes from posing as current evidence |
+| **Evidence arbitration and optional debate** | Protocol v2 separates call status, resolution and termination reason; optional two-round isolated verification, read-only evidence gathering and delivery summaries | Retains uncertainty instead of substituting votes or circular model citations for evidence; debate is off by default |
 | **Recoverable tool execution** | PostgreSQL Runs/checkpoints, human approval, idempotency, leases and revision fencing; Go controls business writes | Tracks state and side effects through retries, cancellation and interruptions |
 | **Documentation as product knowledge** | Allowlisted docs, SHA-256 versions, `go:embed`, local BM25 and guide citations | Grounds product questions and generation tasks without extra uploads |
 | **Identity and cost governance** | Admin Passkeys, recent verification, per-resource quota inheritance, revision checks and transactional audits | Makes privileged changes, limits and model costs accountable |
@@ -187,7 +242,7 @@ Calls, tokens and cost allowances are allocated before dispatch, with a reserve 
 
 | Pipeline | Default bounds | Coverage and recovery |
 | --- | --- | --- |
-| Attachment intake and file generation | Upload limit 20 MiB; Composer batches of 2,000 estimated tokens / 12,000 source characters; concurrency 3, hard cap 4 | Complete all read rounds before generation; stable Source IR IDs, ordered merges, coverage gates and targeted retries |
+| Attachment intake and file generation | Chat attachment upload limit 20 MiB; Composer batches of 2,000 estimated tokens / 12,000 source characters; concurrency 3, hard cap 4 | Complete all read rounds before generation; stable Source IR IDs, ordered merges, coverage gates and targeted retries |
 | Wiki semantic compilation | Up to 24,000 UTF-8 bytes per batch; per-document concurrency 3 and ceiling of 64 batches | Keep a page for every original chunk; exceeding the semantic batch budget records `semantic_batch_budget_exceeded` instead of presenting a prefix as complete coverage |
 | Wiki rebuilds and caching | Shard candidates cached for 24 hours; at most one retry per failed batch | Bind caches to user, document, source version, model and content; revalidate evidence and permissions before publication, which remains serial per owner |
 
@@ -195,16 +250,33 @@ Completeness means full intake and verifiable source/entity coverage, not flawle
 
 ### 3. Evidence arbitration: disagreements remain inspectable
 
-`evidence-arbitration-v1` structures review findings, research claims, Wiki differences and memory relationships as issues with candidates and citations. Structured research facts are compared by subject, predicate, scope and effective time; differing values conflict only within the same scope. Analysis citations must resolve to original tool evidence rather than circular references to other model conclusions.
+`evidence-arbitration-v2` structures review findings, research claims, Wiki differences and memory relationships as issues with candidates and citations, while retaining historical v1 reads. Structured research facts are compared by subject, predicate, scope and effective time; differing values conflict only within the same scope. Analysis citations must resolve to original tool evidence rather than circular references to other model conclusions.
 
 A verdict must reference a candidate belonging to its issue, visible evidence and a quote literally present in that evidence. Insufficient evidence, invalid verdicts or insufficient budgets retain uncertainty; unresolved research disputes stop file generation. A later upload alone cannot supersede an older Wiki source, and memory arbitration never automatically overwrites or deletes records. Supersession still requires explicit correction.
 
-[Parallel tasks and upgrade settings](docs/PARALLEL_AGENTS.md) · [Arbitration protocol and validation](docs/ARBITRATION.md) · [Large-file design (Chinese)](docs/blog/ppt-generation-vibe-coding/03-large-files-and-intermediate-representation.md) · [Engineering guide](docs/ENGINEERING.md)
+Optional debate uses `AGENT_DEBATE_MODE=requested` or `on_conflict`, with `off` as the default. Wiki has a separate switch; memory retains single-shot arbitration. First-round evidence and counterexample verifiers cannot see each other's judgments, and only valid new evidence unlocks round two. Each Run allows at most **2 rounds, 6 new model calls, 2 read-only evidence queries and a 60-second absolute deadline**, still within its total budget. Chat summaries report resolution, rounds and termination reason. Restored summaries describe delivery-time checks, not the current validity of sources. Real-model four-arm evaluation and production canaries have not yet run.
+
+### 4. PPT Studio: separate factual content from visual design
+
+Content planning owns facts, sources and page order; the style model arranges existing content without adding or removing facts. `##` defines content pages and nested `###` headings can define layered modules. One diagram page does not collapse the entire deck into one slide. Stable page/content IDs support revision and restoration. Full-deck planning notes appear in the editor, not on audience-facing slides.
+
+Preview and export share geometry and capacity rules, followed by checks for missing glyphs, overflow and blank pages in the rendered final PPTX. Model-based content review and file-layout checks are separate safeguards. Templates and manual editing do not require a style model; natural-language design requires a configured model supporting structured JSON. Without an Office renderer, delivery is limited to unverified PPTX/design files, with no PDF. If an installed renderer fails its checks, delivery stops.
+
+### 5. Knowledge center: one entry point, distinct source types
+
+Documents, Wiki pages, personal memory and product guides use versioned `knowledge-evidence-v1` references, with paginated source reading, provenance and categorized feedback. Identity comes from the authenticated context, team membership is rechecked, and personal memory is excluded from team search. Citation validation checks access, version, body hash and literal quotation—not the truth of the conclusion itself.
+
+Document parsing is separate from indexing. Background jobs build durable vector projections from full-text Wiki and memory chunks, isolated by source version and index specification. Queries filter to currently readable, ready projection keys. Unavailable models or indexes yield lexical results with explicit fallback information. The **2026-10-01 local acceptance configuration still used `legacy` lexical retrieval**; it does not establish that semantic ANN is enabled or that real-corpus retrieval quality meets a target.
+
+[PPT Studio](docs/PRESENTATION_STUDIO.md) · [Unified knowledge implementation](docs/KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) · [Parallel tasks](docs/PARALLEL_AGENTS.md) · [Evidence arbitration](docs/ARBITRATION.md) · [Engineering guide](docs/ENGINEERING.md)
 
 ### Engineering challenges and solutions
 
 | Challenge | Mechanism | Verification |
 | --- | --- | --- |
+| Restyling loses content or page order, or diagrams displace other pages | Freeze facts and stable IDs, map every page, validate mixed layouts, share preview/export geometry and inspect the final PPTX | [Whole-deck tests](workers/python/tests/test_presentation_whole_deck.py) · [Studio acceptance](docs/PRESENTATION_STUDIO.md) |
+| Stale knowledge remains searchable, or Wiki summaries pose as original evidence | Versioned source contracts, source revalidation and current ready-key retrieval; derived conclusions trace back to original dependencies | [Unified knowledge tests](internal/knowledge/service_test.go) · [Index-job tests](internal/document/index_jobs_test.go) |
+| Reviewers influence each other, or duplicate material masquerades as new evidence | Isolate first-round context, freeze candidates/evidence, deduplicate retrieval, revalidate sources and bound rounds, budgets and absolute deadlines | [Debate and recovery tests](workers/python/tests/test_debate.py) · [Evaluation gates](docs/DEBATE_EVALUATION.md) |
 | Missing/duplicate records or unstable batch ordering | Source IR, coverage gates, ordered joins and targeted retries | [Composition tests](workers/python/tests/test_agent_runtime.py) |
 | Invalid task dependencies, repeated work or missing usage after partial failure | Validate dependencies and read-only tools; reserve budgets, retain successful siblings, resume checkpoints and settle at join | [Parallel task tests](workers/python/tests/test_parallel_tasks.py) |
 | Independently bounded processes still overload the provider together | Shared provider permits, deadline-aware waiting, release on process exit and separate parse/render caps | [Cross-language permit tests](internal/platform/modelquota/slots_test.go) · [Skill runner tests](internal/skill/runner_test.go) |
@@ -217,7 +289,7 @@ A verdict must reference a candidate belonging to its issue, visible evidence an
 
 For human-edit conflicts, concurrent admin changes and knowledge consistency, see the [full engineering challenge matrix](docs/ENGINEERING.md#engineering-challenges-and-solutions).
 
-With development dependencies installed, run `make test-python` and `make eval-agent-arbitration`; database recovery cases require isolated test databases. These check control and recovery contracts, not real-model accuracy, latency or cost. Existing deployments also need Wiki-shard and memory-arbitration migrations, rebuilt API/Worker/Agent images and completion or explicit restart of unfinished old-graph Runs. See the linked topic guides for upgrade details.
+With development dependencies installed, run `make test-python` and `make eval-agent-arbitration`; database recovery cases require isolated test databases. These check control and recovery contracts, not real-model accuracy, latency or cost. Unified knowledge upgrades require PostgreSQL migration `000046` / MySQL `000035` and their predecessors; PPT rendering needs LibreOffice and CJK fonts. Handle unfinished old-graph Runs before rebuilding application images. See the linked topic guides for upgrade details.
 
 ## Architecture and stack
 
@@ -228,7 +300,7 @@ A **modular Go monolith, independent asynchronous workers and a Python Agent run
 | Web | Next.js 16 · React 19 · TypeScript |
 | API and business logic | Go 1.26 · OpenAPI · PostgreSQL 18 |
 | Agents and processing | Python · LangGraph · PostgreSQL Checkpointer · Versioned Skills |
-| Retrieval and files | Qdrant · Redis · MinIO · Source IR · Wiki · Local BM25 |
+| Retrieval and files | Qdrant · Redis · MinIO · Source IR · Unified knowledge service / Wiki · Product-knowledge BM25 · python-pptx / LibreOffice |
 | Deployment and observability | Docker Compose · Caddy · OpenTelemetry · Prometheus · Loki / Alloy · Optional Langfuse |
 
 [Architecture and processing diagrams (Chinese)](docs/TECHNICAL_GUIDE.zh-CN.md#系统架构) · [Repository map](docs/ENGINEERING.md#repository-map) · [Concurrency settings (Chinese)](docs/TECHNICAL_GUIDE.zh-CN.md#关键并行与分片参数)
@@ -241,6 +313,8 @@ Most topic guides are currently in Chinese; the engineering and operations guide
 | --- | --- |
 | Installation, registration, first tasks and troubleshooting | [First-run guide](docs/GETTING_STARTED.md) |
 | Model providers, server-side keys, roles and budgets | [Model configuration](docs/OPENROUTER_MODELS.md) |
+| Full-deck planning, editing, revisions, export and real acceptance results | [PPT Studio](docs/PRESENTATION_STUDIO.md) |
+| Unified knowledge, versioned citations, indexing jobs and feedback | [Knowledge engineering implementation](docs/KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) |
 | Large files, parallelism, architecture and trade-offs | [English engineering guide](docs/ENGINEERING.md) · [中文技术指南](docs/TECHNICAL_GUIDE.zh-CN.md) |
 | Attachments, review, disputes and upgrades | [Parallel tasks and resources](docs/PARALLEL_AGENTS.md) · [Evidence arbitration](docs/ARBITRATION.md) |
 | Memory, Wiki, retrieval and context organization | [Context management](docs/CONTEXT_MANAGEMENT.md) |

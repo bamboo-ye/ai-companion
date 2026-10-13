@@ -146,7 +146,7 @@ export function OperationsConsole() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [view, setView] = useState<Exclude<AdminGuideTarget, "security"> | "knowledge">("observability");
+  const [view, setView] = useState<Exclude<AdminGuideTarget, "security">>("observability");
   const [logFocus, setLogFocus] = useState<LogFocus | undefined>();
   const [restoring, setRestoring] = useState(true);
   const [invite, setInvite] = useState("");
@@ -341,7 +341,7 @@ export function OperationsConsole() {
           topics={adminGuideTopics}
           autoStart
           toolbar
-          currentTopic={securityOpen ? "security" : view === "knowledge" ? "performance" : view}
+          currentTopic={securityOpen ? "security" : view}
           onNavigate={(target) => {
             if (target === "security") { setSecurityOpen(true); return; }
             setSecurityOpen(false);

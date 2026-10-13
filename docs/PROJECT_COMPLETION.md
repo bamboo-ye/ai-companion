@@ -1,6 +1,6 @@
 # Project Completion Status
 
-Implementation review: 2026-09-25, against `edf2802` (bounded parallel agents and evidence arbitration, following quota management and public-release security hardening).
+Implementation review: 2026-10-01, against `c7f24b0` (Presentation Studio, unified knowledge engineering and bounded evidence debate), with the documentation and onboarding corrections in this working tree.
 
 Start with the [beginner guide](GETTING_STARTED.md) for setup and first-use steps.
 
@@ -23,8 +23,11 @@ every milestone acceptance exercise or certify the deployed environment.
 |---|---|---|
 | Accounts, profile and conversations | [`internal/identity`](../internal/identity/), [`companion-client.tsx`](../web/app/companion-client.tsx), [`profile-panel.tsx`](../web/app/profile-panel.tsx), [`chat-panel.tsx`](../web/app/chat-panel.tsx) | Registration/login, three character modules, password change, streaming/retry/cancel; real model behavior requires a configured provider |
 | Memory and personal Wiki | [`internal/memory`](../internal/memory/), [`internal/document`](../internal/document/), [`wiki-panel.tsx`](../web/app/wiki-panel.tsx) | Memory management, document upload/query, Wiki search/edit/export/feedback; default upload limit 20 MiB, parsing/indexing needs the Worker |
-| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides (22/21 chapters) and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
+| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides (25/22 chapters) and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
 | Life and office workflows | [`life-panel.tsx`](../web/app/life-panel.tsx), [`work-panel.tsx`](../web/app/work-panel.tsx), [`task-history-panel.tsx`](../web/app/task-history-panel.tsx), [`internal/skill`](../internal/skill/) | Ledger, reminders, plans, generated files and task confirmation; DOCX/table forms have a separate 700 KiB limit |
+| Presentation Studio | [`presentation-studio.tsx`](../web/app/presentation-studio.tsx), [implementation guide](PRESENTATION_STUDIO.md) | Workbench templates, whole-deck planning, mixed layouts, editing, rehearsal, saved versions and editable PPTX/design export; PDF/export previews require LibreOffice and Chinese fonts; third-party PPTX import and OCR unsupported |
+| Unified knowledge and quality operations | [`internal/knowledge`](../internal/knowledge/), [`internal/knowledgebridge`](../internal/knowledgebridge/), [user guide](KNOWLEDGE_CENTER.md), [implementation record](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) | Knowledge Center search/read/feedback across four source types, version and permission checks, durable indexing/projections; operations quality queue, role-gated retry/rebuild/review; real-corpus and scale acceptance still pending |
+| Bounded evidence debate | [`debate.py`](../workers/python/src/ai_companion_worker/debate.py), [arbitration guide](ARBITRATION.md), [`evidence-review-card.tsx`](../web/app/evidence-review-card.tsx) | Default off; isolated first round, bounded read-only supplements and cross-review, source revalidation, chat summary and memory clarification; real-provider comparative evaluation and production rollout pending |
 | Durable Agent execution | [`cmd/agent-worker`](../cmd/agent-worker/), [`internal/agent`](../internal/agent/), [`Python runtime`](../workers/python/src/ai_companion_worker/agent_runtime.py) | All three default chat modules use Agent Worker; PostgreSQL checkpoints, gateway authorization, bounded concurrency and recovery; Kafka optional |
 | Parallel research and content review | [`parallel tasks`](../workers/python/src/ai_companion_worker/parallel_tasks.py), [`arbitration`](../workers/python/src/ai_companion_worker/arbitration.py), [`parallel guide`](PARALLEL_AGENTS.md), [`arbitration guide`](ARBITRATION.md) | Work chat supports conditional multi-attachment reads, validated read-only research and requested source/expression review. At most one review revision; unresolved research disputes stop file generation; rendered file layout is outside the review |
 | Administrator identity | [`internal/adminpasskey`](../internal/adminpasskey/), [`admin-invite CLI`](../cmd/admin-invite/main.go), [`login guide`](ADMIN_PASSKEY_LOGIN.md) | Independent `/admin` account, invited WebAuthn passkeys, HttpOnly sessions and recent verification for writes; ordinary registration does not grant admin access |
@@ -37,9 +40,9 @@ not concurrent quota reservations or a per-token spending stop for already
 running requests. Raising a quota does not reset usage or restart failed tasks.
 The separate Agent run budget still controls each run's model/token/cost ceiling.
 
-The current graph is `ai-companion-supervisor@3.71.0`. Skill execution uses bounded execution/parse/render pools; Go/Python requests share provider permits on one host. Wiki synthesis processes all chunks in bounded parallel batches, caches successful shards and reports incomplete semantic coverage while retaining original pages. Wiki and memory arbitration annotate source relationships without removing original evidence or silently replacing memories. The Web Wiki reader shows body notes and conflict notices; the memory panel does not yet expose arbitration details.
+The current graph is `ai-companion-supervisor@3.72.0`. Skill execution uses bounded execution/parse/render pools; Go/Python requests share provider permits on one host. Wiki synthesis processes all chunks in bounded parallel batches, caches successful shards and reports incomplete semantic coverage while retaining original pages. Wiki and memory arbitration annotate source relationships without removing original evidence or silently replacing memories. The Web Wiki reader shows body notes and conflict notices; the memory panel now shows related records and a clarification/correction form when a valid clarification exists. It does not expose the full internal arbitration trace.
 
-Upgrades require PostgreSQL `000044_wiki_shards` and `000045_memory_arbitration` (MySQL `000033` and `000034`) in addition to earlier migrations. Complete old-graph Runs or explicitly restart them before switching graph versions. Public-file protections and dependency changes are recorded in the dated [security review](SECURITY_REVIEW.md); that historical scan is not a fresh vulnerability assessment of this revision.
+Upgrades require PostgreSQL `000044_wiki_shards`, `000045_memory_arbitration` and `000046_knowledge_projections` (MySQL `000033`, `000034` and `000035`) in addition to earlier migrations. Complete old-graph Runs or explicitly restart them before switching graph versions. Public-file protections and dependency changes are recorded in the dated [security review](SECURITY_REVIEW.md); that historical scan is not a fresh vulnerability assessment of this revision.
 
 ## Completed milestones
 
@@ -104,24 +107,22 @@ separately. Rebuild embedded documentation with
 Database-specific integration tests skip when their dedicated test DSNs are
 absent; passing the ordinary test command is not proof that those tests ran.
 
-### Verification performed for the 2026-09-25 review
+### Verification performed for the 2026-10-01 review
 
 | Check | Result |
 |---|---|
-| Go repository tests (`GOCACHE=/tmp/ai-companion-go-cache go test ./...`) | All packages passed, including embedded-knowledge consistency and retrieval; local HTTP test ports were permitted |
-| Python Worker (`PYTHONPATH=workers/python/src workers/python/.venv/bin/python -m pytest workers/python/tests -q`) | 561 tests passed, 2 skipped, 142 subtests passed; SWIG deprecation warnings remain |
-| Web `pnpm check`, `pnpm test`, `pnpm build` | Lint/type checking passed, 13 tests passed, Next.js 16.3.5 production build succeeded |
-| Web guide content and search | 22 user chapters and 21 admin chapters; new multi-source, review and admin troubleshooting topics resolve in guide search; existing navigation/progress tests passed |
-| Embedded product knowledge | 138 pages from 10 allowlisted sources, now including parallel execution and arbitration guides; generator `--check` and Go tests passed |
-| Documentation links and whitespace | 277 local targets across 8 updated Markdown documents resolved; `git diff --check` passed |
+| Go repository tests (`GOCACHE=/tmp/ai-companion-go-cache go test ./...`) | All packages passed, including the refreshed embedded sources and new help-query retrieval cases; local HTTP test ports were permitted |
+| Python Worker (`PYTHONPATH=workers/python/src workers/python/.venv/bin/python -m pytest workers/python/tests -q`) | 847 passed, 14 skipped, 142 subtests passed; SWIG deprecation warnings remain |
+| Web `pnpm check`, `pnpm test`, isolated `pnpm build` | Lint/type checking passed, 42 tests passed, Next.js 16.3.5 production build succeeded |
+| Browser guide verification | Local production preview: user/admin login-page guides show 25/22 chapters; Knowledge Center, deck-style revision and knowledge-quality searches open the expected content |
+| Embedded product knowledge | 173 pages from 12 allowlisted sources, including the new Knowledge Center guide and Presentation Studio; generator `--check` and retrieval/consistency tests passed |
+| Documentation and navigation | Local link targets in seven reviewed Markdown files resolved; existing guide navigation/progress tests and `git diff --check` passed; admin knowledge-quality context now opens its own guide |
 
-`POSTGRES_TEST_DSN`, `MYSQL_TEST_DSN` and `LANGGRAPH_POSTGRES_TEST_DSN`
-were not configured. Database-specific Go integration tests therefore were not
-exercised; the two Python skips are PostgreSQL checkpoint reconnect tests. This
-review did not run the complete `make release-check`, browser end-to-end flows,
-real-provider model/mail canaries, a new dependency vulnerability scan, native
-client builds, production migrations or a deployment. The current code and
-local checks do not establish which version is running on a server.
+The first Go pass caught a concurrent Chinese README update after catalog generation. Regenerating from the current workspace and rerunning the tests passed. Product-help recognition now includes Knowledge Center, knowledge quality and evidence-review questions so these help requests can receive automatic documentation grounding.
+
+`POSTGRES_TEST_DSN`, `MYSQL_TEST_DSN`, `LANGGRAPH_POSTGRES_TEST_DSN` and `QDRANT_TEST_URL` were not configured. Database/Qdrant integration and opt-in native rendering were not established by this run; skipped tests are not passes. Browser checks covered public guide reading/search, not authenticated business operations or admin writes. This review did not repeat the full `make release-check`, real-model/mail canaries, native-client builds, security scanning, production migration or deployment.
+
+Earlier feature-specific local acceptance records are in [Presentation Studio](PRESENTATION_STUDIO.md), [knowledge engineering](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) and [arbitration](ARBITRATION.md); these are historical evidence, not a repeat of those experiments in this documentation review.
 
 ## Explicitly out of scope for this completion pass
 

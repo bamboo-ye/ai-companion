@@ -4,15 +4,15 @@
 
 ## 使用方式
 
-- 侧栏「产品知识」可搜索、分类浏览、阅读完整章节；「工作伙伴 → Wiki」也包含相同入口。
+- 侧栏「知识中心 → 浏览产品指南」可搜索、分类浏览、阅读完整章节；「工作伙伴 → Wiki」也包含相同入口。
 - 可以直接问「伴AI有哪些功能」「如何纠正长期记忆」「怎么上传资料到知识库」「如何生成PPT」「管理员怎么用PIN登录」。
 - 对话自动召回相关章节；「具体有什么限制」「然后怎么操作」等追问可沿用紧邻的用户话题。聊天中的「产品指南」引用会打开对应章节，普通登录过期时仍需登录。
 - 搜索结果只是预览。打开章节可看全文；长章节带有同章节其他部分的链接。
-- 内置产品资料与个人上传资料分开显示。内置资料只读，随应用更新；个人 Wiki 继续支持上传、编辑、版本与删除。
+- 「知识中心 → 统一搜索」可一起检索产品指南、个人资料、Wiki 和记忆，并标注来源类型；「浏览产品指南」仍只读取内置说明。内置资料只读，随应用更新；个人 Wiki 继续支持上传、编辑、版本与删除。
 
 ## 来源与更新
 
-白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及[并行任务与资源配置](PARALLEL_AGENTS.md)、[审校与证据仲裁](ARBITRATION.md)、上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例和历史成果只是演示，不能作为当前账户或生产状态。
+白名单来源由 `scripts/build-product-knowledge.mjs` 维护：中文 README、[技术实现与开发指南](TECHNICAL_GUIDE.zh-CN.md)、[新手上手指南](GETTING_STARTED.md)、`web/app/onboarding-content.ts` 的全部用户/后台指南，以及[并行任务与资源配置](PARALLEL_AGENTS.md)、[审校与证据仲裁](ARBITRATION.md)、[知识中心操作](KNOWLEDGE_CENTER.md)、[PPT 制作工作台](PRESENTATION_STUDIO.md)、上下文管理、管理员额度、管理员登录和本知识库专题说明。当前不收录 `.env`、真实运行数据、用户文档、日志、发布证据或演示账号凭据。README 的截图、案例及专题文档中的历史验收记录不能作为当前账户或生产状态；本地验证、已实现功能和生产部署须分别判断。
 
 更新来源后执行：
 
@@ -22,7 +22,7 @@ node scripts/build-product-knowledge.mjs --check
 go test ./internal/productknowledge
 ```
 
-生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。仅更新说明时，重新构建 API、Worker、Agent Worker 和 Web 即可同步内容，无需为知识包单独迁移数据库。若同时升级功能，仍须执行功能对应的迁移，例如并行与仲裁的 PostgreSQL 000044/000045。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。
+生成器使用 Node 24+，不调用模型、不访问网络。Go `go:embed` 将 `internal/productknowledge/content/catalog.json` 编入应用，运行时不读取仓库文件、不向每个用户复制资料，也不消耗用户文档额度。仅更新说明时，重新构建 API、Worker、Agent Worker 和 Web 即可同步内容，无需为知识包单独迁移数据库。若同时升级功能，仍须执行功能对应的迁移，例如 PostgreSQL 000044/000045，以及统一知识服务的 000046（MySQL 对应 000033/000034/000035）。Go 测试检查每个来源的 SHA-256，Web CI 重建比对，防止指南更新而知识包遗漏更新。
 
 ## 对话与执行边界
 
@@ -41,3 +41,5 @@ Go 常规聊天和 Agent 入口使用同一个 `conversation-context-v1`，新�
 - `GET /v1/knowledge/builtin/pages/{page_id}`：完整章节、来源路径、章节名、内容版本和续篇链接。
 
 链接 `/#knowledge=builtin-…` 打开 Web 阅读页。历史对话的引用保留旧来源版本标识，阅读页显示当前应用的文档版本；不提供内置文档历史版本回放。删除个人 Wiki 不影响内置项目说明，且内置搜索不会读取私人文档或实时业务状态。
+
+统一搜索另使用 `/v1/knowledge/search`、`read`、`validate`、`trace` 和 `feedback`，按认证身份及来源版本访问个人/团队数据；这些接口与上述仅查内置说明的接口范围不同。操作见[知识中心指南](KNOWLEDGE_CENTER.md)，契约与权限见[知识工程实现](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md)。

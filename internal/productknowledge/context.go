@@ -24,7 +24,7 @@ func isProductQuestion(query string) bool {
 		return true
 	}
 	help := containsAny(value, "怎么", "如何", "哪里", "在哪", "为什么", "教程", "说明", "介绍", "步骤", "限制", "支持", "失败", "无法", "不能", "区别", "入口", "可以吗", "what", "how", "where", "why", "help", "limit", "support", "unable", "can i")
-	feature := containsAny(value, "注册", "登录", "账户", "账号", "密码", "角色", "会话", "聊天", "消息", "记忆", "记住", "偏好", "记账", "账本", "提醒", "计划", "工作台", "wiki", "知识库", "文档", "附件", "上传", "ppt", "演示", "翻译", "导出", "下载", "表格", "csv", "xlsx", "docx", "离线", "安装", "后台", "管理员", "模型", "部署", "skill", "agent", "passkey", "upload", "document", "account", "password", "reminder", "ledger", "memory", "offline", "companion")
+	feature := containsAny(value, "注册", "登录", "账户", "账号", "密码", "角色", "会话", "聊天", "消息", "记忆", "记住", "偏好", "记账", "账本", "提醒", "计划", "工作台", "wiki", "知识库", "知识中心", "知识质量", "资料核验", "文档", "附件", "上传", "ppt", "演示", "翻译", "导出", "下载", "表格", "csv", "xlsx", "docx", "离线", "安装", "后台", "管理员", "模型", "部署", "skill", "agent", "passkey", "upload", "document", "account", "password", "reminder", "ledger", "memory", "offline", "companion")
 	return help && feature
 }
 
