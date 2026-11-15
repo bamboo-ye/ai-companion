@@ -73,6 +73,8 @@ type Config struct {
 	SMTPUseTLS                         bool
 	MCPStdioServersJSON                string
 	WebOrigin                          string
+	HealthAssistantURL                 string
+	HealthAssistantToken               string
 	AuthTokenSecret                    string
 	AgentGatewayToken                  string
 	AgentConfirmationSecret            string
@@ -617,6 +619,18 @@ func Load(serviceName string) (Config, error) {
 	if production && !strings.HasPrefix(webOrigin, "https://") {
 		return Config{}, fmt.Errorf("WEB_ORIGIN must use https in production")
 	}
+	healthAssistantURL := strings.TrimSpace(os.Getenv("HEALTH_ASSISTANT_URL"))
+	healthAssistantToken := strings.TrimSpace(os.Getenv("HEALTH_ASSISTANT_TOKEN"))
+	if healthAssistantURL != "" {
+		endpoint, parseErr := url.Parse(healthAssistantURL)
+		if parseErr != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" ||
+			endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+			return Config{}, fmt.Errorf("HEALTH_ASSISTANT_URL must be an HTTP or HTTPS origin")
+		}
+		if len(healthAssistantToken) < 32 {
+			return Config{}, fmt.Errorf("HEALTH_ASSISTANT_TOKEN must contain at least 32 characters")
+		}
+	}
 
 	kafkaEnabled, err := strconv.ParseBool(value("KAFKA_ENABLED", "false"))
 	if err != nil {
@@ -717,6 +731,8 @@ func Load(serviceName string) (Config, error) {
 		LokiQueryTimeout:              lokiQueryTimeout,
 		MCPStdioServersJSON:           value("MCP_STDIO_SERVERS_JSON", "[]"),
 		WebOrigin:                     webOrigin,
+		HealthAssistantURL:            healthAssistantURL,
+		HealthAssistantToken:          healthAssistantToken,
 		AuthTokenSecret:               authTokenSecret,
 		AgentGatewayToken:             agentGatewayToken,
 		AgentConfirmationSecret:       agentConfirmationSecret,

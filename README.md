@@ -51,6 +51,8 @@ make docker-ps
 
 Open **<http://localhost:3000>**, register, sign in and add a character. The first build downloads images and dependencies; Compose applies business migrations and initializes Agent checkpoints.
 
+To enable the personal health assistant, run `make health-init`, configure its model using the [health assistant setup guide](docs/HEALTH_ASSISTANT.md), then run `make docker-up-health`. Open 健康助手 from the sidebar after signing in with your Companion account.
+
 > The default `MODEL_PROVIDER=development` needs no key and returns fixed mock replies for checking pages and task plumbing. For real conversations, tool selection and content generation, configure a server-side provider, key and model IDs using the [model guide](docs/OPENROUTER_MODELS.md), then rebuild and start the app. Self-hosting the application does not imply offline model inference.
 
 After connecting a model, try these requests. They are examples, not actions already performed:

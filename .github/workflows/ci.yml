@@ -60,9 +60,10 @@ jobs:
         with:
           go-version: "1.26.8"
           cache: true
-      - run: gofmt -w cmd internal
+      - run: gofmt -w cmd internal services/healthy_care/backend
       - run: git diff --exit-code
       - run: go test ./...
+      - run: make test-health
       - run: make eval-agent-runtime
       - if: always()
         uses: actions/upload-artifact@v4

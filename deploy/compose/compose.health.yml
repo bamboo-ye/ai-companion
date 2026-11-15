@@ -1,0 +1,162 @@
+# Add this file after compose.yml to enable the personal health assistant.
+x-health-service: &health-service
+  build: ../../services/healthy_care/backend
+  image: ai-companion-health-api:local
+  init: true
+  restart: unless-stopped
+  environment: &health-env
+    DATABASE_URL: postgres://hc_app:${HEALTH_APP_DB_PASSWORD:?Set HEALTH_APP_DB_PASSWORD}@health-db:5432/healthycare?sslmode=disable
+    REDIS_URL: redis://health-redis:6379/0
+    AGENT_URL: http://health-agent:8000
+    INTERNAL_TOKEN: ${HEALTH_INTERNAL_TOKEN:?Set HEALTH_INTERNAL_TOKEN}
+    RUN_SIGNING_KEY: ${HEALTH_RUN_SIGNING_KEY:?Set HEALTH_RUN_SIGNING_KEY}
+    STORAGE_DIR: /data/files
+    ALLOW_SYNTHETIC_KNOWLEDGE: ${HEALTH_ENABLE_TEST_PROVIDER:-false}
+  volumes:
+    - health-attachments:/data/files
+
+services:
+  api:
+    environment:
+      HEALTH_ASSISTANT_URL: http://health-api:8080
+      HEALTH_ASSISTANT_TOKEN: ${HEALTH_ASSISTANT_TOKEN:?Set HEALTH_ASSISTANT_TOKEN}
+    networks:
+      default: {}
+      health-ingress: {}
+
+  health-db:
+    build:
+      context: ../../services/healthy_care
+      dockerfile: deploy/Dockerfile.db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: healthycare
+      POSTGRES_USER: hc_owner
+      POSTGRES_PASSWORD: ${HEALTH_POSTGRES_PASSWORD:?Set HEALTH_POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${HEALTH_APP_DB_PASSWORD:?Set HEALTH_APP_DB_PASSWORD}
+      AGENT_DB_PASSWORD: ${HEALTH_AGENT_DB_PASSWORD:?Set HEALTH_AGENT_DB_PASSWORD}
+    volumes:
+      - health-postgres:/var/lib/postgresql
+    networks: [health-data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "hc_owner", "-d", "healthycare"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  health-redis:
+    image: redis:8.8.0-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    networks: [health-data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  health-migrate:
+    image: ai-companion-health-api:local
+    build: ../../services/healthy_care/backend
+    command: [migrate]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://hc_owner:${HEALTH_POSTGRES_PASSWORD:?Set HEALTH_POSTGRES_PASSWORD}@health-db:5432/healthycare?sslmode=disable
+    networks: [health-data]
+    depends_on:
+      health-db:
+        condition: service_healthy
+
+  health-api:
+    <<: *health-service
+    environment:
+      <<: *health-env
+      COMPANION_TOKEN: ${HEALTH_ASSISTANT_TOKEN:?Set HEALTH_ASSISTANT_TOKEN}
+    networks: [health-data, health-ingress]
+    depends_on:
+      health-migrate:
+        condition: service_completed_successfully
+      health-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  health-worker:
+    <<: *health-service
+    command: [worker]
+    networks: [health-data]
+    depends_on:
+      health-api:
+        condition: service_healthy
+      health-agent:
+        condition: service_healthy
+
+  health-agent:
+    image: ai-companion-health-agent:local
+    build: ../../services/healthy_care/agent
+    init: true
+    restart: unless-stopped
+    environment:
+      INTERNAL_TOKEN: ${HEALTH_INTERNAL_TOKEN:?Set HEALTH_INTERNAL_TOKEN}
+      GO_API_URL: http://health-api:8080
+      AGENT_DATABASE_URL: postgres://hc_agent:${HEALTH_AGENT_DB_PASSWORD:?Set HEALTH_AGENT_DB_PASSWORD}@health-db:5432/healthycare?sslmode=disable&options=-csearch_path%3Dagent
+      AGENT_PROVIDER: ${HEALTH_AGENT_PROVIDER:-unconfigured}
+      ENABLE_TEST_PROVIDER: ${HEALTH_ENABLE_TEST_PROVIDER:-false}
+      MODEL_BASE_URL: ${HEALTH_MODEL_BASE_URL:-https://api.openai.com/v1}
+      MODEL_NAME: ${HEALTH_MODEL_NAME:-}
+      MODEL_API_KEY: ${HEALTH_MODEL_API_KEY:-}
+      MODEL_TEMPERATURE: ${HEALTH_MODEL_TEMPERATURE-}
+    networks: [health-data, health-egress]
+    depends_on:
+      health-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  health-backup:
+    image: ai-companion-health-backup:local
+    build:
+      context: ../../services/healthy_care
+      dockerfile: deploy/Dockerfile.backup
+    init: true
+    restart: unless-stopped
+    environment:
+      PGHOST: health-db
+      PGUSER: hc_owner
+      PGDATABASE: healthycare
+      PGPASSWORD: ${HEALTH_POSTGRES_PASSWORD:?Set HEALTH_POSTGRES_PASSWORD}
+      PGCONNECT_TIMEOUT: "10"
+      BACKUP_KEEP_DAYS: ${HEALTH_BACKUP_KEEP_DAYS:-7}
+    volumes:
+      - health-attachments:/data/files:ro
+      - health-backups:/backups
+    networks: [health-data]
+    depends_on:
+      health-api:
+        condition: service_healthy
+      health-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/opt/backup/health.sh"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+
+networks:
+  health-data:
+    internal: true
+  health-ingress:
+    internal: true
+  health-egress: {}
+
+volumes:
+  health-postgres:
+  health-attachments:
+  health-backups:

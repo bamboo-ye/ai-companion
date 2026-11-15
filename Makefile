@@ -888,6 +888,16 @@ docker-logs: ## Follow API, Worker, Agent Worker and Web container logs
 docker-ps: ## Show complete Docker application status
 	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml ps
 
+.PHONY: health-init docker-up-health test-health
+health-init: ## Add the health assistant credentials to the private environment
+	sh scripts/bootstrap-health.sh "$(ENV_FILE)"
+
+docker-up-health: ## Build and start the application with the personal health assistant
+	docker compose --profile app --profile agent --profile agent-runtime --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml -f deploy/compose/compose.health.yml up -d --build
+
+test-health: ## Run isolated health API unit tests
+	cd services/healthy_care/backend && go test ./...
+
 log-stack-up: ## Start Loki and Alloy structured-log collection
 	docker compose --profile observability --env-file $(ENV_FILE) -f deploy/compose/compose.yml up -d loki alloy
 

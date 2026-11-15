@@ -1,0 +1,1721 @@
+.healthAssistant {
+  font-family: ui-rounded,"SF Pro Rounded","PingFang SC","Microsoft YaHei",sans-serif;
+  color: #553e3a;
+  background: #e4f1e6;
+  font-synthesis: none;
+  font-size: 14px;
+  line-height: 1.7;
+  font-weight: 400;
+}
+
+.healthAssistant * {
+  box-sizing: border-box;
+}
+
+.healthAssistant button, .healthAssistant input, .healthAssistant textarea, .healthAssistant select {
+  font: inherit;
+  color: inherit;
+}
+
+.healthAssistant button, .healthAssistant a, .healthAssistant input, .healthAssistant textarea, .healthAssistant select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.healthAssistant button {
+  cursor: pointer;
+}
+
+.healthAssistant button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.healthAssistant a {
+  color: #287453;
+  text-underline-offset: 3px;
+}
+
+.healthAssistant h1, .healthAssistant h2, .healthAssistant h3, .healthAssistant p {
+  margin: 0;
+}
+
+.healthAssistant h1 {
+  font-size: 29px;
+  line-height: 1.4;
+  letter-spacing: -.03em;
+  font-weight: 600;
+}
+
+.healthAssistant h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.healthAssistant h3 {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.healthAssistant small {
+  font-size: 12px;
+  color: #7c7869;
+}
+
+.healthAssistant button:focus-visible, .healthAssistant a:focus-visible, .healthAssistant input:focus-visible, .healthAssistant textarea:focus-visible, .healthAssistant select:focus-visible, .healthAssistant summary:focus-visible {
+  outline: 3px solid #78a786;
+  outline-offset: 3px;
+}
+
+.healthAssistant button {
+  border: 0;
+  background: none;
+}
+
+.healthAssistant input, .healthAssistant textarea, .healthAssistant select {
+  border: 1px solid #dbe3d3;
+  border-radius: 12px;
+  background: #fffefa;
+  padding: 11px 13px;
+  min-width: 0;
+}
+
+.healthAssistant label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.healthAssistant textarea {
+  resize: vertical;
+}
+
+.healthAssistant svg {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.healthAssistant button svg, .healthAssistant a svg {
+  pointer-events: none;
+}
+
+.healthAssistant strong {
+  font-weight: 600;
+}
+
+.healthAssistant .muted {
+  color: #7c7869;
+}
+
+.healthAssistant .small {
+  font-size: 12px;
+}
+
+.healthAssistant .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+}
+
+.healthAssistant .spin {
+  animation: healthSpin 1s linear infinite;
+}
+
+@keyframes healthSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.healthAssistant .loading-screen {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.healthAssistant .loading-screen>p {
+  flex-basis: 100%;
+  text-align: center;
+}
+
+.healthAssistant .workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.healthAssistant .workspace-heading small {
+  font-size: 11px;
+  color: #64815c;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.healthAssistant .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #dce5d4;
+  border-radius: 12px;
+  background: #fcfef8;
+  padding: 9px 14px;
+  font-size: 12px;
+  min-height: 39px;
+  color: #57724c;
+  text-decoration: none;
+  white-space: nowrap;
+  line-height: 1.7;
+}
+
+.healthAssistant .button.primary {
+  background: #287453;
+  border-color: #287453;
+  color: #fff;
+}
+
+.healthAssistant .button.danger {
+  background: #faeee7;
+  border-color: #eddbd0;
+  color: #9b5747;
+}
+
+.healthAssistant .button-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.healthAssistant .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: #397552;
+  background: none;
+  border: 0;
+}
+
+.healthAssistant .badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: #edf3e7;
+  color: #657d56;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.healthAssistant .badge.warn {
+  background: #f7f0dc;
+  color: #8d713b;
+}
+
+.healthAssistant .panel {
+  padding: 23px;
+  background: var(--panel);
+  border: 1px solid #edf1e5;
+  border-radius: 22px;
+  min-width: 0;
+  box-shadow: 0 8px 28px #405b3806;
+  margin-bottom: 20px;
+}
+
+.healthAssistant .panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.healthAssistant .panel-heading>div {
+  min-width: 0;
+}
+
+.healthAssistant .panel-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.healthAssistant .panel-heading small {
+  display: block;
+  margin-top: 5px;
+}
+
+.healthAssistant .health-grid {
+  display: grid;
+  grid-template-columns: minmax(0,1.12fr) minmax(0,1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.healthAssistant .health-grid>.panel {
+  height: 100%;
+  margin-bottom: 0;
+}
+
+.healthAssistant .health-grid {
+  margin-bottom: 20px;
+}
+
+.healthAssistant .stack {
+  display: grid;
+  gap: 20px;
+}
+
+.healthAssistant .stack>.panel {
+  margin-bottom: 0;
+}
+
+.healthAssistant .service-banner {
+  border: 1px solid #d8e5d0;
+  background: #f5faef;
+  border-radius: 13px;
+  padding: 11px 16px;
+  font-size: 12px;
+  color: #718564;
+  margin-bottom: 20px;
+}
+
+.healthAssistant .service-banner.warn {
+  border-color: #e8dfbd;
+  background: #fbf5df;
+  color: #8d713b;
+}
+
+.healthAssistant .welcome-card {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1.05fr);
+  border: 1px solid #fff9;
+  border-radius: 25px;
+  background: #ffffffdb;
+  box-shadow: 0 9px 30px #405b3806;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.healthAssistant .welcome-copy {
+  position: relative;
+  padding: 29px 29px 115px;
+  background: linear-gradient(125deg,#e5efd8ed,#f6faedb8);
+  min-height: 290px;
+}
+
+.healthAssistant .welcome-copy h2 {
+  font-size: 25px;
+  line-height: 1.5;
+  letter-spacing: -.03em;
+  max-width: 310px;
+  margin: 17px 0 10px;
+}
+
+.healthAssistant .welcome-copy p {
+  font-size: 12px;
+  color: #7b856b;
+  max-width: 235px;
+}
+
+.healthAssistant .welcome-copy>img {
+  position: absolute;
+  width: 105px;
+  height: 115px;
+  object-fit: contain;
+  right: 18px;
+  bottom: 13px;
+}
+
+.healthAssistant .welcome-card .composer {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 0;
+  padding: 25px;
+  background: #fffffff0;
+}
+
+.healthAssistant .welcome-card .composer textarea {
+  min-height: 140px;
+}
+
+.healthAssistant .care-list {
+  margin: 0 0 14px;
+  padding-left: 19px;
+  font-size: 13px;
+}
+
+.healthAssistant .care-list li {
+  margin: 10px 0;
+  line-height: 1.9;
+}
+
+.healthAssistant .summary-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.healthAssistant .summary-pair>div {
+  background: #eff5e9;
+  border-radius: 13px;
+  padding: 14px;
+}
+
+.healthAssistant .summary-pair small {
+  font-size: 11px;
+  display: block;
+}
+
+.healthAssistant .summary-pair strong {
+  display: block;
+  font-size: 25px;
+  color: #5f7d50;
+  font-weight: 500;
+  margin-top: 3px;
+}
+
+.healthAssistant .summary-pair strong span {
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.healthAssistant .panel>.muted {
+  font-size: 12px;
+  line-height: 1.85;
+  margin: 11px 0;
+}
+
+.healthAssistant .panel>.text-button {
+  margin-top: 10px;
+}
+
+.healthAssistant .page-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  color: #7c8a70;
+  font-size: 11px;
+  margin: 24px 0 0;
+  flex-wrap: wrap;
+  text-align: center;
+}
+
+.healthAssistant .empty {
+  text-align: center;
+  padding: 33px 15px;
+  color: #8a977c;
+}
+
+.healthAssistant .empty>svg {
+  color: #8aa17a;
+  margin-bottom: 12px;
+}
+
+.healthAssistant .empty h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+  color: #658056;
+}
+
+.healthAssistant .empty p {
+  font-size: 12px;
+  max-width: 490px;
+  margin: 0 auto;
+  line-height: 1.9;
+}
+
+.healthAssistant .facts {
+  margin: 10px 0 20px;
+  display: grid;
+  gap: 0;
+}
+
+.healthAssistant .facts>div {
+  display: flex;
+  justify-content: space-between;
+  gap: 17px;
+  border-bottom: 1px solid #e9eee2;
+  padding: 11px 0;
+  font-size: 12px;
+}
+
+.healthAssistant .facts>div:last-child {
+  border-bottom: 0;
+}
+
+.healthAssistant .facts dt {
+  color: #7a826e;
+  flex-shrink: 0;
+}
+
+.healthAssistant .facts dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.healthAssistant .facts .identifier {
+  font-size: 11px;
+}
+
+.healthAssistant .list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 15px 0;
+  border-bottom: 1px solid #e8eee0;
+}
+
+.healthAssistant .list-row:last-child {
+  border: 0;
+}
+
+.healthAssistant .list-row>div {
+  min-width: 0;
+}
+
+.healthAssistant .list-row h3 {
+  overflow-wrap: anywhere;
+}
+
+.healthAssistant .list-row small {
+  display: block;
+  margin-top: 5px;
+}
+
+.healthAssistant .list-row .badge {
+  margin-top: 7px;
+}
+
+.healthAssistant .medication-card {
+  border-bottom: 1px solid #e8eee0;
+  padding-bottom: 20px;
+  margin-bottom: 17px;
+}
+
+.healthAssistant .medication-card:last-child {
+  border: 0;
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+.healthAssistant .medication-card .list-row {
+  border: 0;
+  padding-top: 0;
+}
+
+.healthAssistant .episode-content {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 25px;
+  margin: 21px 0;
+}
+
+.healthAssistant .episode-content h3 {
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.healthAssistant .score-observations {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+
+.healthAssistant .score-observations>div {
+  min-width: 32px;
+  display: grid;
+  text-align: center;
+  gap: 4px;
+}
+
+.healthAssistant .score-track {
+  height: 80px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.healthAssistant .score-track i {
+  width: 12px;
+  background: #87ab79;
+  border-radius: 6px;
+  max-height: 73px;
+}
+
+.healthAssistant .score-track span {
+  color: #96a58a;
+}
+
+.healthAssistant .score-observations strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.healthAssistant .score-observations small {
+  font-size: 11px;
+}
+
+.healthAssistant .timeline {
+  border-left: 2px solid #dce8d1;
+  padding-left: 18px;
+  display: grid;
+  align-content: start;
+  gap: 19px;
+}
+
+.healthAssistant .timeline article p {
+  font-size: 12px;
+  margin: 5px 0;
+  white-space: pre-wrap;
+}
+
+.healthAssistant .timeline small {
+  font-size: 11px;
+}
+
+.healthAssistant .signal {
+  padding: 10px 0;
+}
+
+.healthAssistant .signal h3 {
+  margin: 13px 0 8px;
+}
+
+.healthAssistant .signal p, .healthAssistant .signal li {
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.healthAssistant .signal ul {
+  padding-left: 18px;
+}
+
+.healthAssistant .signal a {
+  font-size: 12px;
+}
+
+.healthAssistant .chat-panel {
+  height: calc(100dvh - 185px);
+  min-height: 590px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 24px;
+  border: 1px solid #fff;
+  background: #ffffffc9;
+  overflow: hidden;
+  box-shadow: 0 8px 30px #405b3808;
+}
+
+.healthAssistant .service-banner+.workspace-heading+.chat-panel {
+  height: calc(100dvh - 245px);
+}
+
+.healthAssistant .chat-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+  background: #fffffff0;
+  border-bottom: 1px solid #e4eadb;
+}
+
+.healthAssistant .chat-heading>img {
+  width: 39px;
+  height: 43px;
+  object-fit: contain;
+}
+
+.healthAssistant .chat-heading strong {
+  display: block;
+  font-size: 14px;
+}
+
+.healthAssistant .chat-heading small {
+  display: block;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.healthAssistant .chat-heading .badge {
+  margin-left: auto;
+}
+
+.healthAssistant .chat-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 25px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #c4d3bb transparent;
+}
+
+.healthAssistant .chat-welcome {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  text-align: center;
+  padding: 30px 14px;
+}
+
+.healthAssistant .chat-welcome>img {
+  width: 135px;
+  height: 145px;
+  object-fit: contain;
+}
+
+.healthAssistant .chat-welcome h2 {
+  font-size: 23px;
+  margin: 18px 0 11px;
+}
+
+.healthAssistant .chat-welcome p {
+  font-size: 13px;
+  color: #7c7869;
+  line-height: 2;
+}
+
+.healthAssistant .message {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  margin-bottom: 23px;
+}
+
+.healthAssistant .message-avatar {
+  width: 35px;
+  height: 39px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.healthAssistant .message-content {
+  min-width: 0;
+  max-width: min(82%,720px);
+}
+
+.healthAssistant .message-content>small {
+  font-size: 10px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 6px 3px;
+}
+
+.healthAssistant .message-bubble {
+  border-radius: 18px 18px 18px 6px;
+  background: #fffefa;
+  padding: 13px 16px;
+  box-shadow: 0 3px 15px #3b51330a;
+  font-size: 13px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+.healthAssistant .message-bubble p {
+  white-space: pre-wrap;
+}
+
+.healthAssistant .message.user {
+  justify-content: flex-end;
+  padding-left: 35px;
+}
+
+.healthAssistant .message.user .message-bubble {
+  background: #e3efdf;
+  border-radius: 18px 18px 6px 18px;
+  color: #486d41;
+}
+
+.healthAssistant .message.user small {
+  justify-content: flex-end;
+}
+
+.healthAssistant .message-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+
+.healthAssistant .message-images button {
+  padding: 0;
+  max-width: 220px;
+}
+
+.healthAssistant .message-images img {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 12px;
+}
+
+.healthAssistant .composer {
+  padding: 16px 18px 14px;
+  background: #ffffffed;
+  border-top: 1px solid #e4eadb;
+}
+
+.healthAssistant .composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 66px;
+  max-height: 180px;
+  font-size: 13px;
+  line-height: 1.8;
+  resize: vertical;
+}
+
+.healthAssistant .composer textarea::placeholder {
+  color: #9b9b8d;
+}
+
+.healthAssistant .composer-tools {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.healthAssistant .composer-tools>small {
+  font-size: 10px;
+  color: #8a9480;
+}
+
+.healthAssistant .composer-tools>.button {
+  margin-left: auto;
+  border-radius: 99px;
+  min-width: 84px;
+}
+
+.healthAssistant .image-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #71875e;
+  background: #edf3e7;
+  border-radius: 99px;
+  min-height: 39px;
+  padding: 7px 12px;
+  position: relative;
+  cursor: pointer;
+}
+
+.healthAssistant .image-picker input, .healthAssistant .file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.healthAssistant .image-picker:focus-within, .healthAssistant .file-button:focus-within {
+  outline: 3px solid #78a786;
+  outline-offset: 3px;
+}
+
+.healthAssistant .pending-images {
+  display: flex;
+  gap: 11px;
+  flex-wrap: wrap;
+}
+
+.healthAssistant .pending-images:not(:empty) {
+  margin-bottom: 13px;
+}
+
+.healthAssistant .pending-images>div {
+  width: 80px;
+  position: relative;
+}
+
+.healthAssistant .pending-images img {
+  display: block;
+  width: 80px;
+  height: 65px;
+  object-fit: cover;
+  border-radius: 11px;
+}
+
+.healthAssistant .pending-images button {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #dbe4d2;
+}
+
+.healthAssistant .pending-images small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.healthAssistant .action-card {
+  background: #f2f6eb;
+  border: 1px solid #e0e9d7;
+  border-radius: 15px;
+  padding: 15px;
+  margin-top: 12px;
+}
+
+.healthAssistant .action-card>small {
+  font-size: 10px;
+  color: #8a957d;
+}
+
+.healthAssistant .action-card h3 {
+  font-size: 13px;
+  margin: 4px 0 7px;
+}
+
+.healthAssistant .action-card .facts {
+  margin-bottom: 12px;
+}
+
+.healthAssistant .action-card .facts>div {
+  font-size: 11px;
+  padding: 7px 0;
+}
+
+.healthAssistant .action-card .button {
+  font-size: 11px;
+  padding: 7px 10px;
+  min-height: 35px;
+}
+
+.healthAssistant .sources {
+  font-size: 11px;
+  color: #728662;
+  margin: 10px 3px;
+}
+
+.healthAssistant .sources summary {
+  cursor: pointer;
+}
+
+.healthAssistant .sources a {
+  display: block;
+  padding: 8px 0;
+}
+
+.healthAssistant .sources small {
+  display: block;
+  font-size: 10px;
+  color: #87927a;
+}
+
+.healthAssistant dialog {
+  width: min(650px,calc(100vw - 28px));
+  max-height: 85dvh;
+  border: 1px solid #dce5d4;
+  border-radius: 22px;
+  background: #fbfdf7;
+  padding: 25px;
+  color: #40523b;
+  box-shadow: 0 25px 100px #1f3e3540;
+}
+
+.healthAssistant dialog::backdrop {
+  background: #263b3459;
+  backdrop-filter: blur(2px);
+}
+
+.healthAssistant .dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 17px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #dce5d4;
+}
+
+.healthAssistant .icon-button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #edf3e7;
+  flex-shrink: 0;
+}
+
+.healthAssistant .icon-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.healthAssistant .large-image {
+  display: block;
+  max-width: 100%;
+  max-height: 65dvh;
+  margin: auto;
+  object-fit: contain;
+}
+
+.healthAssistant .toast {
+  position: fixed;
+  z-index: 100;
+  bottom: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #355a43;
+  color: #fff;
+  max-width: min(600px,calc(100vw - 30px));
+  padding: 13px 19px;
+  border-radius: 13px;
+  box-shadow: 0 8px 35px #2b432d30;
+  font-size: 13px;
+}
+
+.healthAssistant .metrics {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 12px;
+  margin-bottom: 19px;
+}
+
+.healthAssistant .metrics.three {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+}
+
+.healthAssistant .metric {
+  padding: 17px;
+  background: #fcfdfb;
+  border: 1px solid #dfe7da;
+  border-radius: 17px;
+  min-width: 0;
+  text-align: left;
+}
+
+.healthAssistant .metric small {
+  display: block;
+  font-size: 11px;
+  color: #667463;
+}
+
+.healthAssistant .metric strong {
+  display: block;
+  font-size: 26px;
+  font-weight: 500;
+  color: #376242;
+  margin: 5px 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.healthAssistant .metric>span {
+  display: block;
+  font-size: 11px;
+  color: #7b8972;
+}
+
+.healthAssistant .metric.selected {
+  background: #e5efde;
+  border-color: #b5caa7;
+}
+
+.healthAssistant .metric.selectable:hover {
+  background: #edf4e7;
+}
+
+.healthAssistant .review-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  border-bottom: 1px solid #eaf0e3;
+  padding: 12px 0;
+  text-align: left;
+  font-size: 12px;
+  color: #506c47;
+}
+
+.healthAssistant .review-row:last-child {
+  border: 0;
+  padding-bottom: 0;
+}
+
+.healthAssistant .review-row>span:nth-child(2) {
+  flex: 1;
+}
+
+.healthAssistant .review-row strong {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.healthAssistant .soft-icon {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 31px;
+  background: #edf3e7;
+  border-radius: 9px;
+  color: #7e956b;
+  flex-shrink: 0;
+}
+
+.healthAssistant .status-stack {
+  display: flex;
+  height: 13px;
+  border-radius: 9px;
+  overflow: hidden;
+  gap: 2px;
+  background: #eef2e8;
+  margin: 24px 0;
+}
+
+.healthAssistant .status-stack span {
+  display: block;
+  height: 100%;
+}
+
+.healthAssistant .legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 19px;
+  font-size: 12px;
+  margin: 0 0 17px;
+}
+
+.healthAssistant .legend>div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.healthAssistant .legend dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.healthAssistant .legend dt {
+  color: #667463;
+}
+
+.healthAssistant .table-wrap {
+  overflow-x: auto;
+}
+
+.healthAssistant table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.healthAssistant th {
+  font-weight: 400;
+  color: #667463;
+  text-align: left;
+  font-size: 11px;
+  padding: 0 9px 12px;
+  white-space: nowrap;
+}
+
+.healthAssistant td {
+  padding: 12px 9px;
+  border-top: 1px solid #e8eee2;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.healthAssistant th:first-child, .healthAssistant td:first-child {
+  padding-left: 0;
+}
+
+.healthAssistant td:last-child {
+  text-align: right;
+  padding-right: 0;
+}
+
+.healthAssistant table .text-button {
+  white-space: nowrap;
+}
+
+.healthAssistant .analysis-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  background: #e7eee1;
+  border-radius: 12px;
+  padding: 5px;
+  margin-bottom: 18px;
+}
+
+.healthAssistant .analysis-tabs button {
+  flex: 1;
+  min-width: 90px;
+  white-space: nowrap;
+  border-radius: 9px;
+  padding: 9px 7px;
+  font-size: 12px;
+  color: #62725b;
+}
+
+.healthAssistant .analysis-tabs button[aria-pressed=true] {
+  background: #fcfdfb;
+  color: #355c3e;
+}
+
+.healthAssistant .coverage-fields {
+  display: grid;
+  gap: 17px;
+  margin: 25px 0;
+}
+
+.healthAssistant .coverage-row {
+  display: grid;
+  grid-template-columns: 105px minmax(0,1fr) 90px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.healthAssistant .coverage-row>div {
+  display: grid;
+  gap: 4px;
+  min-height: 14px;
+  background: #f0f4eb;
+  border-radius: 4px;
+}
+
+.healthAssistant .coverage-row i {
+  display: block;
+  min-height: 5px;
+  border-radius: 4px;
+  background: #b6cba5;
+}
+
+.healthAssistant .coverage-row i:last-child {
+  background: #53875c;
+}
+
+.healthAssistant .coverage-row small {
+  text-align: right;
+  font-size: 11px;
+}
+
+.healthAssistant .inline-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.healthAssistant .inline-form label {
+  flex: 1;
+  min-width: 180px;
+}
+
+.healthAssistant .search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.healthAssistant .search-row input {
+  width: 100%;
+  font-size: 12px;
+}
+
+.healthAssistant .search-row svg {
+  color: #819274;
+}
+
+.healthAssistant .source-box {
+  background: #edf4e5;
+  border-radius: 11px;
+  padding: 13px;
+  font-size: 12px;
+  line-height: 1.9;
+  margin: 10px 0;
+}
+
+.healthAssistant .record-timeline {
+  margin-top: 25px;
+  max-height: 52dvh;
+  overflow: auto;
+}
+
+.healthAssistant .paper-row {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  border-bottom: 1px solid #e7ede0;
+  padding: 17px 0;
+}
+
+.healthAssistant .paper-row:last-child {
+  border: 0;
+}
+
+.healthAssistant .paper-row>div {
+  flex: 1;
+  min-width: 0;
+}
+
+.healthAssistant .paper-row h3 {
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.healthAssistant .paper-row small {
+  font-size: 11px;
+}
+
+.healthAssistant .run-metrics {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.healthAssistant .run-metrics .metric {
+  background: #eff5e8;
+}
+
+.healthAssistant .run-metrics .metric strong {
+  font-size: 22px;
+}
+
+.healthAssistant .file-button {
+  position: relative;
+  cursor: pointer;
+}
+
+.healthAssistant .notice {
+  font-size: 12px;
+  padding: 13px;
+  background: #f8f0dd;
+  border-radius: 10px;
+  margin: 17px 0;
+  color: #8a6f37;
+}
+
+@media(max-width:1200px) {
+  .healthAssistant .welcome-card {
+    grid-template-columns: 1fr;
+  }
+  .healthAssistant .welcome-copy {
+    min-height: 220px;
+    padding: 25px 160px 25px 27px;
+  }
+  .healthAssistant .welcome-copy>img {
+    width: 110px;
+    height: 145px;
+    right: 23px;
+    bottom: 23px;
+  }
+  .healthAssistant .welcome-card .composer textarea {
+    min-height: 80px;
+  }
+  .healthAssistant .welcome-card .composer {
+    padding: 20px 25px;
+  }
+}
+
+@media(max-width:1000px) {
+  .healthAssistant .health-grid {
+    grid-template-columns: 1fr;
+  }
+  .healthAssistant .health-grid>.panel {
+    height: auto;
+  }
+  .healthAssistant .metrics {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+  .healthAssistant .metrics.three {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+  }
+  .healthAssistant .episode-content {
+    grid-template-columns: 1fr;
+  }
+  .healthAssistant .workspace-heading h1 {
+    font-size: 26px;
+  }
+  .healthAssistant .chat-panel {
+    min-height: 560px;
+  }
+}
+
+@media(max-width:720px) {
+  .healthAssistant .workspace-heading {
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .healthAssistant .workspace-heading h1 {
+    font-size: 25px;
+  }
+  .healthAssistant .workspace-heading>.button {
+    font-size: 11px;
+    padding: 8px 10px;
+  }
+  .healthAssistant .panel {
+    padding: 19px;
+    border-radius: 19px;
+  }
+  .healthAssistant .welcome-copy {
+    padding: 22px 110px 30px 22px;
+    min-height: 225px;
+  }
+  .healthAssistant .welcome-copy h2 {
+    font-size: 23px;
+    max-width: 270px;
+  }
+  .healthAssistant .welcome-copy p {
+    font-size: 12px;
+    max-width: 230px;
+  }
+  .healthAssistant .welcome-copy>img {
+    width: 82px;
+    height: 110px;
+    right: 13px;
+    bottom: 17px;
+  }
+  .healthAssistant .welcome-card .composer {
+    padding: 18px;
+  }
+  .healthAssistant .health-grid {
+    gap: 17px;
+  }
+  .healthAssistant .metrics.three {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+  }
+  .healthAssistant .metric {
+    padding: 14px;
+    border-radius: 14px;
+  }
+  .healthAssistant .metric strong {
+    font-size: 24px;
+  }
+  .healthAssistant .metric>span {
+    font-size: 10px;
+  }
+  .healthAssistant .metric small {
+    font-size: 10px;
+  }
+  .healthAssistant .table-wrap table {
+    min-width: 450px;
+  }
+  .healthAssistant .coverage-row {
+    grid-template-columns: 85px minmax(0,1fr) 80px;
+    gap: 8px;
+  }
+  .healthAssistant .chat-panel {
+    height: calc(100dvh - 270px);
+    min-height: 510px;
+    border-radius: 21px;
+  }
+  .healthAssistant .chat-body {
+    padding: 18px 12px;
+  }
+  .healthAssistant .message {
+    gap: 7px;
+  }
+  .healthAssistant .message-avatar {
+    width: 28px;
+    height: 31px;
+  }
+  .healthAssistant .message-content {
+    max-width: calc(100% - 35px);
+  }
+  .healthAssistant .message.user {
+    padding-left: 18px;
+  }
+  .healthAssistant .message.user .message-content {
+    max-width: 100%;
+  }
+  .healthAssistant .message-bubble {
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+  .healthAssistant .chat-heading {
+    padding: 13px 15px;
+    gap: 8px;
+  }
+  .healthAssistant .chat-heading>img {
+    width: 32px;
+    height: 36px;
+  }
+  .healthAssistant .chat-heading strong {
+    font-size: 13px;
+  }
+  .healthAssistant .chat-heading small {
+    font-size: 10px;
+  }
+  .healthAssistant .composer {
+    padding: 13px;
+  }
+  .healthAssistant .composer-tools {
+    gap: 7px;
+  }
+  .healthAssistant .composer-tools>small {
+    display: none;
+  }
+  .healthAssistant .composer textarea {
+    font-size: 16px;
+    min-height: 70px;
+  }
+  .healthAssistant .image-picker {
+    font-size: 11px;
+  }
+  .healthAssistant .composer-tools>.button {
+    min-width: 72px;
+  }
+  .healthAssistant .message-images button {
+    max-width: 170px;
+  }
+  .healthAssistant .action-card {
+    padding: 12px;
+  }
+  .healthAssistant .action-card .facts>div {
+    display: block;
+  }
+  .healthAssistant .action-card .facts dd {
+    text-align: left;
+    margin-top: 3px;
+  }
+  .healthAssistant .action-card .button {
+    min-height: 40px;
+  }
+  .healthAssistant .facts>div {
+    gap: 14px;
+  }
+  .healthAssistant dialog {
+    padding: 20px;
+    border-radius: 20px;
+  }
+  .healthAssistant .run-metrics {
+    grid-template-columns: 1fr;
+  }
+  .healthAssistant .run-metrics .metric {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .healthAssistant .run-metrics .metric strong {
+    margin: 0;
+  }
+  .healthAssistant .paper-row {
+    flex-wrap: wrap;
+  }
+  .healthAssistant .paper-row>.button {
+    margin-left: 41px;
+  }
+  .healthAssistant .page-footer {
+    font-size: 10px;
+  }
+  .healthAssistant .pending-images button {
+    width: 34px;
+    height: 34px;
+  }
+  .healthAssistant .sources summary {
+    min-height: 32px;
+  }
+  .healthAssistant .toast {
+    bottom: 16px;
+    font-size: 12px;
+  }
+  .healthAssistant .button-row .button {
+    min-height: 42px;
+  }
+}
+
+@media(max-width:390px) {
+  .healthAssistant .welcome-copy {
+    padding-right: 75px;
+  }
+  .healthAssistant .welcome-copy h2 {
+    font-size: 21px;
+  }
+  .healthAssistant .welcome-copy>img {
+    width: 65px;
+    height: 90px;
+    right: 7px;
+    bottom: 17px;
+  }
+  .healthAssistant .metrics.three {
+    grid-template-columns: 1fr;
+  }
+  .healthAssistant .metrics.three .metric {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .healthAssistant .metrics.three .metric>span {
+    display: none;
+  }
+  .healthAssistant .panel {
+    padding: 16px;
+  }
+  .healthAssistant .chat-heading .badge {
+    font-size: 10px;
+  }
+  .healthAssistant .coverage-row {
+    grid-template-columns: 75px minmax(0,1fr) 71px;
+    font-size: 11px;
+    gap: 6px;
+  }
+}
+
+@media(prefers-reduced-motion:reduce) {
+  .healthAssistant *, .healthAssistant *::before, .healthAssistant *::after {
+    animation: none!important;
+    transition: none!important;
+    scroll-behavior: auto!important;
+  }
+}
+
+.healthAssistant .daily-insight {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+
+.healthAssistant .daily-insight h3 {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.healthAssistant .observation-photo {
+  max-width: 100px;
+  max-height: 90px;
+  border-radius: 9px;
+  margin: 8px 8px 0 0;
+}
+
+.healthAssistant pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  background: #eef3e9;
+  padding: 13px;
+  border-radius: 10px;
+}
+
+.healthAssistant .run-feedback {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8f2e2;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.healthAssistant .run-feedback .button {
+  margin-top: 7px;
+}
+
+.healthAssistant .product-leaflet {
+  margin: 14px 0;
+  padding: 13px;
+  background: #eef4e8;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.healthAssistant .product-leaflet summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.healthAssistant .product-leaflet>.facts {
+  margin-top: 12px;
+}
+
+.healthAssistant .cohort-options {
+  margin: -4px 0 20px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.healthAssistant .cohort-options summary {
+  cursor: pointer;
+  color: #397552;
+  padding: 8px 0;
+}
+
+.healthAssistant .cohort-options input {
+  max-width: 200px;
+  width: 100%;
+  font-size: 12px;
+}
+
+.healthAssistant .cohort-options>.facts {
+  padding: 12px;
+  background: var(--panel);
+  border-radius: 12px;
+}
+
+.healthAssistant {
+  --accent: #287453;
+  --ink: #553e3a;
+  --muted: #6e695c;
+  --soft: #e3efdf;
+  --line: #dce5d4;
+  --panel: rgba(255, 255, 252, .95);
+  background: transparent;
+  min-width: 0;
+}
+
+.healthAssistant .healthNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.healthAssistant .healthNav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #cbdac5;
+  border-radius: 12px;
+  background: #ffffffd4;
+  color: #286147;
+}
+
+.healthAssistant .healthNav [aria-current="page"] {
+  color: white;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.healthAssistant dialog .button-row { justify-content: flex-end; margin-top: 16px; }
+.healthAssistant .chat-panel { height: min(720px, calc(100dvh - 220px)); }

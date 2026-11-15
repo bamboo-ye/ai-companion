@@ -1,4 +1,4 @@
-export type UserGuideTarget = "companion" | "life" | "work" | "memories" | "work-tools" | "task-history" | "documents" | "profile" | "knowledge";
+export type UserGuideTarget = "companion" | "life" | "work" | "health" | "memories" | "work-tools" | "task-history" | "documents" | "profile" | "knowledge";
 export type AdminGuideTarget = "observability" | "logs" | "incidents" | "performance" | "knowledge" | "configuration" | "studio" | "security";
 export type GuideScope = "user" | "admin";
 
@@ -17,7 +17,7 @@ export type GuideTopic<T extends string = string> = {
 
 export const userGuideTopics: readonly GuideTopic<UserGuideTarget>[] = [
   {
-    id: "welcome", group: "快速开始", title: "认识你的伴AI", path: "首页 → 三大模块",
+    id: "welcome", group: "快速开始", title: "认识你的伴AI", path: "首页 → 选择功能",
     summary: "从陪你聊天，到安排日常、处理工作，按这三步开始使用。",
     steps: ["选择一个模块：情感陪伴用于倾诉和交流，生活助手用于记账、提醒和计划，工作伙伴用于资料与办公任务。", "点击「添加角色」，设置名字、关系、性格和说话方式；也可以全部留空，使用当前模块的默认伙伴。", "在角色卡片点击「开始会话」，发出第一条消息。各模块的功能入口也可以直接使用。"],
     tip: "本指南可搜索功能、逐节阅读，也可跳到对应页面。阅读进度仅保存在当前浏览器，普通用户端与后台分别记录。",
@@ -82,6 +82,12 @@ export const userGuideTopics: readonly GuideTopic<UserGuideTarget>[] = [
     summary: "把日常安排变成可跟踪的提醒和待办。",
     steps: ["切换到「提醒事项」，输入安排并点击「解析」。核对标题、日期、时间和时区，补齐提示的信息后「确认创建」。", "只提供日期也可以创建提醒，此时显示「时间待安排」。完成事情后点击该条提醒的「完成」。", "切换到「今日计划」手动加入事项；今天到期及已经过期的未完成提醒也会出现在计划中。点击「完成」更新进度。"],
     tip: "查看提醒旁的系统同步状态。网页中的持久化提醒不代表手机系统通知已经授权或同步成功。", example: "明天提醒我交报告", target: "life", action: "打开生活助手",
+  },
+  {
+    id: "health", group: "健康助手", title: "记录不适、病程与实际用药", path: "侧栏 → 健康助手",
+    summary: "通过图文对话记录变化，核对后保存，并可随时查看、导出或清除记录。",
+    steps: ["打开「健康助手」，进入「健康对话」，填写实际发生的情况，必要时附上照片。", "核对健康伙伴整理的草稿，确认后在「我的病程」或「我的用药」查看。", "在「我的与隐私」导出个人记录，或在确认后清除健康记录。"],
+    tip: "该功能需要部署者启用。健康助手用于日常记录和护理参考，不提供诊断或处方。", target: "health", action: "打开健康助手",
   },
   {
     id: "work", group: "工作与文件", title: "工作聊天、附件与邮件", path: "工作伙伴 → 角色会话",

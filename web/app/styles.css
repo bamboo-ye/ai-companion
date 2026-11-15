@@ -426,6 +426,12 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
   background-position: center;
   background-size: cover;
 }
+.appFrame.module-health {
+  --module-accent: #287453;
+  --module-soft: #e3efdf;
+  background: #e4f1e6 url("/health-assistant/health-background-green.png") center / cover fixed;
+}
+.module-health .appWorkspace { width: min(1280px, 100%); }
 
 .appSidebar {
   position: sticky;
@@ -468,6 +474,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
 .moduleNavLogo-companion { background-image: url("/images/module-companion.png"); }
 .moduleNavLogo-life { background-image: url("/images/module-life.png"); }
 .moduleNavLogo-work { background-image: url("/images/module-work.png"); }
+.moduleNavLogo-health { background-image: url("/health-assistant/health-mascot-green.png"); }
 .appSidebar nav > button > .moduleNavLogo {
   width: 38px;
   height: 38px;
@@ -606,7 +613,7 @@ h1 { margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); line-height: 1.1; }
   .appFrame { display: block; }
   .appSidebar { position: static; height: auto; padding: 16px; border-right: 0; border-bottom: 1px solid rgba(119, 95, 105, .11); }
   .sidebarBrand { padding: 0 4px 14px; }
-  .appSidebar nav { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 0; }
+  .appSidebar nav { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 0; }
   .appSidebar nav > button { grid-template-columns: 34px 1fr; padding: 8px; }
   .appSidebar nav > button > span { width: 32px; height: 32px; }
   .appSidebar nav > button small { display: none; }

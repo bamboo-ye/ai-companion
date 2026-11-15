@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import { ChatPanel } from "./chat-panel";
 import { DocumentPanel } from "./document-panel";
@@ -14,9 +15,12 @@ import { userGuideTopics, type UserGuideTarget } from "./onboarding-content";
 import { ProfilePanel, type UserProfile } from "./profile-panel";
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+const HealthAssistant = dynamic(() => import("./health-assistant"), {
+  loading: () => <p className="sessionLoader" role="status">正在打开健康助手…</p>,
+});
 
 type ModuleKey = "companion" | "life" | "work";
-type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories" | "profile" | "knowledge";
+type Screen = "dashboard" | "chat" | "work-tools" | "task-history" | "documents" | "memories" | "profile" | "knowledge" | "health";
 type AuthMode = "login" | "register";
 
 type Character = {
@@ -345,7 +349,18 @@ export function CompanionStart() {
     setMessage("");
   }
 
+  function openHealthAssistant() {
+    setScreen("health");
+    setActiveCharacter(null);
+    setShowCharacterForm(false);
+    setMessage("");
+  }
+
   function navigateFromGuide(target: UserGuideTarget) {
+    if (target === "health") {
+      openHealthAssistant();
+      return;
+    }
     if (target === "companion" || target === "life" || target === "work") {
       chooseModule(target);
       return;
@@ -453,15 +468,18 @@ export function CompanionStart() {
 
   const currentModule = modules[activeModule];
   return (
-    <main className={`appFrame module-${activeModule}`}>
+    <main className={`appFrame module-${screen === "health" ? "health" : activeModule}`}>
       <aside className="appSidebar">
         <div className="sidebarBrand"><Image className="brandLogo" src="/icons/logo.png" width={46} height={46} priority alt="" /><div><strong>伴AI</strong><small>你的智能伙伴</small></div></div>
         <nav aria-label="主页模块">
           {(Object.keys(modules) as ModuleKey[]).map((key) => (
-            <button className={activeModule === key && screen === "dashboard" ? "active" : ""} key={key} type="button" onClick={() => chooseModule(key)}>
+            <button className={activeModule === key && screen === "dashboard" ? "active" : ""} aria-label={modules[key].title} key={key} type="button" onClick={() => chooseModule(key)}>
               <span className={`moduleNavLogo moduleNavLogo-${key}`} aria-hidden="true" /><div><strong>{modules[key].title}</strong><small>{modules[key].description.split("，")[0]}</small></div>
             </button>
           ))}
+          <button className={screen === "health" ? "active" : ""} aria-label="健康助手" aria-current={screen === "health" ? "page" : undefined} type="button" onClick={openHealthAssistant}>
+            <span className="moduleNavLogo moduleNavLogo-health" aria-hidden="true" /><div><strong>健康助手</strong><small>健康对话与日常记录</small></div>
+          </button>
         </nav>
         <div className="sidebarFooter">
           <button className="sidebarLogout" type="button" onClick={() => { setKnowledgePageID(""); setScreen("knowledge"); }}>知识中心</button>
@@ -474,7 +492,7 @@ export function CompanionStart() {
       </aside>
 
       <section className="appWorkspace">
-        <header className={screen === "dashboard" ? "workspaceHeader" : "workspaceUtilityHeader"}>
+        {screen !== "health" && <header className={screen === "dashboard" ? "workspaceHeader" : "workspaceUtilityHeader"}>
           {screen === "dashboard" && <div><p className="eyebrow">{activeModule === "companion" ? "COMPANION" : activeModule === "life" ? "LIFE" : "WORK"}</p><h1>{currentModule.title}</h1><p>{currentModule.description}</p></div>}
           <div className="workspaceHeaderActions">
             <OnboardingGuide
@@ -488,7 +506,8 @@ export function CompanionStart() {
             />
             {screen === "dashboard" && <button className="primaryAction" type="button" onClick={() => setShowCharacterForm(true)}>＋ 添加角色</button>}
           </div>
-        </header>
+        </header>}
+        {screen === "health" && <HealthAssistant key={currentUser?.id} token={token} />}
         {screen === "dashboard" && (
           <>
             <div className="moduleTools">
