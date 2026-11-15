@@ -1,12 +1,12 @@
 # 新手上手指南
 
-核对日期：2026-10-14，代码基线 `42694a4`。本文按当前仓库的 Web 页面、配置和启动脚本编写，包含知识中心、PPT 制作工作台、PDF 翻译、资料核验和记忆澄清。功能实现与部署验收的边界见[项目实现情况](PROJECT_COMPLETION.md)。
+2026-11-15 按仓库版本 `468c93e` 核对了健康助手的启用条件、操作入口和数据管理。本文还覆盖知识中心、PPT 制作工作台、PDF 翻译、资料核验和记忆澄清。完成情况与验证记录见[项目实现情况](PROJECT_COMPLETION.md)。
 
 ## 1. 先选使用方式
 
 - **已有可访问的网站**：直接从第 3 节注册和体验，无需安装开发工具。
-- **在自己的电脑启动完整应用**：使用第 2 节 Docker 路径，宿主机只需 Git 和 Docker Desktop / Compose v2。
-- **修改代码并本地调试**：使用第 5 节，需要 Go 1.26.8+、Python 3.12+、Node.js 24+ 和 pnpm 11.7.0。Android/iOS 工具链不是 Web 开发的前提。
+- **在自己的电脑启动应用**：使用第 2 节 Docker 路径，准备 Git、Make 和 Docker Desktop / Compose v2。
+- **修改代码并本地调试**：使用第 5 节，需要 Go 1.26.11+、Python 3.12+、Node.js 24+ 和 pnpm 11.7.0。
 
 默认配置使用 `MODEL_PROVIDER=development`，返回固定模拟回复，可验证注册、页面和任务链路；不能据此评价真实问答、自然语言工具选择或内容生成质量。真实模型接入见[模型配置](OPENROUTER_MODELS.md)。
 
@@ -33,6 +33,14 @@ make docker-ps
 首次构建需要下载镜像和依赖。用 `make docker-logs` 查看进度；需要退出日志跟随时按 Ctrl+C。`make docker-down` 停止应用并保留数据卷，再次 `make docker-up` 可启动。不要为解决普通启动问题删除数据卷。
 
 默认端口绑定本机地址，示例密钥仅用于本地开发。更换访问域名时同步配置 `WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE_URL`，并重建 Web；管理员 Passkey 绑定域名，不能随意在 `localhost` 与 IP 地址之间切换。
+
+### 启用可选的健康助手
+
+1. 运行 `make health-init`，为私有 `.env` 补齐健康服务凭据。
+2. 按[健康助手部署说明](HEALTH_ASSISTANT.md#启用)配置独立健康模型。图文对话需要支持图片输入、流式返回和 JSON 输出的模型。
+3. 运行 `make docker-up-health`，登录后从侧栏打开「健康助手」。健康服务与基础应用共同启动，状态检查和停机沿用这两份 Compose 文件。
+
+普通 `make docker-up` 启动基础应用，健康入口会提示尚未启用。启用健康服务后，即使模型尚未接入，也可以查看、导出和清除已有记录。
 
 ## 3. 完成第一次体验
 
@@ -61,6 +69,13 @@ make docker-ps
 4. 「今日计划」包含手动事项、今天到期和已逾期的未完成提醒。完成事项后更新状态。
 
 应用内提醒记录不等于手机系统通知已授权或同步成功。需要导出账本时点击「导出 Excel」，等待后台生成文件。
+
+### 体验健康助手
+
+1. 启用服务后，从侧栏进入「健康助手」，使用当前伴AI 账户打开独立健康空间。可在「每日健康」直接输入，也可以切换到「健康对话」。
+2. 描述实际情况，例如「昨晚睡前觉得喉咙干，今天早上好些了，帮我记下来」。按需「添加图片」，每条消息最多 4 张 JPEG、PNG 或 WebP，单张最大 8 MiB。发送前核对要提交的内容，健康模型会处理本次文字、图片及相关记录。
+3. 核对生成的草稿，点「确认保存」后到「我的病程」或「我的用药」查看结果。健康随访在「每日健康」或「我的与隐私」查看。在「历史线索」可回顾已有记录和参考来源。
+4. 在「我的与隐私」点「导出我的记录」下载 `health-records.json`。需要清除时，核对弹窗列出的范围，再决定是否「确认清除」。详见[记录与隐私说明](HEALTH_ASSISTANT.md#导出与清除)。
 
 ### 生成第一份办公文件
 
@@ -187,6 +202,8 @@ docker compose --env-file .env -f deploy/compose/compose.yml exec api \
 | 网页打不开或 API 请求失败 | `make docker-ps` → API `/readyz` → `make docker-logs`；核对端口、Web API 地址和 `WEB_ORIGIN` |
 | 回复固定、不会按要求调用工具 | 查看是否仍为 `MODEL_PROVIDER=development`；按模型文档配置并重启相关服务 |
 | 聊天持续等待 | 检查 Agent Worker `/readyz`、检查点初始化、网关地址及密钥；宿主机不要使用容器主机名 `api` |
+| 健康助手提示尚未启用 | 已登录时仍看到此提示，请部署维护人员检查 `compose.health.yml` 和主 API 的健康服务配置 |
+| 健康页面能查看记录，对话没有回复 | 核对页面模型状态及 `health-agent`、`health-worker`，检查独立健康模型配置。配置恢复后可从原消息重试 |
 | 文档或 Skill 一直排队 | 确认通用 Worker 正在运行，检查 Python 虚拟环境、任务错误及文件目录；不要重复上传同一资料来催进度 |
 | 文件任务没有执行 | 先查看「历史任务」是否待确认，再查看错误、额度和对应 Skill 启停状态 |
 | 审校未通过或研究结论有分歧 | 核对来源、范围和时间；补充证据或拆小任务，再重新发起。审校受模型调用和成本预算约束 |
@@ -215,4 +232,4 @@ pnpm check
 pnpm test
 ```
 
-完整后端门禁是 `make release-check`；Web 还需单独运行 `pnpm build`。Python 测试使用 `make test-python`（pytest），可覆盖函数式并行/仲裁测试与已有 unittest 用例；单用 unittest discovery 会漏掉新增用例。`make eval-agent-arbitration` 单独输出仲裁验收报告。`make check` 会执行格式化、Go/Python 测试、Go 构建及 Compose 配置校验，不包含 Web 检查。以上本地检查不代表已完成真实模型、邮件投递、生产迁移或外部上线验收。
+主应用后端门禁使用 `make release-check`，Web 构建使用 `pnpm build`，独立健康后端使用 `make test-health`。Python 测试使用 `make test-python`（pytest），覆盖函数式并行/仲裁测试与已有 unittest 用例。`make eval-agent-arbitration` 单独输出仲裁验收报告。`make check` 会执行格式化、Go/Python 测试、Go 构建及基础 Compose 配置校验。真实模型和生产验收按对应部署单独记录。

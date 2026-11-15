@@ -2,7 +2,7 @@
 
 [返回产品首页](../README.zh-CN.md) · [English engineering guide](ENGINEERING.md) · [新手上手](GETTING_STARTED.md)
 
-本文保留首页背后的实现细节、工程难点、架构、默认参数、开发与验证命令。首次体验建议先按新手指南启动；以下命令均从仓库根目录执行。默认值与代码核对日期：2026-10-01。
+本文保留首页背后的实现细节、工程难点、架构、默认参数、开发与验证命令。首次体验建议先按新手指南启动。以下命令均从仓库根目录执行，主体设计核对于 2026-10-01。健康服务与工具链于 2026-11-15 按 `468c93e` 补充。
 
 ## 技术亮点
 
@@ -58,6 +58,8 @@ Agent Worker 使用 LangGraph 与 PostgreSQL Checkpointer 持久化执行状态�
 ### 5. 模块化单体，兼顾交付效率与领域边界
 
 后端采用 Go 模块化单体，按身份、会话、记忆、文档、技能、账目、计费、安全、Agent、控制面等领域拆分包，并将 API 与异步 Worker 分为独立进程。它保留了单体事务和本地开发的简洁性，也通过清晰的接口、事件契约和数据边界为后续服务拆分留出空间。
+
+可选健康助手由独立的健康 API、Worker、Agent 和数据库提供。主 API 验证伴AI 会话后，通过私有网关传递账户 ID 与时区。健康对话生成待确认草稿，Go 后端在写入时核对归属及相关记录版本。健康服务的模型、迁移、附件和备份由健康 Compose 配置管理。操作和部署入口见[健康助手](HEALTH_ASSISTANT.md)。
 
 ### 6. 统一上下文协议与可纠正的长期记忆
 
@@ -288,7 +290,7 @@ flowchart LR
 
 ### 环境要求
 
-- Go 1.26.8+
+- Go 1.26.11+
 - Python 3.12+
 - Node.js 24+ 与 pnpm 11+
 - Docker Desktop 与 Docker Compose v2
@@ -420,6 +422,7 @@ cmd/worker/              通用异步 Worker
 cmd/agent-worker/        Agent 调度与执行进程
 internal/                后端领域模块与平台基础设施
 workers/python/          隔离的文档、数据与媒体算法 Worker
+services/healthy_care/   可选的健康 API、Worker、Agent 与独立数据库迁移
 web/                     Next.js Web 客户端
 mobile/android/          Kotlin + Jetpack Compose 客户端
 mobile/ios/              SwiftUI 客户端与可测试核心

@@ -492,7 +492,7 @@ export function CompanionStart() {
       </aside>
 
       <section className="appWorkspace">
-        {screen !== "health" && <header className={screen === "dashboard" ? "workspaceHeader" : "workspaceUtilityHeader"}>
+        <header className={screen === "dashboard" ? "workspaceHeader" : "workspaceUtilityHeader"}>
           {screen === "dashboard" && <div><p className="eyebrow">{activeModule === "companion" ? "COMPANION" : activeModule === "life" ? "LIFE" : "WORK"}</p><h1>{currentModule.title}</h1><p>{currentModule.description}</p></div>}
           <div className="workspaceHeaderActions">
             <OnboardingGuide
@@ -506,7 +506,7 @@ export function CompanionStart() {
             />
             {screen === "dashboard" && <button className="primaryAction" type="button" onClick={() => setShowCharacterForm(true)}>＋ 添加角色</button>}
           </div>
-        </header>}
+        </header>
         {screen === "health" && <HealthAssistant key={currentUser?.id} token={token} />}
         {screen === "dashboard" && (
           <>

@@ -4,7 +4,7 @@
 
 <h1 align="center">伴AI · AI Companion</h1>
 <p align="center"><strong>陪你聊，帮你记，和你一起把事情做好。</strong></p>
-<p align="center">可自部署的个人 AI 工作台 · 情感陪伴 · 生活管理 · 工作提效</p>
+<p align="center">可自部署的个人 AI 工作台 · 情感陪伴 · 生活管理 · 健康记录 · 工作提效</p>
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> · <a href="README.md">English</a><br>
@@ -18,7 +18,7 @@
   <a href="#快速开始"><img src="https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white" alt="Docker 自部署"></a>
 </p>
 
-**把持续对话、日常记录和办公成果放在同一个工作台。** 伴AI 通过角色、可纠正记忆、个人知识与受控工具，让你从“说出需求”走到“查看结果”：接着上次的话题聊，核对刚记下的账目，或继续修改上一版演示文稿。
+**把持续对话、日常记录和办公成果放在同一个工作台。** 在伴AI，你可以接着上次的话题聊，核对刚记下的账目和健康观察，也可以用自己的资料制作演示文稿，在同一会话里继续修改。
 
 ![伴AI 情感陪伴主页：角色会话与长期记忆入口](docs/images/readme/companion-dashboard.jpg)
 
@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | **情感陪伴** | 自定义角色、延续多轮对话，查看与纠正长期记忆 | 角色会话、记忆管理 |
 | **生活助手** | 用自然语言记账、创建提醒、整理今日计划，导出 Excel | 账本、提醒事项、今日计划 |
-| **健康助手** | 用图文记录健康变化，核对并保存病程、实际用药和随访提醒 | 每日健康、健康对话、我的与隐私 |
+| **健康助手（可选）** | 用图文记录健康变化，确认病程、实际用药与随访提醒，导出或清除个人记录 | 每日健康、我的病程、我的用药、我的与隐私 |
 | **工作伙伴** | 研读多份附件，按需审校，制作与续改 PPT、翻译 PDF、编辑 DOCX 副本、分析 CSV/XLSX | 工作聊天、PPT 制作工作台、任务文件 |
 | **知识中心** | 统一搜索资料、Wiki、个人记忆和产品指南，阅读原文、追踪来源、提交反馈 | 统一搜索、资料与记忆管理 |
 | **管理后台** | 配置模型、Agent、权限和用户额度，查看运行与知识加工状态 | 独立 Passkey 管理控制台 |
@@ -52,9 +52,18 @@ make docker-ps
 
 打开 **<http://localhost:3000>**，注册并登录，添加角色后开始会话。首次构建会下载镜像和依赖；Compose 自动应用业务迁移并初始化 Agent 检查点。
 
-启用健康助手：运行 `make health-init`，按[部署说明](docs/HEALTH_ASSISTANT.md)配置健康模型，然后运行 `make docker-up-health`。登录后从侧栏进入「健康助手」，无需另外注册。
-
 > 默认 `MODEL_PROVIDER=development` 无需密钥，只返回固定模拟回复，用于检查页面与任务链路。体验真实问答、工具选择和内容生成前，请按[模型配置指南](docs/OPENROUTER_MODELS.md)设置服务端提供方、密钥和模型名称，再重新构建启动。自部署应用不等于离线模型推理。
+
+<details>
+<summary>启用可选的健康助手</summary>
+
+1. 运行 `make health-init`，为私有 `.env` 补充健康服务所需的密码和令牌。
+2. 按部署文档配置独立的健康模型。图文对话要求模型支持图片输入、流式返回和 JSON 输出。
+3. 运行 `make docker-up-health`，用伴AI 账户登录，在侧栏打开「健康助手」。
+
+普通 `make docker-up` 启动基础应用。健康服务启用后，即使健康模型暂未配置，仍可查看、导出和清除已有健康记录。外部健康模型会接收本次回复所需的消息、照片及相关健康记录。部署前可查阅模型提供方的数据处理政策和[健康助手部署说明](docs/HEALTH_ASSISTANT.md)。
+
+</details>
 
 接入模型后，可以从这些请求开始；它们是输入示例，不是已经执行的操作：
 
@@ -63,6 +72,7 @@ make docker-ps
 | 延续对话 | “明天要做汇报，我有点紧张。先陪我理清最担心的事。” | 补充原因，观察回复是否承接语境 |
 | 记录消费 | “今天午餐花了 18 元，帮我记一笔餐饮支出。” | 核对并确认，再到「账本」查看 |
 | 创建提醒 | “明天下午三点提醒我准备项目演示材料。” | 核对日期、时区，再到「提醒事项」查看 |
+| 记录健康变化 | 在健康对话中输入“昨晚睡前觉得喉咙干，今天早上好些了，帮我记下来。” | 核对待确认草稿，保存后到「我的病程」查看 |
 | 制作演示 | 提供资料后：“做成 8 页培训演示，使用图文和表格，保留资料要点。” | 检查页序、来源和导出文件 |
 | 比较资料 | 上传 2–3 份资料：“比较成本、风险与实施条件，标明来源，仔细核对数字。” | 核对引用、比较口径与未解决分歧 |
 
@@ -73,7 +83,7 @@ make docker-ps
 
 - `make docker-logs` 查看日志；`make docker-down` 停止服务并保留数据卷。
 - API 检查：<http://localhost:8080/healthz>、<http://localhost:8080/readyz>。
-- 三个聊天模块默认依赖 Agent Worker；仅启动 API 不足以完成全部体验。
+- 情感陪伴、生活助手和工作伙伴默认依赖主应用的 Agent Worker。健康对话使用独立的健康 Agent 和 Worker。
 - 管理入口：<http://localhost:3000/admin>，需[管理员邀请与 Passkey](docs/ADMIN_PASSKEY_LOGIN.md)，不是普通注册账号。
 - 对外开放前替换所有 `change-*` 开发密钥，配置域名与凭据；真实密钥不要提交到 Git。
 - 安装排查见[上手指南](docs/GETTING_STARTED.md)，本机开发见[工程指南](docs/ENGINEERING.md#quick-start)。
@@ -82,7 +92,7 @@ make docker-ps
 
 ## 系统实现效果
 
-以下为脱敏演示账号的真实本地界面。工作助手截图采集于 **2026-09-29 至 2026-10-01**；历史验收不代表当前账户已执行任务，也不证明远程服务器的部署版本。
+截图来自脱敏演示账号的本地环境。工作助手截图采集于 **2026-09-29 至 2026-10-01**。
 
 ### 工作伙伴：从资料到可继续修改的演示成果
 
@@ -190,6 +200,16 @@ make docker-ps
 
 </details>
 
+### 健康助手：从图文对话到个人记录
+
+| 操作 | 在哪里查看结果 |
+| --- | --- |
+| 在「健康对话」描述实际发生的情况，可附照片。核对草稿后选择「确认保存」 | 在「我的病程」查看已保存的观察与变化时间线 |
+| 核对当天的实际用药或随访提醒 | 在「我的用药」查看用药记录，在「每日健康」查看跟进事项 |
+| 导出个人记录，或确认清除健康空间 | 在「我的与隐私」操作。附件与模型检查点由后台清理，备份按配置的保留期清理 |
+
+健康助手用于个人记录和护理参考。使用入口、模型配置和数据处理说明见[健康助手文档](docs/HEALTH_ASSISTANT.md)。
+
 ### 情感陪伴：接着上次的话题聊
 
 用户表达汇报前的紧张，再补充“内容太多、担心超时”。角色承接语境，给出删减内容、分段计时与彩排建议；长期偏好可在记忆管理中查看和纠正。
@@ -203,7 +223,7 @@ make docker-ps
 
 ## 技术亮点
 
-面向 **上下文工程、Agentic RAG、多 Agent 协作与可编辑内容生成**，重点解决长资料覆盖、并行恢复、来源可信和成果续改。实现基线：`42694a4`，核对日期：**2026-10-14**。
+面向 **上下文工程、Agentic RAG、多 Agent 协作与可编辑内容生成**，重点解决长资料覆盖、并行恢复、来源追溯和成果续改。依据 **2026-11-15** 的仓库版本 `468c93e` 核对。
 
 | 关键设计 | 解决什么难点 | 深入了解 |
 | --- | --- | --- |
@@ -214,6 +234,7 @@ make docker-ps
 | **证据仲裁与可选辩论** | 核对候选归属、来源版本与原文引句；隔离首轮判断，只读补证，证据不足保留分歧，未解决研究争议停止文件生成 | [仲裁协议](docs/ARBITRATION.md) |
 | **可编辑演示设计稿** | `presentation-design-v2` 分开管理事实与视觉设计；稳定页面/内容 ID 保持整稿续改，预览与导出共用几何，并检查最终 PPTX 渲染 | [PPT 制作工作台](docs/PRESENTATION_STUDIO.md) |
 | **可恢复、可授权的执行** | Go Tool Gateway 控制业务写入；Run、幂等、租约与版本隔离处理取消和进程中断；管理员 Passkey 与分层额度管理控制权限和成本 | [工程设计](docs/ENGINEERING.md) · [额度管理](docs/ADMIN_QUOTAS.md) |
+| **健康数据隔离与确认写入** | 主 API 验证会话后，将账户 ID 与时区交给私有健康服务。健康 Agent 提议草稿，用户确认后由 Go 后端校验归属与相关记录版本，再在事务中写入 | [身份转发测试](internal/httpserver/health_assistant_test.go) · [确认逻辑](services/healthy_care/backend/internal/app/actions.go) |
 | **文档即产品知识** | 白名单文档、SHA-256、`go:embed` 与本地 BM25，让说明随应用发布；来源一致性和帮助召回测试防止文档更新而对话仍引用旧用法 | [知识包维护](docs/PRODUCT_KNOWLEDGE.md) |
 
 <details>
@@ -239,11 +260,14 @@ make docker-ps
 
 | 层级 | 技术 |
 | --- | --- |
-| Web | Next.js 16 · React 19 · TypeScript |
-| API 与业务 | Go 1.26 · OpenAPI · PostgreSQL 18 |
+| Web | Next.js 16.4.1 · React 19 · TypeScript |
+| API 与业务 | Go 1.26.11 · OpenAPI · PostgreSQL 18 |
 | Agent 与处理 | Python · LangGraph · PostgreSQL Checkpointer · 版本化 Skill |
 | 检索与文件 | Qdrant · Redis · MinIO · Source IR · Wiki · 产品知识 BM25 · python-pptx / LibreOffice |
 | 部署与观测 | Docker Compose · Caddy · OpenTelemetry · Prometheus · Loki / Alloy · 可选 Langfuse |
+| 可选健康服务 | 独立 Go API 与 Worker · Python / LangGraph · PostgreSQL、Redis 与独立附件和备份卷 |
+
+健康服务复用伴AI 登录，首次打开时创建独立健康空间。健康服务通过 Compose 内部网络接收请求，数据库、附件和备份使用独立卷。普通会话与长期记忆保留在主应用。原有 `healthy_care` 账户与记录仍由原部署管理。[部署说明](docs/HEALTH_ASSISTANT.md)
 
 [系统架构与处理流水线](docs/TECHNICAL_GUIDE.zh-CN.md#系统架构) · [目录结构](docs/TECHNICAL_GUIDE.zh-CN.md#目录结构) · [并行与分片配置](docs/TECHNICAL_GUIDE.zh-CN.md#关键并行与分片参数)
 
@@ -252,6 +276,7 @@ make docker-ps
 | 我要做什么 | 推荐文档 |
 | --- | --- |
 | 安装、首次使用与排查 | [上手指南](docs/GETTING_STARTED.md) · [模型配置](docs/OPENROUTER_MODELS.md) |
+| 使用健康助手、配置模型与管理健康记录 | [健康助手](docs/HEALTH_ASSISTANT.md) · [服务说明](services/healthy_care/README.md) |
 | 制作演示、恢复设计稿 | [PPT 制作工作台](docs/PRESENTATION_STUDIO.md) |
 | 搜索资料、阅读原文与反馈 | [知识中心](docs/KNOWLEDGE_CENTER.md) · [上下文与 Wiki](docs/CONTEXT_MANAGEMENT.md) |
 | 了解分片、并行与证据核验 | [中文技术指南](docs/TECHNICAL_GUIDE.zh-CN.md) · [English engineering guide](docs/ENGINEERING.md) · [证据仲裁](docs/ARBITRATION.md) |
@@ -265,10 +290,13 @@ make docker-ps
 
 从旧功能版本升级统一知识，需应用 PostgreSQL `000046` / MySQL `000035` 及此前待执行迁移；切换 Agent 图版本前处理未完成运行。仅同步文档和知识包不增加迁移，但需重建 API、Worker、Agent Worker 与 Web 才会在运行中的应用生效。PPT 的 PDF 导出另需 LibreOffice 与中文字体。详见[知识包维护](docs/PRODUCT_KNOWLEDGE.md)与专题部署说明。
 
+已有 Compose 部署启用健康助手时，沿用原部署配置并追加 `deploy/compose/compose.health.yml`。健康数据库由独立迁移服务初始化。[健康助手部署说明](docs/HEALTH_ASSISTANT.md#启用)
+
 </details>
 
 ## 最近更新
 
+- **2026-11-15** · 接入可选健康助手，提供图文记录、确认保存、病程回顾和隐私管理。同步升级 Go 工具链与 Web 依赖，并为独立健康后端加入 Go 依赖安全检查。[功能提交](https://github.com/bamboo-ye/ai-companion/commit/f1d55ad) · [发布检查修复](https://github.com/bamboo-ye/ai-companion/commit/468c93e)
 - **2026-10-13** · 补齐知识中心、PPT 续改、资料核验与后台质量的操作指南，完善页面引导及产品帮助检索。基于已有能力改进使用路径。[提交](https://github.com/bamboo-ye/ai-companion/commit/42694a4bc551c6e6cf35d1c570121c33d8808530)
 - **2026-10-01** · 集成 PPT 制作工作台、统一知识工程与默认关闭的有界证据核验。[实现记录](docs/PROJECT_COMPLETION.md)
 

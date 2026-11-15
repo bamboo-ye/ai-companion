@@ -29,6 +29,8 @@ test("guide search matches examples, prerequisites, routes and mixed case keywor
   assert.ok(searchGuideTopics(userGuideTopics, "  pptx   大纲 ").some((topic) => topic.id === "presentations"));
   assert.ok(searchGuideTopics(userGuideTopics, "PDF 翻译 目标语言").some((topic) => topic.id === "pdf-translation"));
   assert.ok(searchGuideTopics(userGuideTopics, "恢复本地草稿").some((topic) => topic.id === "presentation-style"));
+  assert.ok(searchGuideTopics(userGuideTopics, "随访提醒 历史线索").some((topic) => topic.id === "health-follow-up"));
+  assert.ok(searchGuideTopics(userGuideTopics, "导出健康记录").some((topic) => topic.id === "health-privacy"));
   assert.ok(searchGuideTopics(adminGuideTopics, "  mFa 发布 ").some((topic) => topic.id === "configuration"));
   assert.ok(searchGuideTopics(adminGuideTopics, "配置中心 收敛").some((topic) => topic.id === "runtime"));
   assert.equal(searchGuideTopics(userGuideTopics, "totally-missing-feature").length, 0);

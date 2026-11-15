@@ -64,6 +64,8 @@ func TestProductHelpRetrieval(t *testing.T) {
 		{"管理员如何用PIN登录后台", "builtin-admin-access"},
 		{"如何记账和导出账本", "builtin-user-life"},
 		{"提醒事项只有日期没有时间可以吗", "builtin-user-reminders"},
+		{"健康助手如何查病程", "builtin-user-health"},
+		{"健康助手怎么导出或清除健康记录", "builtin-user-health-privacy"},
 		{"How do I upload a document?", "builtin-user-documents"},
 		{"Can I use this app offline?", "builtin-user-install"},
 	}

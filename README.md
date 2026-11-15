@@ -4,7 +4,7 @@
 
 <h1 align="center">伴AI · AI Companion</h1>
 <p align="center"><strong>Someone to talk to. A hand with life. A partner for getting things done.</strong></p>
-<p align="center">A self-hostable personal AI workspace · Companionship · Life management · Office productivity</p>
+<p align="center">A self-hostable personal AI workspace · Companionship · Life management · Health records · Office productivity</p>
 
 <p align="center">
   <a href="README.zh-CN.md">简体中文</a> · <a href="README.md">English</a><br>
@@ -18,7 +18,7 @@
   <a href="#quick-start"><img src="https://img.shields.io/badge/Self--hosted-Docker-2496ED?logo=docker&logoColor=white" alt="Self-hosted with Docker"></a>
 </p>
 
-**Keep ongoing conversations, everyday records and office deliverables in one workspace.** AI Companion connects characters, correctable memory, personal knowledge and governed tools—from a request to a result you can check. Pick up a conversation, verify a new expense or keep refining yesterday's presentation.
+**Keep ongoing conversations, everyday records and office deliverables in one workspace.** Pick up a conversation, check a new expense or health observation, or build a presentation from your own material and refine it in the same chat.
 
 ![Companion home: character conversations and long-term memory](docs/images/readme/companion-dashboard.jpg)
 
@@ -28,6 +28,7 @@
 | --- | --- | --- |
 | **Companion** | Customize characters, continue multi-turn conversations, inspect and correct long-term memory | Character conversations and memory management |
 | **Life assistant** | Record expenses, create reminders, organize today's plan and export Excel | Ledger, reminders and daily plan |
+| **Health assistant (optional)** | Log health changes with text and photos, confirm symptom records, actual medication use and follow-up reminders, and export or clear records | Daily health, symptom history, medication records and privacy |
 | **Work partner** | Read multiple attachments, request review, create/revise PPTs, translate PDFs, edit DOCX copies and analyze CSV/XLSX | Work chat, PPT Studio and task files |
 | **Knowledge center** | Search documents, Wiki, personal memory and product guides; read originals, trace sources and submit feedback | Unified search, document and memory management |
 | **Admin console** | Configure models, Agents, permissions and quotas; inspect execution and knowledge processing | Separate Passkey-protected admin workspace |
@@ -51,9 +52,18 @@ make docker-ps
 
 Open **<http://localhost:3000>**, register, sign in and add a character. The first build downloads images and dependencies; Compose applies business migrations and initializes Agent checkpoints.
 
-To enable the personal health assistant, run `make health-init`, configure its model using the [health assistant setup guide](docs/HEALTH_ASSISTANT.md), then run `make docker-up-health`. Open 健康助手 from the sidebar after signing in with your Companion account.
-
 > The default `MODEL_PROVIDER=development` needs no key and returns fixed mock replies for checking pages and task plumbing. For real conversations, tool selection and content generation, configure a server-side provider, key and model IDs using the [model guide](docs/OPENROUTER_MODELS.md), then rebuild and start the app. Self-hosting the application does not imply offline model inference.
+
+<details>
+<summary>Enable the optional health assistant</summary>
+
+1. Run `make health-init` to add health service passwords and tokens to the private `.env` file.
+2. Configure a separate health model. Health chat requires image input, streaming responses and JSON output.
+3. Run `make docker-up-health`, sign in with your Companion account and open **健康助手** in the sidebar.
+
+The standard `make docker-up` starts the base app. Once the health service is enabled, users can view, export and clear existing health records even before the health model is configured. External health model providers receive the messages, photos and related records needed for the reply. Review the provider's data handling policy and the [health assistant setup guide](docs/HEALTH_ASSISTANT.md).
+
+</details>
 
 After connecting a model, try these requests. They are examples, not actions already performed:
 
@@ -62,6 +72,7 @@ After connecting a model, try these requests. They are examples, not actions alr
 | Continue a conversation | “I'm nervous about tomorrow's presentation. Help me work through what worries me most.” | Add context and see whether the reply follows it |
 | Record an expense | “I spent CNY 18 on lunch today. Record it as dining.” | Review and confirm, then open the ledger |
 | Create a reminder | “Remind me tomorrow at 3 p.m. to prepare the project demo.” | Check the date and timezone, then open reminders |
+| Log a health change | In health chat, say “My throat felt dry last night and feels better this morning. Please record that.” | Review and confirm the draft, then open the symptom history |
 | Make a presentation | Provide material: “Create eight training slides with visuals and tables. Keep the source facts.” | Check page order, sources and exported files |
 | Compare sources | Upload 2–3 sources: “Compare costs, risks and implementation requirements. Cite sources and fact-check the numbers.” | Inspect citations, comparison scope and unresolved disagreements |
 
@@ -72,7 +83,7 @@ Or open **Sidebar → Knowledge Center** and **Work partner → Workbench → PP
 
 - View logs with `make docker-logs`; stop services while retaining data volumes with `make docker-down`.
 - API checks: <http://localhost:8080/healthz> and <http://localhost:8080/readyz>.
-- All three chat modules use the Agent Worker by default. Starting only the API is not sufficient.
+- Companion, Life assistant and Work partner use the main Agent Worker by default. Health chat uses a separate health Agent and worker.
 - Admin entry: <http://localhost:3000/admin>, requiring an [invitation and Passkey](docs/ADMIN_PASSKEY_LOGIN.md), not an ordinary user account.
 - Replace all `change-*` development secrets and configure the domain and credentials before public exposure. Never commit real keys.
 - See the [first-run guide](docs/GETTING_STARTED.md) for troubleshooting and the [engineering guide](docs/ENGINEERING.md#quick-start) for host development.
@@ -81,7 +92,7 @@ Or open **Sidebar → Knowledge Center** and **Work partner → Workbench → PP
 
 ## Product in action
 
-These are real local captures with sanitized demo accounts. Work partner screenshots were taken during **2026-09-29 through 2026-10-01** acceptance runs. Historical results do not mean tasks have run on the current reader's account or establish a remote server's deployed version.
+Screenshots come from a local environment with sanitized demo accounts. Work partner screenshots were taken during **2026-09-29 through 2026-10-01** acceptance runs.
 
 ### Work partner: from sources to editable presentations
 
@@ -191,6 +202,16 @@ Then verify the title, trigger time and notification channel:
 
 </details>
 
+### Health assistant for personal records
+
+| What to do | Where to check the result |
+| --- | --- |
+| Describe what happened in health chat, optionally attach a photo, then review and confirm the draft | Open the symptom history to see the saved observation and timeline |
+| Review a record of actual medication use or a follow-up reminder | Open medication records for actual use or Daily health for follow-ups |
+| Export personal records or confirm clearing the health workspace | Use the privacy page. A background job cleans up attachments and model checkpoints, and backups expire according to the configured retention period |
+
+The health assistant supports personal record-keeping and general care reference. See the [health assistant guide](docs/HEALTH_ASSISTANT.md) for navigation, model setup and data handling.
+
 ### Companion: pick up where you left off
 
 The user expresses presentation anxiety, then explains there is too much material and a risk of running overtime. The character follows that context with suggestions for trimming content, timeboxing and rehearsing. Long-term preferences can be inspected and corrected in memory management.
@@ -204,7 +225,7 @@ The user expresses presentation anxiety, then explains there is too much materia
 
 ## Technical highlights
 
-Built around **context engineering, Agentic RAG, multi-Agent collaboration and editable content generation**, with particular attention to source coverage, parallel recovery, evidence validity and continued editing. Implementation baseline: `42694a4`, reviewed **2026-10-14**.
+Built around **context engineering, Agentic RAG, multi-Agent collaboration and editable content generation**, with particular attention to source coverage, parallel recovery, evidence traceability and continued editing. Reviewed against repository revision `468c93e` on **2026-11-15**.
 
 | Design | Engineering problem addressed | Read more |
 | --- | --- | --- |
@@ -215,6 +236,7 @@ Built around **context engineering, Agentic RAG, multi-Agent collaboration and e
 | **Evidence arbitration and optional debate** | Check candidate ownership, source versions and literal quotations; isolate first-round judgments and gather evidence read-only, retaining uncertainty and stopping file generation on unresolved research disputes | [Arbitration protocol](docs/ARBITRATION.md) |
 | **Editable presentation designs** | `presentation-design-v2` separates facts from visual design; stable page/content IDs support revisions, preview/export share geometry, and the final PPTX is render-checked | [PPT Studio](docs/PRESENTATION_STUDIO.md) |
 | **Recoverable, authorized execution** | Go Tool Gateway controls business writes; Runs, idempotency, leases and revision fencing handle cancellation and crashes; admin Passkeys and layered quotas govern access and cost | [Engineering](docs/ENGINEERING.md) · [Quotas](docs/ADMIN_QUOTAS.md) |
+| **Health data isolation and confirmed writes** | The main API verifies the session and forwards the account ID and timezone to the private health service. The health Agent proposes drafts. Once the user confirms, the Go backend verifies ownership and relevant record versions before writing in a transaction | [Identity forwarding tests](internal/httpserver/health_assistant_test.go) · [Confirmation logic](services/healthy_care/backend/internal/app/actions.go) |
 | **Documentation as product knowledge** | Allowlisted docs, SHA-256, `go:embed` and local BM25 ship instructions with the app; consistency and help-retrieval tests detect stale guidance | [Knowledge-bundle maintenance](docs/PRODUCT_KNOWLEDGE.md) |
 
 <details>
@@ -240,11 +262,14 @@ Verification: [chunking and coverage](workers/python/tests/test_agent_runtime.py
 
 | Layer | Technologies |
 | --- | --- |
-| Web | Next.js 16 · React 19 · TypeScript |
-| API and business logic | Go 1.26 · OpenAPI · PostgreSQL 18 |
+| Web | Next.js 16.4.1 · React 19 · TypeScript |
+| API and business logic | Go 1.26.11 · OpenAPI · PostgreSQL 18 |
 | Agents and processing | Python · LangGraph · PostgreSQL Checkpointer · Versioned Skills |
 | Retrieval and files | Qdrant · Redis · MinIO · Source IR · Wiki · Product-knowledge BM25 · python-pptx / LibreOffice |
 | Deployment and observability | Docker Compose · Caddy · OpenTelemetry · Prometheus · Loki / Alloy · Optional Langfuse |
+| Optional health service | Separate Go API and worker · Python / LangGraph · PostgreSQL, Redis and dedicated attachment and backup volumes |
+
+The health service uses the Companion sign-in and creates a separate workspace on first access. It receives requests over an internal Compose network and uses dedicated volumes for the database, attachments and backups. General chat and long-term memory stay in the main app. Existing `healthy_care` accounts and records remain with the original deployment. [Deployment guide](docs/HEALTH_ASSISTANT.md)
 
 [Architecture and processing diagrams](docs/TECHNICAL_GUIDE.zh-CN.md#系统架构) · [Repository map](docs/ENGINEERING.md#repository-map) · [Concurrency settings](docs/TECHNICAL_GUIDE.zh-CN.md#关键并行与分片参数)
 
@@ -255,6 +280,7 @@ Most topic guides are currently in Chinese; the engineering guide is in English.
 | I want to… | Start here |
 | --- | --- |
 | Install, try the app or troubleshoot | [First-run guide](docs/GETTING_STARTED.md) · [Model configuration](docs/OPENROUTER_MODELS.md) |
+| Enable the health assistant, configure its model or manage health records | [Health assistant guide](docs/HEALTH_ASSISTANT.md) · [Service notes](services/healthy_care/README.md) |
 | Make a presentation or restore a design | [PPT Studio](docs/PRESENTATION_STUDIO.md) |
 | Search sources, read originals or submit feedback | [Knowledge Center](docs/KNOWLEDGE_CENTER.md) · [Context and Wiki](docs/CONTEXT_MANAGEMENT.md) |
 | Understand chunking, parallelism and verification | [中文技术指南](docs/TECHNICAL_GUIDE.zh-CN.md) · [English engineering guide](docs/ENGINEERING.md) · [Evidence arbitration](docs/ARBITRATION.md) |
@@ -268,10 +294,13 @@ Most topic guides are currently in Chinese; the engineering guide is in English.
 
 Upgrading older feature versions to unified knowledge requires PostgreSQL migration `000046` / MySQL `000035` and all preceding pending migrations. Handle unfinished Runs before switching Agent graph versions. Documentation/knowledge-bundle updates alone add no migration, but API, Worker, Agent Worker and Web need rebuilding to take effect in a running app. PPT-to-PDF export additionally requires LibreOffice and CJK fonts. See [knowledge maintenance](docs/PRODUCT_KNOWLEDGE.md) and the topic-specific deployment guides.
 
+To add the health assistant to an existing Compose deployment, append `deploy/compose/compose.health.yml` to the deployment's Compose files. A separate migration service initializes the health database. [Health assistant setup](docs/HEALTH_ASSISTANT.md#启用)
+
 </details>
 
 ## Recent updates
 
+- **2026-11-15** · Integrated the optional health assistant with text and photo recording, confirmed saves, history and privacy controls. Updated the Go toolchain and Web dependencies, and added dependency scanning for the separate Go health backend. [Feature commit](https://github.com/bamboo-ye/ai-companion/commit/f1d55ad) · [Release-check fixes](https://github.com/bamboo-ye/ai-companion/commit/468c93e)
 - **2026-10-13** · Expanded Knowledge Center, PPT revision, evidence-review and quality-operations guides, with contextual navigation and product-help retrieval improvements for existing capabilities. [Commit](https://github.com/bamboo-ye/ai-companion/commit/42694a4bc551c6e6cf35d1c570121c33d8808530)
 - **2026-10-01** · Integrated PPT Studio, unified knowledge engineering and bounded evidence verification, disabled by default. [Implementation record](docs/PROJECT_COMPLETION.md)
 

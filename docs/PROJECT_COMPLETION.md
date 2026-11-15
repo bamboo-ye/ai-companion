@@ -1,6 +1,6 @@
 # Project Completion Status
 
-Implementation review: 2026-10-14, against `42694a4` (the October 13 documentation integration), with the guide corrections below. Core feature implementation remains based on `c7f24b0`; this review found no intervening feature commit.
+Implementation reviewed on 2026-11-15 against `468c93e`. The latest feature addition is the optional personal health assistant in `f1d55ad`, followed by updates to the release checks and dependencies in `468c93e`.
 
 Start with the [beginner guide](GETTING_STARTED.md) for setup and first-use steps.
 
@@ -23,8 +23,9 @@ every milestone acceptance exercise or certify the deployed environment.
 |---|---|---|
 | Accounts, profile and conversations | [`internal/identity`](../internal/identity/), [`companion-client.tsx`](../web/app/companion-client.tsx), [`profile-panel.tsx`](../web/app/profile-panel.tsx), [`chat-panel.tsx`](../web/app/chat-panel.tsx) | Registration/login, three character modules, password change, streaming/retry/cancel; real model behavior requires a configured provider |
 | Memory and personal Wiki | [`internal/memory`](../internal/memory/), [`internal/document`](../internal/document/), [`wiki-panel.tsx`](../web/app/wiki-panel.tsx) | Memory management, document upload/query, Wiki search/edit/export/feedback; default upload limit 20 MiB, parsing/indexing needs the Worker |
-| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable user/admin guides (26/22 chapters) and product-knowledge reader; embedded read-only sources, no personal document quota or remote embedding prerequisite |
+| Onboarding and built-in product knowledge | [`onboarding-content.ts`](../web/app/onboarding-content.ts), [`internal/productknowledge`](../internal/productknowledge/), [`generator`](../scripts/build-product-knowledge.mjs) | Searchable guides with 29 user chapters and 22 administrator chapters. The health screen opens the same guide at the health chapter. Embedded read-only sources are available without personal document quota or remote embeddings |
 | Life and office workflows | [`life-panel.tsx`](../web/app/life-panel.tsx), [`work-panel.tsx`](../web/app/work-panel.tsx), [`task-history-panel.tsx`](../web/app/task-history-panel.tsx), [`internal/skill`](../internal/skill/) | Ledger, reminders, plans, generated files and task confirmation; DOCX/table forms have a separate 700 KiB limit |
+| Optional health assistant | [`health-assistant.tsx`](../web/app/health-assistant.tsx), [`authenticated gateway`](../internal/httpserver/health_assistant.go), [health assistant guide](HEALTH_ASSISTANT.md) | Use the current account for text and photo chat, confirmed health records and follow-ups, medication review, historical signals, JSON export and deletion. Requires the health Compose overlay. A separate model is required to generate replies and drafts |
 | Presentation Studio | [`presentation-studio.tsx`](../web/app/presentation-studio.tsx), [implementation guide](PRESENTATION_STUDIO.md) | Workbench templates, whole-deck planning, mixed layouts, editing, rehearsal, saved versions and editable PPTX/design export; PDF/export previews require LibreOffice and Chinese fonts; third-party PPTX import and OCR unsupported |
 | Unified knowledge and quality operations | [`internal/knowledge`](../internal/knowledge/), [`internal/knowledgebridge`](../internal/knowledgebridge/), [user guide](KNOWLEDGE_CENTER.md), [implementation record](KNOWLEDGE_ENGINEERING_IMPLEMENTATION.md) | Knowledge Center search/read/feedback across four source types, version and permission checks, durable indexing/projections; operations quality queue, role-gated retry/rebuild/review; real-corpus and scale acceptance still pending |
 | Bounded evidence debate | [`debate.py`](../workers/python/src/ai_companion_worker/debate.py), [arbitration guide](ARBITRATION.md), [`evidence-review-card.tsx`](../web/app/evidence-review-card.tsx) | Default off; isolated first round, bounded read-only supplements and cross-review, source revalidation, chat summary and memory clarification; real-provider comparative evaluation and production rollout pending |
@@ -42,11 +43,23 @@ The separate Agent run budget still controls each run's model/token/cost ceiling
 
 The current graph is `ai-companion-supervisor@3.72.0`. Skill execution uses bounded execution/parse/render pools; Go/Python requests share provider permits on one host. Wiki synthesis processes all chunks in bounded parallel batches, caches successful shards and reports incomplete semantic coverage while retaining original pages. Wiki and memory arbitration annotate source relationships without removing original evidence or silently replacing memories. The Web Wiki reader shows body notes and conflict notices; the memory panel now shows related records and a clarification/correction form when a valid clarification exists. It does not expose the full internal arbitration trace.
 
-Upgrades require PostgreSQL `000044_wiki_shards`, `000045_memory_arbitration` and `000046_knowledge_projections` (MySQL `000033`, `000034` and `000035`) in addition to earlier migrations. Complete old-graph Runs or explicitly restart them before switching graph versions. Public-file protections and dependency changes are recorded in the dated [security review](SECURITY_REVIEW.md); that historical scan is not a fresh vulnerability assessment of this revision.
+Upgrades require PostgreSQL `000044_wiki_shards`, `000045_memory_arbitration` and `000046_knowledge_projections` (MySQL `000033`, `000034` and `000035`) in addition to earlier migrations. Complete old-graph Runs or explicitly restart them before switching graph versions. The optional health stack initializes its own PostgreSQL database through `health-migrate`. Public-file protections and prior dependency changes are recorded in the dated [security review](SECURITY_REVIEW.md).
+
+## November 15 implementation review
+
+| Area | Verified in the implementation |
+|---|---|
+| Setup and account scope | The sidebar entry is present after sign-in. The main API verifies the Companion session and forwards the account ID and timezone to the private health API. The base stack shows a disabled message. Enabling the overlay creates a separate health workspace on first access |
+| Recording and follow-up | A message or photo upload can be accepted before a model reply. Saving a proposed observation, actual medication record or follow-up requires explicit confirmation. The health screens show confirmed records and allow review or correction through chat |
+| Data handling | The separate health model processes the current message, attached images and relevant records. Privacy actions can run without a configured model. JSON export contains attachment references. Clearing records queues attachment and checkpoint cleanup, and backup expiry follows `HEALTH_BACKUP_KEEP_DAYS` |
+| Guide and repository docs | The existing `health` chapter ID is preserved. The new follow-up and privacy chapters cover exact UI labels. The health deployment and data guide is available in the embedded catalog |
+| Toolchains | The main and health Go modules require Go 1.26.11. The Web manifest and lockfile pin Next.js 16.4.1 |
+
+Local verification passed for both Go modules, Web lint and type checking, all 43 Web tests, the Next.js production build, and the merged health Compose configuration. A browser preview using a synthetic account verified health guide search before sign-in and the contextual guide after opening the health workspace. The generated catalog contains 178 pages from 13 sources. Real providers and deployed environments require separate acceptance.
 
 ## October 14 documentation findings
 
-The working tree was clean at the start of this review. The previous guide updates are now committed in `42694a4`; there is no new product feature to announce since `c7f24b0`. This pass checked the documented steps against the UI and service implementations and corrected these gaps:
+The October review used `42694a4` and corrected the following gaps in the workflows introduced through `c7f24b0`.
 
 | Finding | Current implementation and corrected guidance |
 |---|---|

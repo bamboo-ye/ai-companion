@@ -141,6 +141,7 @@ cmd/api, cmd/worker       Go API and asynchronous worker processes
 cmd/agent-worker          Durable Agent dispatch and execution
 internal/                 Domain services, context/Wiki, identity and governance
 workers/python/           LangGraph runtime and document/data/media processing
+services/healthy_care/    Optional health API, worker, Agent and database migrations
 web/                      Next.js web client
 mobile/android/           Kotlin + Jetpack Compose Android client
 mobile/ios/               SwiftUI app source and testable Swift core
@@ -179,6 +180,8 @@ make docker-ps
 Then open `http://localhost:3000`. The API is available at
 `http://localhost:8080`; follow application logs with `make docker-logs` and
 stop the stack with `make docker-down`.
+
+To enable the personal health workspace, run `make health-init`, configure its separate model, and run `make docker-up-health`. The Compose overlay initializes a dedicated PostgreSQL database and runs the health API, worker, Agent and backups on their own service networks. The main API handles Companion authentication for health requests. See [health setup and data handling](HEALTH_ASSISTANT.md#启用).
 
 The complete Docker stack applies PostgreSQL migrations and initializes LangGraph
 checkpoints before starting the dependent services. To run on the host instead,
