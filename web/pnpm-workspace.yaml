@@ -1,2 +1,9 @@
 allowBuilds:
   sharp: true
+# Patch transitive dependencies flagged by the release audit.
+overrides:
+  'source-map-js@<1.2.2': 1.2.2
+  'sharp@<0.35.5': 0.35.5
+  'zod@<4.6.6': 4.6.6
+  'glob@>=9.0.0 <=14.0.1': 14.0.2
+  'minimatch@>=7.0.0 <11.0.1': 11.0.1

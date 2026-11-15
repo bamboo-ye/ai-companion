@@ -153,7 +153,7 @@ docs/adr/                  Architecture decisions
 
 ## Prerequisites
 
-- Go 1.26.8+
+- Go 1.26.11+
 - Python 3.12+
 - Node.js 24+ and pnpm 11+
 - Docker Desktop with Compose v2

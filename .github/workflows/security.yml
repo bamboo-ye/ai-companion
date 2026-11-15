@@ -56,3 +56,6 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: Check health service Go dependencies
+        working-directory: services/healthy_care/backend
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
